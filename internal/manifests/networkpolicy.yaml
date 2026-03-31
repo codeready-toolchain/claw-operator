@@ -1,0 +1,71 @@
+# NetworkPolicy 1: OpenClaw pod can only reach the proxy Service and DNS.
+# All direct internet access from the OpenClaw pod is blocked.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openclaw-egress
+  labels:
+    app: openclaw
+spec:
+  podSelector:
+    matchLabels:
+      app: openclaw
+  policyTypes:
+    - Egress
+  egress:
+    # Allow traffic to the credential proxy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: openclaw-proxy
+      ports:
+        - port: 8080
+          protocol: TCP
+    # Allow DNS resolution. namespaceSelector targets CoreDNS pods
+    # in the openshift-dns namespace. Port 5353 is the actual listener
+    # port on OpenShift DNS pods (Service port 53 DNATs to pod 5353).
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+---
+# NetworkPolicy 2: Proxy pod egress restricted to known API endpoints + DNS.
+# Uses CIDR 0.0.0.0/0 because LLM APIs sit behind CDNs with dynamic IPs.
+# The nginx config itself acts as the L7 allowlist — only configured
+# location blocks are forwarded; everything else returns 403.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openclaw-proxy-egress
+  labels:
+    app: openclaw-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app: openclaw-proxy
+  policyTypes:
+    - Egress
+  egress:
+    # Allow HTTPS to external APIs (CDN IPs are unpredictable).
+    - ports:
+        - port: 443
+          protocol: TCP
+    # Allow DNS resolution.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
