@@ -5,7 +5,7 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - openclaw.codeready-toolchain.com
+  - openclaw.sandbox.redhat.com
   resources:
   - openclawinstances
   verbs:
@@ -17,13 +17,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - openclaw.codeready-toolchain.com
+  - openclaw.sandbox.redhat.com
   resources:
   - openclawinstances/finalizers
   verbs:
   - update
 - apiGroups:
-  - openclaw.codeready-toolchain.com
+  - openclaw.sandbox.redhat.com
   resources:
   - openclawinstances/status
   verbs:

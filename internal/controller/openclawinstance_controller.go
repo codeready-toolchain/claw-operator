@@ -33,9 +33,9 @@ type OpenClawInstanceReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=openclaw.codeready-toolchain.com,resources=openclawinstances,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=openclaw.codeready-toolchain.com,resources=openclawinstances/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=openclaw.codeready-toolchain.com,resources=openclawinstances/finalizers,verbs=update
+// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclawinstances,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclawinstances/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclawinstances/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

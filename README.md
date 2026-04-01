@@ -1,8 +1,33 @@
 # openclaw-operator
-// TODO(user): Add simple overview of use/purpose
+
+An operator for managing OpenClaw instances in Red Hat's OpenShift.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+The OpenClaw Operator manages the lifecycle of OpenClaw instances through Kubernetes custom resources. It provides a declarative API for creating, configuring, and managing OpenClaw deployments within Kubernetes clusters.
+
+## Custom Resource Definition
+
+### OpenClawInstance
+
+The `OpenClawInstance` custom resource represents a deployment of OpenClaw in your cluster.
+
+**API Group:** `openclaw.sandbox.redhat.com/v1alpha1`
+
+**Example:**
+```yaml
+apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+kind: OpenClawInstance
+metadata:
+  name: my-openclaw
+  namespace: default
+spec:
+  # Spec fields will be added as the CRD evolves
+status:
+  # Status fields will be populated by the controller
+```
+
+The CRD is currently in its initial development phase with spec and status fields being defined based on operational requirements
 
 ## Getting Started
 
@@ -111,7 +136,12 @@ previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml
 is manually re-applied afterwards.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+
+Contributions are welcome! Please ensure that:
+- All tests pass with `make test`
+- Code passes linting with `make lint`
+- Changes are covered by appropriate unit or e2e tests
+- Commits follow the repository's commit message conventions
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
 
