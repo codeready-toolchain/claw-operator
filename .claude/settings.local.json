@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(openspec new:*)",
+      "Bash(openspec status:*)",
+      "Bash(openspec instructions:*)",
+      "Bash(make generate:*)",
+      "Bash(make manifests:*)",
+      "Bash(go mod:*)",
+      "Bash(make build:*)",
+      "Bash(openspec sync-specs:*)",
+      "Bash(cp -r openspec/changes/add-openclawinstance-crd/specs/openclawinstance-crd openspec/specs/)",
+      "Bash(cp -r openspec/changes/add-openclawinstance-crd/specs/openclawinstance-controller openspec/specs/)"
+    ]
+  }
+}
