@@ -1,0 +1,7 @@
+apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+kind: OpenClawInstance
+metadata:
+  name: openclawinstance-sample
+  namespace: default
+spec:
+  # TODO: Add spec fields as the CRD evolves
