@@ -10,7 +10,11 @@
       "Bash(make build:*)",
       "Bash(openspec sync-specs:*)",
       "Bash(cp -r openspec/changes/add-openclawinstance-crd/specs/openclawinstance-crd openspec/specs/)",
-      "Bash(cp -r openspec/changes/add-openclawinstance-crd/specs/openclawinstance-controller openspec/specs/)"
+      "Bash(cp -r openspec/changes/add-openclawinstance-crd/specs/openclawinstance-controller openspec/specs/)",
+      "Bash(make test:*)",
+      "Bash(make lint:*)",
+      "Bash(make install:*)",
+      "Bash(openspec list:*)"
     ]
   }
 }
