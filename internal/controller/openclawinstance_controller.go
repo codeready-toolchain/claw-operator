@@ -43,8 +43,8 @@ type OpenClawInstanceReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
 func (r *OpenClawInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-	log.Info("Reconciling OpenClawInstance", "name", req.Name, "namespace", req.Namespace)
+	logger := log.FromContext(ctx)
+	logger.Info("Reconciling OpenClawInstance", "name", req.Name, "namespace", req.Namespace)
 
 	// No-op for now - reconciliation logic will be added in future changes
 	return ctrl.Result{}, nil
