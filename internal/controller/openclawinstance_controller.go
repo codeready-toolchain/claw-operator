@@ -64,6 +64,12 @@ func (r *OpenClawInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
+	// Only reconcile resources named "instance"
+	if instance.Name != "instance" {
+		logger.Info("Skipping reconciliation for OpenClawInstance with non-matching name", "name", instance.Name)
+		return ctrl.Result{}, nil
+	}
+
 	// Parse the embedded deployment manifest
 	decode := serializer.NewCodecFactory(r.Scheme).UniversalDeserializer().Decode
 	deployment := &appsv1.Deployment{}
