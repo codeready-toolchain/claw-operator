@@ -154,7 +154,7 @@ var _ = Describe("OpenClawInstance Controller", func() {
 					return false
 				}
 				return len(configMap.OwnerReferences) > 0 &&
-					configMap.OwnerReferences[0].Kind == "OpenClawInstance" &&
+					configMap.OwnerReferences[0].Kind == OpenClawInstance &&
 					configMap.OwnerReferences[0].Name == resourceName
 			}, timeout, interval).Should(BeTrue())
 
@@ -187,7 +187,7 @@ var _ = Describe("OpenClawInstance Controller", func() {
 					return false
 				}
 				return len(deployment.OwnerReferences) > 0 &&
-					deployment.OwnerReferences[0].Kind == "OpenClawInstance" &&
+					deployment.OwnerReferences[0].Kind == OpenClawInstance &&
 					deployment.OwnerReferences[0].Name == resourceName
 			}, timeout, interval).Should(BeTrue())
 
@@ -229,7 +229,7 @@ var _ = Describe("OpenClawInstance Controller", func() {
 					return false
 				}
 				ownerRef := configMap.OwnerReferences[0]
-				return ownerRef.Kind == "OpenClawInstance" &&
+				return ownerRef.Kind == OpenClawInstance &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
@@ -258,7 +258,7 @@ var _ = Describe("OpenClawInstance Controller", func() {
 					return false
 				}
 				ownerRef := deployment.OwnerReferences[0]
-				return ownerRef.Kind == "OpenClawInstance" &&
+				return ownerRef.Kind == OpenClawInstance &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true

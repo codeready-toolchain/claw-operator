@@ -35,6 +35,10 @@ import (
 	"github.com/codeready-toolchain/openclaw-operator/internal/assets"
 )
 
+const (
+	OpenClawInstance = "OpenClawInstance"
+)
+
 // OpenClawInstanceReconciler reconciles a OpenClawInstance object
 type OpenClawInstanceReconciler struct {
 	client.Client
