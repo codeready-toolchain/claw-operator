@@ -19,12 +19,17 @@ package controller
 import (
 	"context"
 
+	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
+	"github.com/codeready-toolchain/openclaw-operator/internal/assets"
 )
 
 // OpenClawInstanceReconciler reconciles a OpenClawInstance object
@@ -36,6 +41,7 @@ type OpenClawInstanceReconciler struct {
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclawinstances,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclawinstances/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclawinstances/finalizers,verbs=update
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -46,7 +52,48 @@ func (r *OpenClawInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	logger := log.FromContext(ctx)
 	logger.Info("Reconciling OpenClawInstance", "name", req.Name, "namespace", req.Namespace)
 
-	// No-op for now - reconciliation logic will be added in future changes
+	// Fetch the OpenClawInstance resource
+	instance := &openclawv1alpha1.OpenClawInstance{}
+	err := r.Get(ctx, req.NamespacedName, instance)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("OpenClawInstance resource not found, ignoring since object must be deleted")
+			return ctrl.Result{}, nil
+		}
+		logger.Error(err, "Failed to get OpenClawInstance")
+		return ctrl.Result{}, err
+	}
+
+	// Parse the embedded deployment manifest
+	decode := serializer.NewCodecFactory(r.Scheme).UniversalDeserializer().Decode
+	deployment := &appsv1.Deployment{}
+	_, _, err = decode(assets.DeploymentManifest, nil, deployment)
+	if err != nil {
+		logger.Error(err, "Failed to decode deployment manifest")
+		return ctrl.Result{}, err
+	}
+
+	// Set the Deployment namespace to match the OpenClawInstance namespace
+	deployment.Namespace = instance.Namespace
+
+	// Set the OpenClawInstance as the controller owner reference
+	if err := controllerutil.SetControllerReference(instance, deployment, r.Scheme); err != nil {
+		logger.Error(err, "Failed to set controller reference")
+		return ctrl.Result{}, err
+	}
+
+	// Create the Deployment
+	err = r.Create(ctx, deployment)
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			logger.Info("Deployment already exists, skipping creation")
+			return ctrl.Result{}, nil
+		}
+		logger.Error(err, "Failed to create Deployment")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Successfully created Deployment")
 	return ctrl.Result{}, nil
 }
 

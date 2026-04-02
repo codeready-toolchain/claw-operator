@@ -1,41 +1,4 @@
-## ADDED Requirements
-
-### Requirement: OpenClawInstance controller exists
-The system SHALL provide a controller that reconciles OpenClawInstance custom resources.
-
-#### Scenario: Controller is registered with manager
-- **WHEN** the operator starts
-- **THEN** the OpenClawInstance controller SHALL be registered with the controller-runtime manager
-
-#### Scenario: Controller implements Reconciler interface
-- **WHEN** examining the controller code
-- **THEN** it SHALL implement the `Reconcile(context.Context, ctrl.Request) (ctrl.Result, error)` method
-
-### Requirement: Controller watches OpenClawInstance resources
-The system SHALL configure the controller to watch for create, update, and delete events on OpenClawInstance resources.
-
-#### Scenario: Controller triggers on create
-- **WHEN** an OpenClawInstance resource is created
-- **THEN** the controller's Reconcile function SHALL be invoked
-
-#### Scenario: Controller triggers on update
-- **WHEN** an OpenClawInstance resource is updated
-- **THEN** the controller's Reconcile function SHALL be invoked
-
-#### Scenario: Controller triggers on delete
-- **WHEN** an OpenClawInstance resource is deleted
-- **THEN** the controller's Reconcile function SHALL be invoked
-
-### Requirement: Controller reconciles all OpenClawInstance resources
-The system SHALL configure the controller to watch all OpenClawInstance resources in all namespaces, not just a specific named resource.
-
-#### Scenario: Multiple resources trigger reconciliation
-- **WHEN** multiple OpenClawInstance resources exist with different names
-- **THEN** the controller SHALL reconcile each resource independently
-
-#### Scenario: Resource named 'instance' triggers reconciliation
-- **WHEN** an OpenClawInstance named 'instance' is created
-- **THEN** the controller's Reconcile function SHALL be invoked
+## MODIFIED Requirements
 
 ### Requirement: Reconcile function is a no-op skeleton
 The system SHALL implement the Reconcile function to fetch the OpenClawInstance resource and create a Deployment using the manifest from `internal/manifests/deployment.yaml`.
@@ -60,20 +23,7 @@ The system SHALL implement the Reconcile function to fetch the OpenClawInstance 
 - **WHEN** creating the Deployment
 - **THEN** the controller SHALL set the OpenClawInstance as the controller owner reference on the Deployment
 
-### Requirement: Controller has RBAC permissions
-The system SHALL generate RBAC markers and permissions for the controller to watch and reconcile OpenClawInstance resources.
-
-#### Scenario: Controller can list OpenClawInstance resources
-- **WHEN** the controller starts
-- **THEN** it SHALL have permissions to list OpenClawInstance resources
-
-#### Scenario: Controller can watch OpenClawInstance resources
-- **WHEN** the controller is running
-- **THEN** it SHALL have permissions to watch OpenClawInstance resources
-
-#### Scenario: Controller can update OpenClawInstance status
-- **WHEN** the controller needs to update status (in future implementations)
-- **THEN** it SHALL have permissions to update the status subresource
+## ADDED Requirements
 
 ### Requirement: Controller embeds deployment manifest
 The system SHALL embed the deployment manifest file `internal/manifests/deployment.yaml` into the controller binary at compile time using Go's embed directive.

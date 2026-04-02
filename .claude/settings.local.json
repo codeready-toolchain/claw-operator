@@ -14,7 +14,8 @@
       "Bash(make test:*)",
       "Bash(make lint:*)",
       "Bash(make install:*)",
-      "Bash(openspec list:*)"
+      "Bash(openspec list:*)",
+      "Bash(openspec:*)"
     ]
   }
 }
