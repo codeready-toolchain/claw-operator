@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -100,13 +101,18 @@ var _ = Describe("OpenClawInstance Controller", func() {
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
 
+			// Cleanup configmap
+			configMap := &corev1.ConfigMap{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw-config", Namespace: namespace}, configMap)
+			_ = k8sClient.Delete(ctx, configMap)
+
 			// Cleanup deployment
 			deployment := &appsv1.Deployment{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw", Namespace: namespace}, deployment)
 			_ = k8sClient.Delete(ctx, deployment)
 		})
 
-		It("should successfully create a Deployment when OpenClawInstance is created", func() {
+		It("should successfully create ConfigMap first, then Deployment when OpenClawInstance is created", func() {
 			By("Creating a new OpenClawInstance named 'instance'")
 			instance := &openclawv1alpha1.OpenClawInstance{}
 			instance.Name = resourceName
@@ -119,8 +125,41 @@ var _ = Describe("OpenClawInstance Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource")
+			By("Reconciling the created resource - should create ConfigMap")
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking if ConfigMap was created in the same namespace as the OpenClawInstance")
+			configMap := &corev1.ConfigMap{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw-config",
+					Namespace: namespace,
+				}, configMap)
+				return err == nil && configMap.Namespace == namespace
+			}, timeout, interval).Should(BeTrue())
+
+			By("Checking ConfigMap has correct owner reference")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw-config",
+					Namespace: namespace,
+				}, configMap)
+				if err != nil {
+					return false
+				}
+				return len(configMap.OwnerReferences) > 0 &&
+					configMap.OwnerReferences[0].Kind == OpenClawInstance &&
+					configMap.OwnerReferences[0].Name == resourceName
+			}, timeout, interval).Should(BeTrue())
+
+			By("Reconciling again - should create Deployment")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
@@ -148,13 +187,13 @@ var _ = Describe("OpenClawInstance Controller", func() {
 					return false
 				}
 				return len(deployment.OwnerReferences) > 0 &&
-					deployment.OwnerReferences[0].Kind == "OpenClawInstance" &&
+					deployment.OwnerReferences[0].Kind == OpenClawInstance &&
 					deployment.OwnerReferences[0].Name == resourceName
 			}, timeout, interval).Should(BeTrue())
 
 		})
 
-		It("should configure Deployment for garbage collection when OpenClawInstance is deleted", func() {
+		It("should configure ConfigMap and Deployment for garbage collection when OpenClawInstance is deleted", func() {
 			By("Creating a new OpenClawInstance named 'instance'")
 			instance := &openclawv1alpha1.OpenClawInstance{}
 			instance.Name = resourceName
@@ -167,7 +206,7 @@ var _ = Describe("OpenClawInstance Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource")
+			By("Reconciling to create ConfigMap")
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
@@ -176,7 +215,36 @@ var _ = Describe("OpenClawInstance Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying Deployment has blockOwnerDeletion set to true")
+			By("Verifying ConfigMap has owner reference configured for garbage collection")
+			configMap := &corev1.ConfigMap{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw-config",
+					Namespace: namespace,
+				}, configMap)
+				if err != nil {
+					return false
+				}
+				if len(configMap.OwnerReferences) == 0 {
+					return false
+				}
+				ownerRef := configMap.OwnerReferences[0]
+				return ownerRef.Kind == OpenClawInstance &&
+					ownerRef.Name == resourceName &&
+					ownerRef.Controller != nil &&
+					*ownerRef.Controller == true
+			}, timeout, interval).Should(BeTrue())
+
+			By("Reconciling again to create Deployment")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying Deployment has owner reference configured for garbage collection")
 			deployment := &appsv1.Deployment{}
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -186,12 +254,11 @@ var _ = Describe("OpenClawInstance Controller", func() {
 				if err != nil {
 					return false
 				}
-				// Verify owner reference is configured for garbage collection
 				if len(deployment.OwnerReferences) == 0 {
 					return false
 				}
 				ownerRef := deployment.OwnerReferences[0]
-				return ownerRef.Kind == "OpenClawInstance" &&
+				return ownerRef.Kind == OpenClawInstance &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
@@ -236,6 +303,16 @@ var _ = Describe("OpenClawInstance Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
+			By("Verifying ConfigMap was NOT created")
+			configMap := &corev1.ConfigMap{}
+			Consistently(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw-config",
+					Namespace: namespace,
+				}, configMap)
+				return err != nil
+			}, time.Second*2, interval).Should(BeTrue())
+
 			By("Verifying Deployment was NOT created")
 			deployment := &appsv1.Deployment{}
 			Consistently(func() bool {
@@ -259,6 +336,11 @@ var _ = Describe("OpenClawInstance Controller", func() {
 				_ = k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, instance)
 				_ = k8sClient.Delete(ctx, instance)
 			}
+
+			// Cleanup configmap
+			configMap := &corev1.ConfigMap{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw-config", Namespace: namespace}, configMap)
+			_ = k8sClient.Delete(ctx, configMap)
 
 			// Cleanup deployment
 			deployment := &appsv1.Deployment{}
@@ -288,6 +370,16 @@ var _ = Describe("OpenClawInstance Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
+			By("Verifying no ConfigMap was created")
+			configMap := &corev1.ConfigMap{}
+			Consistently(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw-config",
+					Namespace: namespace,
+				}, configMap)
+				return err != nil
+			}, time.Second*1, interval).Should(BeTrue())
+
 			By("Verifying no Deployment was created")
 			deployment := &appsv1.Deployment{}
 			Consistently(func() bool {
@@ -304,7 +396,25 @@ var _ = Describe("OpenClawInstance Controller", func() {
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
-			By("Reconciling 'instance'")
+			By("Reconciling 'instance' - should create ConfigMap")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      "instance",
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap was created")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw-config",
+					Namespace: namespace,
+				}, configMap)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
+
+			By("Reconciling 'instance' again - should create Deployment")
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      "instance",
