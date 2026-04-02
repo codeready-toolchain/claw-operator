@@ -35,13 +35,13 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 		namespace = "default"
 	)
 
-	Context("When reconciling an OpenClawInstance named 'instance'", func() {
+	Context("When reconciling an OpenClaw named 'instance'", func() {
 		const resourceName = "instance"
 		ctx := context.Background()
 
 		AfterEach(func() {
 			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance := &openclawv1alpha1.OpenClaw{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
 
@@ -51,9 +51,9 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 			_ = k8sClient.Delete(ctx, configMap)
 		})
 
-		It("should create ConfigMap for OpenClawInstance named 'instance'", func() {
-			By("Creating a new OpenClawInstance named 'instance'")
-			instance := &openclawv1alpha1.OpenClawInstance{}
+		It("should create ConfigMap for OpenClaw named 'instance'", func() {
+			By("Creating a new OpenClaw named 'instance'")
+			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
@@ -85,8 +85,8 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 		})
 
 		It("should set correct owner reference on ConfigMap", func() {
-			By("Creating a new OpenClawInstance named 'instance'")
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			By("Creating a new OpenClaw named 'instance'")
+			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
@@ -120,7 +120,7 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 					return false
 				}
 				ownerRef := configMap.OwnerReferences[0]
-				return ownerRef.Kind == "OpenClawInstance" &&
+				return ownerRef.Kind == "OpenClaw" &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
@@ -128,20 +128,20 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 		})
 	})
 
-	Context("When reconciling an OpenClawInstance with different name", func() {
+	Context("When reconciling an OpenClaw with different name", func() {
 		const resourceName = "other-instance"
 		ctx := context.Background()
 
 		AfterEach(func() {
 			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance := &openclawv1alpha1.OpenClaw{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
 		})
 
 		It("should skip ConfigMap creation for non-matching names", func() {
-			By("Creating a new OpenClawInstance with name 'other-instance'")
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			By("Creating a new OpenClaw with name 'other-instance'")
+			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())

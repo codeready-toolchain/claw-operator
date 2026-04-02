@@ -42,14 +42,14 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 
 		AfterEach(func() {
 			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance := &openclawv1alpha1.OpenClaw{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
 		})
 
 		It("should NOT create Deployment when ConfigMap doesn't exist", func() {
-			By("Creating a new OpenClawInstance named 'instance'")
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			By("Creating a new OpenClaw named 'instance'")
+			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
@@ -87,7 +87,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 
 		AfterEach(func() {
 			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance := &openclawv1alpha1.OpenClaw{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
 
@@ -103,8 +103,8 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 		})
 
 		It("should create Deployment when ConfigMap exists", func() {
-			By("Creating a new OpenClawInstance named 'instance'")
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			By("Creating a new OpenClaw named 'instance'")
+			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
@@ -143,8 +143,8 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 		})
 
 		It("should set correct owner reference on Deployment", func() {
-			By("Creating a new OpenClawInstance named 'instance'")
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			By("Creating a new OpenClaw named 'instance'")
+			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
@@ -185,7 +185,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 					return false
 				}
 				ownerRef := deployment.OwnerReferences[0]
-				return ownerRef.Kind == "OpenClawInstance" &&
+				return ownerRef.Kind == "OpenClaw" &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
@@ -193,13 +193,13 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 		})
 	})
 
-	Context("When reconciling an OpenClawInstance with different name", func() {
+	Context("When reconciling an OpenClaw with different name", func() {
 		const resourceName = "other-instance"
 		ctx := context.Background()
 
 		AfterEach(func() {
 			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance := &openclawv1alpha1.OpenClaw{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
 
@@ -210,8 +210,8 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 		})
 
 		It("should skip Deployment creation for non-matching names", func() {
-			By("Creating a new OpenClawInstance with name 'other-instance'")
-			instance := &openclawv1alpha1.OpenClawInstance{}
+			By("Creating a new OpenClaw with name 'other-instance'")
+			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())

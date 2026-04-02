@@ -25,7 +25,7 @@ rules:
 - apiGroups:
   - openclaw.sandbox.redhat.com
   resources:
-  - openclawinstances
+  - openclaws
   verbs:
   - get
   - list

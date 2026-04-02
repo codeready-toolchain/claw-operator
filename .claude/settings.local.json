@@ -17,7 +17,8 @@
       "Bash(openspec list:*)",
       "Bash(openspec:*)",
       "Bash(go build:*)",
-      "Bash(go test:*)"
+      "Bash(go test:*)",
+      "Bash(ls:*)"
     ]
   }
 }
