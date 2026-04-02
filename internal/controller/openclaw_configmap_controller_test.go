@@ -1,0 +1,175 @@
+/*
+Copyright 2026 Red Hat.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
+)
+
+var _ = Describe("OpenClawConfigMap Controller", func() {
+	const (
+		namespace = "default"
+	)
+
+	Context("When reconciling an OpenClawInstance named 'instance'", func() {
+		const resourceName = "instance"
+		ctx := context.Background()
+
+		AfterEach(func() {
+			// Cleanup resources
+			instance := &openclawv1alpha1.OpenClawInstance{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
+			_ = k8sClient.Delete(ctx, instance)
+
+			// Cleanup configmap
+			configMap := &corev1.ConfigMap{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace}, configMap)
+			_ = k8sClient.Delete(ctx, configMap)
+		})
+
+		It("should create ConfigMap for OpenClawInstance named 'instance'", func() {
+			By("Creating a new OpenClawInstance named 'instance'")
+			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+
+			// Setup reconciler
+			reconciler := &OpenClawConfigMapReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			By("Reconciling the created resource")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking if ConfigMap was created")
+			configMap := &corev1.ConfigMap{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      OpenClawConfigMapName,
+					Namespace: namespace,
+				}, configMap)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should set correct owner reference on ConfigMap", func() {
+			By("Creating a new OpenClawInstance named 'instance'")
+			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+
+			// Setup reconciler
+			reconciler := &OpenClawConfigMapReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			By("Reconciling the created resource")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking ConfigMap has correct owner reference")
+			configMap := &corev1.ConfigMap{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      OpenClawConfigMapName,
+					Namespace: namespace,
+				}, configMap)
+				if err != nil {
+					return false
+				}
+				if len(configMap.OwnerReferences) == 0 {
+					return false
+				}
+				ownerRef := configMap.OwnerReferences[0]
+				return ownerRef.Kind == "OpenClawInstance" &&
+					ownerRef.Name == resourceName &&
+					ownerRef.Controller != nil &&
+					*ownerRef.Controller == true
+			}, timeout, interval).Should(BeTrue())
+		})
+	})
+
+	Context("When reconciling an OpenClawInstance with different name", func() {
+		const resourceName = "other-instance"
+		ctx := context.Background()
+
+		AfterEach(func() {
+			// Cleanup resources
+			instance := &openclawv1alpha1.OpenClawInstance{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
+			_ = k8sClient.Delete(ctx, instance)
+		})
+
+		It("should skip ConfigMap creation for non-matching names", func() {
+			By("Creating a new OpenClawInstance with name 'other-instance'")
+			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+
+			// Setup reconciler
+			reconciler := &OpenClawConfigMapReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			By("Reconciling the created resource")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap was NOT created")
+			configMap := &corev1.ConfigMap{}
+			Consistently(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      OpenClawConfigMapName,
+					Namespace: namespace,
+				}, configMap)
+				return err != nil
+			}, time.Second*2, interval).Should(BeTrue())
+		})
+	})
+})

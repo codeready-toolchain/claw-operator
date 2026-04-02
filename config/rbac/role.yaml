@@ -27,24 +27,6 @@ rules:
   resources:
   - openclawinstances
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
-- apiGroups:
-  - openclaw.sandbox.redhat.com
-  resources:
-  - openclawinstances/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - openclaw.sandbox.redhat.com
-  resources:
-  - openclawinstances/status
-  verbs:
-  - get
-  - patch
-  - update
