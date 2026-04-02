@@ -87,11 +87,11 @@ var _ = AfterSuite(func() {
 
 var _ = Describe("OpenClawInstance Controller", func() {
 	const (
-		resourceName = "test-instance"
-		namespace    = "default"
+		namespace = "default"
 	)
 
-	Context("When reconciling an OpenClawInstance", func() {
+	Context("When reconciling an OpenClawInstance named 'instance'", func() {
+		const resourceName = "instance"
 		ctx := context.Background()
 
 		AfterEach(func() {
@@ -99,10 +99,15 @@ var _ = Describe("OpenClawInstance Controller", func() {
 			instance := &openclawv1alpha1.OpenClawInstance{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
+
+			// Cleanup deployment
+			deployment := &appsv1.Deployment{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw", Namespace: namespace}, deployment)
+			_ = k8sClient.Delete(ctx, deployment)
 		})
 
 		It("should successfully create a Deployment when OpenClawInstance is created", func() {
-			By("Creating a new OpenClawInstance")
+			By("Creating a new OpenClawInstance named 'instance'")
 			instance := &openclawv1alpha1.OpenClawInstance{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
@@ -150,7 +155,7 @@ var _ = Describe("OpenClawInstance Controller", func() {
 		})
 
 		It("should configure Deployment for garbage collection when OpenClawInstance is deleted", func() {
-			By("Creating a new OpenClawInstance")
+			By("Creating a new OpenClawInstance named 'instance'")
 			instance := &openclawv1alpha1.OpenClawInstance{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
@@ -195,6 +200,127 @@ var _ = Describe("OpenClawInstance Controller", func() {
 			// Note: envtest doesn't run garbage collection controller, so we can't test
 			// actual deletion. The test above verifies the owner reference is properly
 			// configured with Controller=true, which ensures GC will work in real clusters.
+		})
+	})
+
+	Context("When reconciling an OpenClawInstance with different name", func() {
+		const resourceName = "other-instance"
+		ctx := context.Background()
+
+		AfterEach(func() {
+			// Cleanup resources
+			instance := &openclawv1alpha1.OpenClawInstance{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
+			_ = k8sClient.Delete(ctx, instance)
+		})
+
+		It("should skip reconciliation for resource with non-matching name", func() {
+			By("Creating a new OpenClawInstance with name 'other-instance'")
+			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+
+			// Setup reconciler
+			reconciler := &OpenClawInstanceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			By("Reconciling the created resource")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying Deployment was NOT created")
+			deployment := &appsv1.Deployment{}
+			Consistently(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw",
+					Namespace: namespace,
+				}, deployment)
+				return err != nil
+			}, time.Second*2, interval).Should(BeTrue())
+		})
+	})
+
+	Context("When multiple OpenClawInstance resources exist", func() {
+		ctx := context.Background()
+
+		AfterEach(func() {
+			// Cleanup all test resources
+			instanceNames := []string{"instance", "another-instance"}
+			for _, name := range instanceNames {
+				instance := &openclawv1alpha1.OpenClawInstance{}
+				_ = k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, instance)
+				_ = k8sClient.Delete(ctx, instance)
+			}
+
+			// Cleanup deployment
+			deployment := &appsv1.Deployment{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw", Namespace: namespace}, deployment)
+			_ = k8sClient.Delete(ctx, deployment)
+		})
+
+		It("should only reconcile the resource named 'instance'", func() {
+			// Setup reconciler
+			reconciler := &OpenClawInstanceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			By("Creating OpenClawInstance named 'another-instance'")
+			otherInstance := &openclawv1alpha1.OpenClawInstance{}
+			otherInstance.Name = "another-instance"
+			otherInstance.Namespace = namespace
+			Expect(k8sClient.Create(ctx, otherInstance)).Should(Succeed())
+
+			By("Reconciling 'another-instance'")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      "another-instance",
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying no Deployment was created")
+			deployment := &appsv1.Deployment{}
+			Consistently(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw",
+					Namespace: namespace,
+				}, deployment)
+				return err != nil
+			}, time.Second*1, interval).Should(BeTrue())
+
+			By("Creating OpenClawInstance named 'instance'")
+			instance := &openclawv1alpha1.OpenClawInstance{}
+			instance.Name = "instance"
+			instance.Namespace = namespace
+			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+
+			By("Reconciling 'instance'")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      "instance",
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying Deployment was created")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw",
+					Namespace: namespace,
+				}, deployment)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
 		})
 	})
 })
