@@ -20,39 +20,39 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// OpenClawInstanceSpec defines the desired state of OpenClawInstance
-type OpenClawInstanceSpec struct {
+// OpenClawSpec defines the desired state of OpenClaw
+type OpenClawSpec struct {
 	// Empty for now
 }
 
-// OpenClawInstanceStatus defines the observed state of OpenClawInstance
-type OpenClawInstanceStatus struct {
+// OpenClawStatus defines the observed state of OpenClaw
+type OpenClawStatus struct {
 	// Empty for now
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:path=openclawinstances,scope=Namespaced
+// +kubebuilder:resource:path=openclaws,scope=Namespaced
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// OpenClawInstance is the Schema for the openclawinstances API
-type OpenClawInstance struct {
+// OpenClaw is the Schema for the openclaws API
+type OpenClaw struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   OpenClawInstanceSpec   `json:"spec,omitempty"`
-	Status OpenClawInstanceStatus `json:"status,omitempty"`
+	Spec   OpenClawSpec   `json:"spec,omitempty"`
+	Status OpenClawStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// OpenClawInstanceList contains a list of OpenClawInstance
-type OpenClawInstanceList struct {
+// OpenClawList contains a list of OpenClaw
+type OpenClawList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []OpenClawInstance `json:"items"`
+	Items           []OpenClaw `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&OpenClawInstance{}, &OpenClawInstanceList{})
+	SchemeBuilder.Register(&OpenClaw{}, &OpenClawList{})
 }

@@ -35,36 +35,36 @@ import (
 	"github.com/codeready-toolchain/openclaw-operator/internal/assets"
 )
 
-// OpenClawDeploymentReconciler reconciles Deployment resources for OpenClawInstance
+// OpenClawDeploymentReconciler reconciles Deployment resources for OpenClaw
 type OpenClawDeploymentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclawinstances,verbs=get;list;watch
+// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclaws,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create
 
-// Reconcile manages Deployment lifecycle for OpenClawInstance resources
+// Reconcile manages Deployment lifecycle for OpenClaw resources
 func (r *OpenClawDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Reconciling OpenClawInstance for Deployment", "name", req.Name, "namespace", req.Namespace)
+	logger.Info("Reconciling OpenClaw for Deployment", "name", req.Name, "namespace", req.Namespace)
 
-	// Fetch the OpenClawInstance resource
-	instance := &openclawv1alpha1.OpenClawInstance{}
+	// Fetch the OpenClaw resource
+	instance := &openclawv1alpha1.OpenClaw{}
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			logger.Info("OpenClawInstance resource not found, ignoring since object must be deleted")
+			logger.Info("OpenClaw resource not found, ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to get OpenClawInstance")
+		logger.Error(err, "Failed to get OpenClaw")
 		return ctrl.Result{}, err
 	}
 
 	// Only reconcile resources named "instance"
 	if instance.Name != "instance" {
-		logger.Info("Skipping reconciliation for OpenClawInstance with non-matching name", "name", instance.Name)
+		logger.Info("Skipping reconciliation for OpenClaw with non-matching name", "name", instance.Name)
 		return ctrl.Result{}, nil
 	}
 
@@ -89,10 +89,10 @@ func (r *OpenClawDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	// Set the Deployment namespace to match the OpenClawInstance namespace
+	// Set the Deployment namespace to match the OpenClaw namespace
 	deployment.Namespace = instance.Namespace
 
-	// Set the OpenClawInstance as the controller owner reference
+	// Set the OpenClaw as the controller owner reference
 	if err := controllerutil.SetControllerReference(instance, deployment, r.Scheme); err != nil {
 		logger.Error(err, "Failed to set controller reference on Deployment")
 		return ctrl.Result{}, err
@@ -121,7 +121,7 @@ func (r *OpenClawDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	})
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&openclawv1alpha1.OpenClawInstance{}).
+		For(&openclawv1alpha1.OpenClaw{}).
 		Owns(&appsv1.Deployment{}, builder.WithPredicates(deploymentNamePredicate)).
 		Named("openclawdeployment").
 		Complete(r)

@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: OpenClawDeploymentController exists
 The system SHALL provide a controller that reconciles OpenClaw custom resources to manage Deployment lifecycle.
@@ -11,7 +11,7 @@ The system SHALL provide a controller that reconciles OpenClaw custom resources 
 - **WHEN** examining the controller code
 - **THEN** it SHALL implement the `Reconcile(context.Context, ctrl.Request) (ctrl.Result, error)` method
 
-### Requirement: Controller watches OpenClaw resources
+### Requirement: Controller watches OpenClawInstance resources
 The system SHALL configure the controller to watch for create, update, and delete events on OpenClaw resources.
 
 #### Scenario: Controller triggers on create
@@ -118,14 +118,14 @@ The system SHALL generate RBAC markers and permissions for the controller to man
 - **WHEN** the controller sets up watches for owned resources
 - **THEN** it SHALL have permissions to watch Deployment resources
 
-### Requirement: Deployment is created in same namespace as OpenClaw
+### Requirement: Deployment is created in same namespace as OpenClawInstance
 The system SHALL create the Deployment resource in the same namespace as the owning OpenClaw resource.
 
 #### Scenario: Namespace matches owner
 - **WHEN** an OpenClaw is created in namespace "test-ns"
 - **THEN** the created Deployment SHALL also be in namespace "test-ns"
 
-### Requirement: Deployment is deleted when OpenClaw is deleted
+### Requirement: Deployment is deleted when OpenClawInstance is deleted
 The system SHALL configure owner references such that Kubernetes garbage collection automatically deletes the Deployment when the owning OpenClaw is deleted.
 
 #### Scenario: Garbage collection deletes Deployment

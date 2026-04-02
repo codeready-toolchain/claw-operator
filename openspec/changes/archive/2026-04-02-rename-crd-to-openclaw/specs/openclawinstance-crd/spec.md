@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: OpenClawInstance CRD exists
 The system SHALL define a CustomResourceDefinition named `OpenClaw` in the API group `openclaw.sandbox.redhat.com/v1alpha1`.

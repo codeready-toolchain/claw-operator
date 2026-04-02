@@ -4,14 +4,14 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: openclawinstances.openclaw.sandbox.redhat.com
+  name: openclaws.openclaw.sandbox.redhat.com
 spec:
   group: openclaw.sandbox.redhat.com
   names:
-    kind: OpenClawInstance
-    listKind: OpenClawInstanceList
-    plural: openclawinstances
-    singular: openclawinstance
+    kind: OpenClaw
+    listKind: OpenClawList
+    plural: openclaws
+    singular: openclaw
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -21,7 +21,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: OpenClawInstance is the Schema for the openclawinstances API
+        description: OpenClaw is the Schema for the openclaws API
         properties:
           apiVersion:
             description: |-
@@ -41,10 +41,10 @@ spec:
           metadata:
             type: object
           spec:
-            description: OpenClawInstanceSpec defines the desired state of OpenClawInstance
+            description: OpenClawSpec defines the desired state of OpenClaw
             type: object
           status:
-            description: OpenClawInstanceStatus defines the observed state of OpenClawInstance
+            description: OpenClawStatus defines the observed state of OpenClaw
             type: object
         type: object
     served: true

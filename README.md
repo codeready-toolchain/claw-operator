@@ -8,16 +8,16 @@ The OpenClaw Operator manages the lifecycle of OpenClaw instances through Kubern
 
 ## Custom Resource Definition
 
-### OpenClawInstance
+### OpenClaw
 
-The `OpenClawInstance` custom resource represents a deployment of OpenClaw in your cluster.
+The `OpenClaw` custom resource represents a deployment of OpenClaw in your cluster.
 
 **API Group:** `openclaw.sandbox.redhat.com/v1alpha1`
 
 **Example:**
 ```yaml
 apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: OpenClawInstance
+kind: OpenClaw
 metadata:
   name: my-openclaw
   namespace: default

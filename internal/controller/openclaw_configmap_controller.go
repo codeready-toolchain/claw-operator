@@ -38,35 +38,35 @@ const (
 	OpenClawConfigMapName = "openclaw-config"
 )
 
-// OpenClawConfigMapReconciler reconciles ConfigMap resources for OpenClawInstance
+// OpenClawConfigMapReconciler reconciles ConfigMap resources for OpenClaw
 type OpenClawConfigMapReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclawinstances,verbs=get;list;watch
+// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclaws,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create
 
-// Reconcile manages ConfigMap lifecycle for OpenClawInstance resources
+// Reconcile manages ConfigMap lifecycle for OpenClaw resources
 func (r *OpenClawConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Reconciling OpenClawInstance for ConfigMap", "name", req.Name, "namespace", req.Namespace)
+	logger.Info("Reconciling OpenClaw for ConfigMap", "name", req.Name, "namespace", req.Namespace)
 
-	// Fetch the OpenClawInstance resource
-	instance := &openclawv1alpha1.OpenClawInstance{}
+	// Fetch the OpenClaw resource
+	instance := &openclawv1alpha1.OpenClaw{}
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			logger.Info("OpenClawInstance resource not found, ignoring since object must be deleted")
+			logger.Info("OpenClaw resource not found, ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to get OpenClawInstance")
+		logger.Error(err, "Failed to get OpenClaw")
 		return ctrl.Result{}, err
 	}
 
 	// Only reconcile resources named "instance"
 	if instance.Name != "instance" {
-		logger.Info("Skipping reconciliation for OpenClawInstance with non-matching name", "name", instance.Name)
+		logger.Info("Skipping reconciliation for OpenClaw with non-matching name", "name", instance.Name)
 		return ctrl.Result{}, nil
 	}
 
@@ -79,10 +79,10 @@ func (r *OpenClawConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	// Set the ConfigMap namespace to match the OpenClawInstance namespace
+	// Set the ConfigMap namespace to match the OpenClaw namespace
 	configMap.Namespace = instance.Namespace
 
-	// Set the OpenClawInstance as the controller owner reference
+	// Set the OpenClaw as the controller owner reference
 	if err := controllerutil.SetControllerReference(instance, configMap, r.Scheme); err != nil {
 		logger.Error(err, "Failed to set controller reference on ConfigMap")
 		return ctrl.Result{}, err
@@ -111,7 +111,7 @@ func (r *OpenClawConfigMapReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	})
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&openclawv1alpha1.OpenClawInstance{}).
+		For(&openclawv1alpha1.OpenClaw{}).
 		Owns(&corev1.ConfigMap{}, builder.WithPredicates(configMapNamePredicate)).
 		Named("openclawconfigmap").
 		Complete(r)
