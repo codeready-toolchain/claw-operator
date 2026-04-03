@@ -37,7 +37,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 	)
 
 	Context("When reconciling without ConfigMap", func() {
-		const resourceName = "instance"
+		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
 		AfterEach(func() {
@@ -82,7 +82,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 	})
 
 	Context("When reconciling with ConfigMap", func() {
-		const resourceName = "instance"
+		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
 		AfterEach(func() {
@@ -185,7 +185,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 					return false
 				}
 				ownerRef := deployment.OwnerReferences[0]
-				return ownerRef.Kind == "OpenClaw" &&
+				return ownerRef.Kind == OpenClawResourceKind &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true

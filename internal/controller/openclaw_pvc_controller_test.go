@@ -36,7 +36,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 	)
 
 	Context("When reconciling an OpenClaw named 'instance'", func() {
-		const resourceName = "instance"
+		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
 		AfterEach(func() {
@@ -120,7 +120,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 					return false
 				}
 				ownerRef := pvc.OwnerReferences[0]
-				return ownerRef.Kind == "OpenClaw" &&
+				return ownerRef.Kind == OpenClawResourceKind &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
@@ -135,7 +135,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 		BeforeEach(func() {
 			// Cleanup any instance named "instance" from previous tests
 			instance := &openclawv1alpha1.OpenClaw{}
-			err := k8sClient.Get(ctx, client.ObjectKey{Name: "instance", Namespace: namespace}, instance)
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawInstanceName, Namespace: namespace}, instance)
 			if err == nil {
 				_ = k8sClient.Delete(ctx, instance)
 			}
