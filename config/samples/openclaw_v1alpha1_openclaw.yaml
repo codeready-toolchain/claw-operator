@@ -1,7 +1,9 @@
 apiVersion: openclaw.sandbox.redhat.com/v1alpha1
 kind: OpenClaw
 metadata:
-  name: openclaw-sample
+  name: instance
   namespace: default
 spec:
-  # TODO: Add spec fields as the CRD evolves
+  # APIKey is the API key for authenticating with the LLM provider (e.g., Gemini)
+  # This value will be injected into the openclaw-proxy-secrets Secret
+  apiKey: "your-gemini-api-key-here"

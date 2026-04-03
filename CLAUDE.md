@@ -6,6 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. CRD: `OpenClaw` in API group `openclaw.sandbox.redhat.com/v1alpha1`.
 
+**CRD Spec Fields:**
+- `apiKey` (string, required): API key for LLM provider authentication (currently Gemini). Injected into `openclaw-proxy-secrets` Secret under `GEMINI_API_KEY` data entry.
+
 ## Common Commands
 
 ```bash
@@ -40,8 +43,9 @@ make docker-build IMG=<registry>/openclaw-operator:tag
 
 The operator uses a **single unified controller** that manages all resources atomically using Kustomize and server-side apply:
 
-**OpenClawReconciler** (`internal/controller/openclaw_controller.go`):
+**OpenClawResourceReconciler** (`internal/controller/openclaw_resource_controller.go`):
 - Reconciles `OpenClaw` CRs named exactly `"instance"` (skips all others)
+- Creates proxy Secret (`openclaw-proxy-secrets`) with API key from CR's `apiKey` field
 - Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (2), proxy Deployment/ConfigMap, and Route (OpenShift only)
 - All resources created atomically as a unit (no ordering dependencies or race conditions)
 - Uses server-side apply for idempotent, conflict-free resource management
@@ -64,27 +68,36 @@ Reconcile(ctx, req) called
   ↓
 2. Filter by name (only "instance")
   ↓
-3. applyKustomizedResources(ctx, instance)
+3. applyProxySecret(ctx, instance)
+   ├─ Read apiKey from instance.Spec.APIKey
+   ├─ Create/update openclaw-proxy-secrets Secret with GEMINI_API_KEY data entry
+   ├─ Set owner reference (for garbage collection)
+   └─ Server-side apply Secret (Patch with Apply)
+  ↓
+4. applyKustomizedResources(ctx, instance)
    ├─ Build Kustomize in-memory from embedded manifests
    ├─ Parse YAML into unstructured objects
    ├─ Set namespace = instance.Namespace on each resource
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply each resource (Patch with Apply)
   ↓
-4. Return success
+5. Return success
 ```
 
 **Key methods:**
 - `Reconcile()` — main entry point, orchestration logic
+- `applyProxySecret()` — creates/updates openclaw-proxy-secrets Secret with API key from CR
 - `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA
 - `parseYAMLToObjects()` — converts multi-doc YAML to unstructured objects
 - `readEmbeddedFile()` — reads files from embedded filesystem
 
-**Shared constants** (`internal/controller/openclaw_controller.go`):
+**Shared constants** (`internal/controller/openclaw_resource_controller.go`):
 - `OpenClawInstanceName = "instance"` — only this name is reconciled
 - `OpenClawConfigMapName = "openclaw-config"`
 - `OpenClawPVCName = "openclaw-home-pvc"`
 - `OpenClawDeploymentName = "openclaw"`
+- `OpenClawProxySecretName = "openclaw-proxy-secrets"` — Secret containing LLM API keys
+- `GeminiAPIKeyName = "GEMINI_API_KEY"` — data key for Gemini API key in proxy Secret
 
 ### Kustomize-based manifest generation
 
@@ -138,6 +151,8 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 - **Framework:** Ginkgo v2 + Gomega with `envtest` (real API server, no full cluster needed)
 - **Shared setup:** `internal/controller/suite_test.go` boots envtest once per suite
 - **Pattern:** Describe/Context/It blocks with `AfterEach` cleanup; uses `Eventually()` for async assertions (10s timeout, 250ms poll)
+- **Test CRs:** All test OpenClaw instances must include the required `apiKey` field (e.g., `instance.Spec.APIKey = "test-api-key"`)
+- **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secret_controller_test.go`, etc.)
 - **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment
 
 ## Conventions

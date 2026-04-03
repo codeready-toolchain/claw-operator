@@ -42,6 +42,14 @@ spec:
             type: object
           spec:
             description: OpenClawSpec defines the desired state of OpenClaw
+            properties:
+              apiKey:
+                description: APIKey is the API key for authenticating with the LLM
+                  provider
+                minLength: 1
+                type: string
+            required:
+            - apiKey
             type: object
           status:
             description: OpenClawStatus defines the observed state of OpenClaw

@@ -34,6 +34,7 @@ import (
 var _ = Describe("OpenClawDeployment Controller", func() {
 	const (
 		namespace = "default"
+		apiKey    = "test-api-key"
 	)
 
 	// NOTE: The unified controller creates all resources atomically via server-side apply,
@@ -64,6 +65,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
+			instance.Spec.APIKey = apiKey
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
@@ -97,6 +99,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
+			instance.Spec.APIKey = apiKey
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
@@ -166,6 +169,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
+			instance.Spec.APIKey = apiKey
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
