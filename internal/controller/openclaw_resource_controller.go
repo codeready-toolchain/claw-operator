@@ -55,6 +55,7 @@ type OpenClawResourceReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclaws,verbs=get;list;watch
+// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclaws/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch

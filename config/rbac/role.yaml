@@ -61,6 +61,12 @@ rules:
   - list
   - watch
 - apiGroups:
+  - openclaw.sandbox.redhat.com
+  resources:
+  - openclaws/finalizers
+  verbs:
+  - update
+- apiGroups:
   - route.openshift.io
   resources:
   - routes
