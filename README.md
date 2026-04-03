@@ -1,6 +1,6 @@
-# openclaw-operator
+# OpenClaw Operator
 
-An operator for managing OpenClaw instances in Red Hat's OpenShift.
+An operator for managing OpenClaw instances in Red Hat OpenShift.
 
 ## Description
 
@@ -33,7 +33,7 @@ The CRD is currently in its initial development phase with spec and status field
 
 ### Prerequisites
 - go version v1.24.0+
-- docker version 17.03+.
+- Pomand version 5.7.0+.
 - kubectl version v1.11.3+.
 - Access to a Kubernetes v1.11.3+ cluster.
 
