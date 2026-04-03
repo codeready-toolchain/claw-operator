@@ -20,6 +20,7 @@ go.work
 !vendor/**/zz_generated.*
 
 # editor and IDE paraphernalia
+.cursor/commands/common
 .idea
 .vscode
 *.swp
