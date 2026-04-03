@@ -19,15 +19,45 @@ The `OpenClaw` custom resource represents a deployment of OpenClaw in your clust
 apiVersion: openclaw.sandbox.redhat.com/v1alpha1
 kind: OpenClaw
 metadata:
-  name: my-openclaw
+  name: instance
   namespace: default
 spec:
-  # Spec fields will be added as the CRD evolves
+  # Required: API key for authenticating with the LLM provider
+  apiKey: "your-gemini-api-key-here"
 status:
   # Status fields will be populated by the controller
 ```
 
-The CRD is currently in its initial development phase with spec and status fields being defined based on operational requirements
+#### Spec Fields
+
+- `apiKey` (string, required): The API key for authenticating with your LLM provider (currently Gemini). This key is stored in a Kubernetes Secret (`openclaw-proxy-secrets`) and injected into the proxy for secure upstream authentication.
+
+**Important:** Only OpenClaw instances named `instance` will be reconciled by the controller.
+
+## Configuration
+
+### API Key Management
+
+The `apiKey` field in the OpenClaw CR is mandatory and used for LLM provider authentication. The controller:
+1. Reads the API key from the OpenClaw CR's `spec.apiKey` field
+2. Creates or updates a Secret named `openclaw-proxy-secrets` with the key stored under `GEMINI_API_KEY`
+3. The proxy deployment automatically mounts this Secret and uses it for upstream requests
+
+**Security Considerations:**
+- The API key is stored directly in the OpenClaw CR (visible via `kubectl get openclaw -o yaml`)
+- Consider enabling encryption at rest for etcd in your cluster
+- Secret reference support (using SecretKeySelector) is planned for future releases to improve security
+
+**Example:**
+```yaml
+apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+kind: OpenClaw
+metadata:
+  name: instance
+  namespace: openclaw-system
+spec:
+  apiKey: "AIzaSyD-your-actual-gemini-api-key-here"
+```
 
 ## Getting Started
 

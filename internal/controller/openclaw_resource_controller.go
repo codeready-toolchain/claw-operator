@@ -39,11 +39,13 @@ import (
 )
 
 const (
-	OpenClawResourceKind   = "OpenClaw"
-	OpenClawInstanceName   = "instance"
-	OpenClawConfigMapName  = "openclaw-config"
-	OpenClawPVCName        = "openclaw-home-pvc"
-	OpenClawDeploymentName = "openclaw"
+	OpenClawResourceKind    = "OpenClaw"
+	OpenClawInstanceName    = "instance"
+	OpenClawConfigMapName   = "openclaw-config"
+	OpenClawPVCName         = "openclaw-home-pvc"
+	OpenClawDeploymentName  = "openclaw"
+	OpenClawProxySecretName = "openclaw-proxy-secrets"
+	GeminiAPIKeyName        = "GEMINI_API_KEY"
 )
 
 // OpenClawResourceReconciler reconciles all resources for OpenClaw
@@ -54,6 +56,7 @@ type OpenClawResourceReconciler struct {
 
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclaws,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -81,6 +84,12 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if instance.Name != OpenClawInstanceName {
 		logger.Info("Skipping reconciliation for OpenClaw with non-matching name", "name", instance.Name)
 		return ctrl.Result{}, nil
+	}
+
+	// Create or update the proxy secrets Secret with API key
+	if err := r.applyProxySecret(ctx, instance); err != nil {
+		logger.Error(err, "Failed to apply proxy secret")
+		return ctrl.Result{}, err
 	}
 
 	// Apply all resources via Kustomize and server-side apply
@@ -180,6 +189,40 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 	return nil
 }
 
+// applyProxySecret creates or updates the openclaw-proxy-secrets Secret with the API key
+func (r *OpenClawResourceReconciler) applyProxySecret(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
+	logger := log.FromContext(ctx)
+
+	// Create the Secret object
+	secret := &corev1.Secret{}
+	secret.SetName(OpenClawProxySecretName)
+	secret.SetNamespace(instance.Namespace)
+	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+	secret.Data = map[string][]byte{
+		GeminiAPIKeyName: []byte(instance.Spec.APIKey),
+	}
+
+	// Set owner reference for garbage collection
+	if err := controllerutil.SetControllerReference(instance, secret, r.Scheme); err != nil {
+		logger.Error(err, "Failed to set controller reference on Secret")
+		return err
+	}
+
+	// Apply the Secret using server-side apply
+	logger.Info("Applying proxy secret", "name", secret.Name)
+	err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
+		FieldManager: "openclaw-operator",
+		Force:        &[]bool{true}[0],
+	})
+	if err != nil {
+		logger.Error(err, "Failed to apply proxy secret")
+		return err
+	}
+
+	logger.Info("Successfully applied proxy secret")
+	return nil
+}
+
 // readEmbeddedFile reads a file from the embedded filesystem
 func readEmbeddedFile(path string) []byte {
 	data, err := assets.ManifestsFS.ReadFile(path)
@@ -221,6 +264,7 @@ func (r *OpenClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&openclawv1alpha1.OpenClaw{}).
 		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.Secret{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&appsv1.Deployment{}).
 		Named("openclaw").

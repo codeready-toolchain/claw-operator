@@ -33,6 +33,7 @@ import (
 var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 	const (
 		namespace = "default"
+		apiKey    = "test-api-key"
 	)
 
 	Context("When reconciling an OpenClaw named 'instance'", func() {
@@ -56,6 +57,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
+			instance.Spec.APIKey = apiKey
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
@@ -89,6 +91,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
+			instance.Spec.APIKey = apiKey
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
@@ -168,6 +171,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
+			instance.Spec.APIKey = apiKey
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler

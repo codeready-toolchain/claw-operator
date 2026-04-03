@@ -22,7 +22,10 @@ import (
 
 // OpenClawSpec defines the desired state of OpenClaw
 type OpenClawSpec struct {
-	// Empty for now
+	// APIKey is the API key for authenticating with the LLM provider
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	APIKey string `json:"apiKey"`
 }
 
 // OpenClawStatus defines the observed state of OpenClaw
