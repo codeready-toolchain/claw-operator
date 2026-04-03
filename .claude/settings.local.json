@@ -20,7 +20,14 @@
       "Bash(go test:*)",
       "Bash(ls:*)",
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test -v ./internal/controller/... -ginkgo.focus=\"OpenClawPersistentVolumeClaim\")",
-      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test -v ./internal/controller/...)"
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test -v ./internal/controller/...)",
+      "Bash(go get:*)",
+      "Bash(go list:*)",
+      "Bash(grep:*)",
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test -v ./internal/controller/... -run \"ConfigMap\")",
+      "Bash(go clean:*)",
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test ./internal/controller/...)",
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test ./internal/controller/... -run \"Deployment\")"
     ]
   }
 }

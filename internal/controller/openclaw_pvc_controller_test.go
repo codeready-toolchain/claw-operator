@@ -59,7 +59,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
-			reconciler := &OpenClawPersistentVolumeClaimReconciler{
+			reconciler := &OpenClawReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -92,7 +92,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
-			reconciler := &OpenClawPersistentVolumeClaimReconciler{
+			reconciler := &OpenClawReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -171,7 +171,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
-			reconciler := &OpenClawPersistentVolumeClaimReconciler{
+			reconciler := &OpenClawReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}

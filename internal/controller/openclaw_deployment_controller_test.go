@@ -36,52 +36,10 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 		namespace = "default"
 	)
 
-	Context("When reconciling without ConfigMap", func() {
-		const resourceName = OpenClawInstanceName
-		ctx := context.Background()
+	// NOTE: The unified controller creates all resources atomically via server-side apply,
+	// so ConfigMap dependency tests are no longer relevant. All resources are created together.
 
-		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
-		})
-
-		It("should NOT create Deployment when ConfigMap doesn't exist", func() {
-			By("Creating a new OpenClaw named 'instance'")
-			instance := &openclawv1alpha1.OpenClaw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
-
-			// Setup reconciler
-			reconciler := &OpenClawDeploymentReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
-			}
-
-			By("Reconciling the created resource")
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying Deployment was NOT created")
-			deployment := &appsv1.Deployment{}
-			Consistently(func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      "openclaw",
-					Namespace: namespace,
-				}, deployment)
-				return err != nil
-			}, time.Second*2, interval).Should(BeTrue())
-		})
-	})
-
-	Context("When reconciling with ConfigMap", func() {
+	Context("When reconciling an OpenClaw named 'instance'", func() {
 		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
@@ -91,33 +49,25 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
 
-			// Cleanup configmap
+			// Cleanup all managed resources
 			configMap := &corev1.ConfigMap{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace}, configMap)
 			_ = k8sClient.Delete(ctx, configMap)
 
-			// Cleanup deployment
 			deployment := &appsv1.Deployment{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw", Namespace: namespace}, deployment)
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
 			_ = k8sClient.Delete(ctx, deployment)
 		})
 
-		It("should create Deployment when ConfigMap exists", func() {
+		It("should create Deployment for OpenClaw named 'instance'", func() {
 			By("Creating a new OpenClaw named 'instance'")
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
-			By("Creating the ConfigMap")
-			configMap := &corev1.ConfigMap{}
-			configMap.Name = OpenClawConfigMapName
-			configMap.Namespace = namespace
-			configMap.Data = map[string]string{"test": "data"}
-			Expect(k8sClient.Create(ctx, configMap)).Should(Succeed())
-
 			// Setup reconciler
-			reconciler := &OpenClawDeploymentReconciler{
+			reconciler := &OpenClawReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -149,15 +99,8 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
-			By("Creating the ConfigMap")
-			configMap := &corev1.ConfigMap{}
-			configMap.Name = OpenClawConfigMapName
-			configMap.Namespace = namespace
-			configMap.Data = map[string]string{"test": "data"}
-			Expect(k8sClient.Create(ctx, configMap)).Should(Succeed())
-
 			// Setup reconciler
-			reconciler := &OpenClawDeploymentReconciler{
+			reconciler := &OpenClawReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -171,11 +114,20 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Checking Deployment has correct owner reference")
+			By("Checking if Deployment was created")
 			deployment := &appsv1.Deployment{}
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      "openclaw",
+					Name:      OpenClawDeploymentName,
+					Namespace: namespace,
+				}, deployment)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
+
+			By("Checking Deployment has correct owner reference")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      OpenClawDeploymentName,
 					Namespace: namespace,
 				}, deployment)
 				if err != nil {
@@ -216,15 +168,8 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			instance.Namespace = namespace
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
-			By("Creating the ConfigMap")
-			configMap := &corev1.ConfigMap{}
-			configMap.Name = OpenClawConfigMapName
-			configMap.Namespace = namespace
-			configMap.Data = map[string]string{"test": "data"}
-			Expect(k8sClient.Create(ctx, configMap)).Should(Succeed())
-
 			// Setup reconciler
-			reconciler := &OpenClawDeploymentReconciler{
+			reconciler := &OpenClawReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -242,7 +187,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			deployment := &appsv1.Deployment{}
 			Consistently(func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      "openclaw",
+					Name:      OpenClawDeploymentName,
 					Namespace: namespace,
 				}, deployment)
 				return err != nil

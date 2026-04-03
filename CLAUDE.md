@@ -36,26 +36,84 @@ make docker-build IMG=<registry>/openclaw-operator:tag
 
 ## Architecture
 
-### Split reconcilers design
+### Unified Kustomize-based controller
 
-The operator uses **split reconcilers** (not one monolithic controller):
+The operator uses a **single unified controller** that manages all resources atomically using Kustomize and server-side apply:
 
-- **OpenClawConfigMapReconciler** (`internal/controller/openclaw_configmap_controller.go`) — creates a ConfigMap (`openclaw-config`) from an embedded manifest
-- **OpenClawPersistentVolumeClaimReconciler** (`internal/controller/openclaw_pvc_controller.go`) — creates a PersistentVolumeClaim (`openclaw-home-pvc`) from an embedded manifest for persistent storage
-- **OpenClawDeploymentReconciler** (`internal/controller/openclaw_deployment_controller.go`) — creates a Deployment (`openclaw`), but only after the ConfigMap exists (explicit dependency check)
+**OpenClawReconciler** (`internal/controller/openclaw_controller.go`):
+- Reconciles `OpenClaw` CRs named exactly `"instance"` (skips all others)
+- Creates ConfigMap (`openclaw-config`), PersistentVolumeClaim (`openclaw-home-pvc`), and Deployment (`openclaw`)
+- All resources created atomically as a unit (no ordering dependencies or race conditions)
+- Uses server-side apply for idempotent, conflict-free resource management
+- Automatically labels all resources with `app.kubernetes.io/name: openclaw`
 
-All three controllers only reconcile `OpenClaw` resources named exactly `"instance"` — all other names are skipped.
+**Key benefits:**
+- Simplified codebase: 1 controller (~200 LOC) vs 3 separate controllers (~400 LOC)
+- Atomic updates: all-or-nothing resource creation prevents partial state
+- Field ownership: server-side apply tracks which controller owns which fields
+- Consistent labeling: queryable with `kubectl get all -l app.kubernetes.io/name=openclaw`
+- Future-proof: adding new resources only requires updating kustomization.yaml
 
-### Embedded manifests
+### Reconciliation flow
 
-Kubernetes manifests are embedded via `//go:embed` in `internal/assets/manifests.go`. The actual YAML files live in `internal/assets/manifests/` (ConfigMap, PVC, Deployment). At runtime, manifests are decoded with the universal deserializer, then the namespace and owner reference are set dynamically.
+```
+Reconcile(ctx, req) called
+  ↓
+1. Fetch OpenClaw CR
+  ↓
+2. Filter by name (only "instance")
+  ↓
+3. applyKustomizedResources(ctx, instance)
+   ├─ Build Kustomize in-memory from embedded manifests
+   ├─ Parse YAML into unstructured objects
+   ├─ Set namespace = instance.Namespace on each resource
+   ├─ Set owner reference (for garbage collection)
+   └─ Server-side apply each resource (Patch with Apply)
+  ↓
+4. Return success
+```
+
+**Key methods:**
+- `Reconcile()` — main entry point, orchestration logic
+- `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA
+- `parseYAMLToObjects()` — converts multi-doc YAML to unstructured objects
+- `readEmbeddedFile()` — reads files from embedded filesystem
+
+**Shared constants** (`internal/controller/openclaw_controller.go`):
+- `OpenClawInstanceName = "instance"` — only this name is reconciled
+- `OpenClawConfigMapName = "openclaw-config"`
+- `OpenClawPVCName = "openclaw-home-pvc"`
+- `OpenClawDeploymentName = "openclaw"`
+
+### Kustomize-based manifest generation
+
+Kubernetes manifests are embedded via `//go:embed` as a complete directory in `internal/assets/manifests.go`:
+
+```go
+//go:embed manifests
+var ManifestsFS embed.FS
+```
+
+The `internal/assets/manifests/` directory contains:
+- **kustomization.yaml** — defines labels and resource list
+- **configmap.yaml** — OpenClaw configuration
+- **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
+- **deployment.yaml** — OpenClaw application pods
+
+**Runtime process:**
+1. Controller loads entire `manifests/` directory into in-memory filesystem
+2. Kustomize API (`krusty.MakeKustomizer`) builds resources from kustomization.yaml
+3. Labels from kustomization.yaml are applied automatically to all resources
+4. Controller sets namespace and owner references dynamically
+5. Server-side apply sends all resources to API server with field manager "openclaw-operator"
+6. Kubernetes handles resource creation/updates idempotently
 
 ### Key directories
 
 - `api/v1alpha1/` — CRD type definitions (OpenClawSpec, OpenClawStatus)
-- `internal/controller/` — Reconciler implementations and tests
-- `internal/assets/manifests/` — Embedded ConfigMap, PVC, and Deployment YAML
-- `cmd/main.go` — Manager entrypoint, wires up all three controllers
+- `internal/controller/` — OpenClawReconciler implementation and tests (separate test files per resource type for readability)
+- `internal/assets/manifests/` — Embedded Kustomize directory with kustomization.yaml, ConfigMap, PVC, and Deployment YAML
+- `cmd/main.go` — Manager entrypoint, wires up the unified OpenClawReconciler
 - `config/` — Kustomize overlays for CRDs, RBAC, manager deployment
 
 ### Code generation
