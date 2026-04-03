@@ -20,7 +20,6 @@ go.work
 !vendor/**/zz_generated.*
 
 # editor and IDE paraphernalia
-.claude/settings.local.json
 .cursor/commands/common
 .idea
 .vscode
