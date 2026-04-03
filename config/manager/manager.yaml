@@ -64,6 +64,7 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
+        imagePullPolicy: Always
         name: manager
         ports: []
         securityContext:
@@ -94,5 +95,24 @@ spec:
             memory: 64Mi
         volumeMounts: []
       volumes: []
+      imagePullSecrets:
+        - name: openclaw-operator-quay-pull-secret
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
+---
+apiVersion: v1
+stringData:
+  .dockerconfigjson: |
+    {
+      "auths": {
+        "quay.io": {
+          "auth": "",
+          "email": ""
+        }
+      }
+    }
+kind: Secret
+metadata:
+  name: quay-pull-secret
+  namespace: system
+type: kubernetes.io/dockerconfigjson
