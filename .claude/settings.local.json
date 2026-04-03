@@ -18,7 +18,8 @@
       "Bash(openspec:*)",
       "Bash(go build:*)",
       "Bash(go test:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(cat /home/igels/Projects/AI/openclaw-operator/.cursor/commands/common/*)"
     ]
   }
 }
