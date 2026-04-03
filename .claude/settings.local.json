@@ -27,7 +27,8 @@
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test -v ./internal/controller/... -run \"ConfigMap\")",
       "Bash(go clean:*)",
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test ./internal/controller/...)",
-      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test ./internal/controller/... -run \"Deployment\")"
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test ./internal/controller/... -run \"Deployment\")",
+      "Bash(git mv:*)"
     ]
   }
 }

@@ -59,7 +59,7 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
-			reconciler := &OpenClawReconciler{
+			reconciler := &OpenClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -92,7 +92,7 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
-			reconciler := &OpenClawReconciler{
+			reconciler := &OpenClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -147,7 +147,7 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
-			reconciler := &OpenClawReconciler{
+			reconciler := &OpenClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
