@@ -31,7 +31,7 @@ import (
 )
 
 // namespace where the project is deployed in
-const namespace = "openclaw-operator-system"
+const namespace = "openclaw-operator"
 
 // serviceAccountName created for the project
 const serviceAccountName = "openclaw-operator-controller-manager"
