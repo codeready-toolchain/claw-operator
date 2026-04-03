@@ -35,22 +35,22 @@ import (
 )
 
 const (
-	OpenClawConfigMapName = "openclaw-config"
+	OpenClawPVCName = "openclaw-home-pvc"
 )
 
-// OpenClawConfigMapReconciler reconciles ConfigMap resources for OpenClaw
-type OpenClawConfigMapReconciler struct {
+// OpenClawPersistentVolumeClaimReconciler reconciles PersistentVolumeClaim resources for OpenClaw
+type OpenClawPersistentVolumeClaimReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclaws,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create
 
-// Reconcile manages ConfigMap lifecycle for OpenClaw resources
-func (r *OpenClawConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// Reconcile manages PersistentVolumeClaim lifecycle for OpenClaw resources
+func (r *OpenClawPersistentVolumeClaimReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Reconciling OpenClaw for ConfigMap", "name", req.Name, "namespace", req.Namespace)
+	logger.Info("Reconciling OpenClaw for PersistentVolumeClaim", "name", req.Name, "namespace", req.Namespace)
 
 	// Fetch the OpenClaw resource
 	instance := &openclawv1alpha1.OpenClaw{}
@@ -70,49 +70,49 @@ func (r *OpenClawConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, nil
 	}
 
-	// Parse the embedded ConfigMap manifest
+	// Parse the embedded PVC manifest
 	decode := serializer.NewCodecFactory(r.Scheme).UniversalDeserializer().Decode
-	configMap := &corev1.ConfigMap{}
-	_, _, err = decode(assets.ConfigMapManifest, nil, configMap)
+	pvc := &corev1.PersistentVolumeClaim{}
+	_, _, err = decode(assets.PVCManifest, nil, pvc)
 	if err != nil {
-		logger.Error(err, "Failed to decode ConfigMap manifest")
+		logger.Error(err, "Failed to decode PVC manifest")
 		return ctrl.Result{}, err
 	}
 
-	// Set the ConfigMap namespace to match the OpenClaw namespace
-	configMap.Namespace = instance.Namespace
+	// Set the PVC namespace to match the OpenClaw namespace
+	pvc.Namespace = instance.Namespace
 
 	// Set the OpenClaw as the controller owner reference
-	if err := controllerutil.SetControllerReference(instance, configMap, r.Scheme); err != nil {
-		logger.Error(err, "Failed to set controller reference on ConfigMap")
+	if err := controllerutil.SetControllerReference(instance, pvc, r.Scheme); err != nil {
+		logger.Error(err, "Failed to set controller reference on PVC")
 		return ctrl.Result{}, err
 	}
 
-	// Create the ConfigMap
-	err = r.Create(ctx, configMap)
+	// Create the PVC
+	err = r.Create(ctx, pvc)
 	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			logger.Info("ConfigMap already exists, skipping creation")
+			logger.Info("PVC already exists, skipping creation")
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to create ConfigMap")
+		logger.Error(err, "Failed to create PVC")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Successfully created ConfigMap")
+	logger.Info("Successfully created PVC")
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *OpenClawConfigMapReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Predicate to filter ConfigMap events by name
-	configMapNamePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		return obj.GetName() == OpenClawConfigMapName
+func (r *OpenClawPersistentVolumeClaimReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Predicate to filter PVC events by name
+	pvcNamePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		return obj.GetName() == OpenClawPVCName
 	})
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&openclawv1alpha1.OpenClaw{}).
-		Owns(&corev1.ConfigMap{}, builder.WithPredicates(configMapNamePredicate)).
-		Named("openclawconfigmap").
+		Owns(&corev1.PersistentVolumeClaim{}, builder.WithPredicates(pvcNamePredicate)).
+		Named("openclawpersistentvolumeclaim").
 		Complete(r)
 }

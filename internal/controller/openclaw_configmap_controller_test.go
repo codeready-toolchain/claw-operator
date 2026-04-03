@@ -36,7 +36,7 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 	)
 
 	Context("When reconciling an OpenClaw named 'instance'", func() {
-		const resourceName = "instance"
+		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
 		AfterEach(func() {
@@ -120,7 +120,7 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 					return false
 				}
 				ownerRef := configMap.OwnerReferences[0]
-				return ownerRef.Kind == "OpenClaw" &&
+				return ownerRef.Kind == OpenClawResourceKind &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true

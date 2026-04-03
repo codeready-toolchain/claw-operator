@@ -63,7 +63,7 @@ func (r *OpenClawDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// Only reconcile resources named "instance"
-	if instance.Name != "instance" {
+	if instance.Name != OpenClawInstanceName {
 		logger.Info("Skipping reconciliation for OpenClaw with non-matching name", "name", instance.Name)
 		return ctrl.Result{}, nil
 	}

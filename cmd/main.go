@@ -217,6 +217,14 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "OpenClawDeployment")
 		os.Exit(1)
 	}
+
+	if err = (&controller.OpenClawPersistentVolumeClaimReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "OpenClawPersistentVolumeClaim")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {

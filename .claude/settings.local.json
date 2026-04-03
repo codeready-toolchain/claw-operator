@@ -18,7 +18,9 @@
       "Bash(openspec:*)",
       "Bash(go build:*)",
       "Bash(go test:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test -v ./internal/controller/... -ginkgo.focus=\"OpenClawPersistentVolumeClaim\")",
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test -v ./internal/controller/...)"
     ]
   }
 }
