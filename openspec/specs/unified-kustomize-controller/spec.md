@@ -1,0 +1,158 @@
+## ADDED Requirements
+
+### Requirement: Controller watches OpenClaw resources
+The OpenClawReconciler controller SHALL watch OpenClaw custom resources in all namespaces and trigger reconciliation when changes occur.
+
+#### Scenario: OpenClaw resource created triggers reconciliation
+- **WHEN** an OpenClaw custom resource is created
+- **THEN** the controller reconciliation loop is triggered with the resource name and namespace
+
+#### Scenario: OpenClaw resource updated triggers reconciliation
+- **WHEN** an OpenClaw custom resource is updated
+- **THEN** the controller reconciliation loop is triggered
+
+#### Scenario: OpenClaw resource deleted triggers reconciliation
+- **WHEN** an OpenClaw custom resource is deleted
+- **THEN** the controller reconciliation loop is triggered to handle cleanup
+
+### Requirement: Controller filters by instance name
+The controller SHALL only reconcile OpenClaw resources named 'instance' and skip all other names.
+
+#### Scenario: Reconcile OpenClaw named 'instance'
+- **WHEN** an OpenClaw resource named 'instance' is created or updated
+- **THEN** the controller proceeds with manifest generation and application
+
+#### Scenario: Skip OpenClaw with different name
+- **WHEN** an OpenClaw resource with a name other than 'instance' is created
+- **THEN** the controller logs a skip message and returns without applying resources
+
+### Requirement: Controller builds Kustomize manifests in-memory
+The controller SHALL use the Kustomize API to build manifests in-memory from the embedded manifests directory.
+
+#### Scenario: Kustomize build from embedded filesystem
+- **WHEN** reconciling an OpenClaw named 'instance'
+- **THEN** the controller loads the embedded manifests filesystem
+- **THEN** the controller invokes kustomize.Run() to build the resource map
+
+#### Scenario: Kustomization file specifies resources
+- **WHEN** the Kustomize build executes
+- **THEN** it SHALL process the kustomization.yaml file in internal/assets/manifests/
+- **THEN** the kustomization SHALL reference all resource YAML files (configmap.yaml, pvc.yaml, deployment.yaml)
+
+#### Scenario: Common labels applied via Kustomize
+- **WHEN** the Kustomize build executes
+- **THEN** all resources SHALL have the label `app.kubernetes.io/name: openclaw` applied via commonLabels in kustomization.yaml
+
+### Requirement: Controller sets namespace on all resources
+The controller SHALL set the namespace on all built resources to match the OpenClaw instance's namespace.
+
+#### Scenario: Namespace matches OpenClaw instance
+- **WHEN** processing the built resource map
+- **THEN** the controller iterates each resource and sets namespace to instance.Namespace
+- **THEN** all resources are created in the same namespace as the OpenClaw CR
+
+### Requirement: Controller sets owner references on all resources
+The controller SHALL set the OpenClaw instance as the controller owner reference on all created resources.
+
+#### Scenario: Owner reference set on all resources
+- **WHEN** processing the built resource map
+- **THEN** the controller sets a controller owner reference on each resource pointing to the OpenClaw instance
+- **THEN** all resources will be automatically garbage collected when the OpenClaw is deleted
+
+### Requirement: Controller applies resources using server-side apply
+The controller SHALL apply all resources atomically using Kubernetes server-side apply.
+
+#### Scenario: Server-side apply with field manager
+- **WHEN** applying the built resources
+- **THEN** the controller uses client.Patch() with Apply patch type
+- **THEN** the controller specifies a field manager name (e.g., "openclaw-operator")
+- **THEN** Kubernetes tracks field ownership for the controller
+
+#### Scenario: Idempotent application
+- **WHEN** reconciliation runs multiple times
+- **THEN** server-side apply handles resource existence automatically
+- **THEN** the controller does not need explicit AlreadyExists error handling
+- **THEN** only changed fields are updated
+
+#### Scenario: Atomic resource application
+- **WHEN** applying multiple resources
+- **THEN** all resources are applied in a single reconciliation pass
+- **THEN** if any resource fails to apply, the reconciliation returns an error
+
+### Requirement: Controller handles resource not found
+The controller SHALL handle the case where the OpenClaw resource is not found during reconciliation.
+
+#### Scenario: OpenClaw deleted before reconciliation
+- **WHEN** the OpenClaw resource is not found during reconciliation
+- **THEN** the controller logs that the resource was deleted
+- **THEN** the controller returns without error (no requeue)
+- **THEN** Kubernetes garbage collection removes owned resources
+
+### Requirement: Controller logs reconciliation events
+The controller SHALL log key reconciliation events for observability.
+
+#### Scenario: Log reconciliation start
+- **WHEN** reconciliation begins
+- **THEN** the controller logs the OpenClaw name and namespace being reconciled
+
+#### Scenario: Log Kustomize build success
+- **WHEN** Kustomize manifests are built successfully
+- **THEN** the controller logs the number of resources generated
+
+#### Scenario: Log server-side apply success
+- **WHEN** resources are successfully applied
+- **THEN** the controller logs a success message
+
+#### Scenario: Log reconciliation failures
+- **WHEN** Kustomize build or server-side apply fails
+- **THEN** the controller logs the error
+- **THEN** the controller returns the error to trigger retry
+
+### Requirement: Controller registers with manager
+The controller SHALL register with the controller-runtime manager and configure appropriate watches.
+
+#### Scenario: Controller registered with manager
+- **WHEN** the controller's SetupWithManager is called
+- **THEN** the controller registers to watch OpenClaw resources as the primary resource
+- **THEN** the controller registers to own ConfigMap resources
+- **THEN** the controller registers to own PersistentVolumeClaim resources
+- **THEN** the controller registers to own Deployment resources
+- **THEN** the controller is named "openclaw" for identification
+
+### Requirement: Controller has RBAC permissions
+The controller SHALL have necessary RBAC permissions defined via kubebuilder annotations.
+
+#### Scenario: OpenClaw resource permissions
+- **WHEN** the controller is deployed
+- **THEN** RBAC rules grant get, list, and watch permissions for OpenClaw resources
+
+#### Scenario: ConfigMap permissions
+- **WHEN** the controller is deployed
+- **THEN** RBAC rules grant get, list, watch, create, update, and patch permissions for ConfigMap resources
+
+#### Scenario: PersistentVolumeClaim permissions
+- **WHEN** the controller is deployed
+- **THEN** RBAC rules grant get, list, watch, create, update, and patch permissions for PersistentVolumeClaim resources
+
+#### Scenario: Deployment permissions
+- **WHEN** the controller is deployed
+- **THEN** RBAC rules grant get, list, watch, create, update, and patch permissions for Deployment resources
+
+### Requirement: All managed resources have common labels
+All resources created by the controller SHALL have the label `app.kubernetes.io/name: openclaw`.
+
+#### Scenario: ConfigMap has common label
+- **WHEN** the ConfigMap resource is created
+- **THEN** it SHALL have the label `app.kubernetes.io/name: openclaw`
+
+#### Scenario: PVC has common label
+- **WHEN** the PersistentVolumeClaim resource is created
+- **THEN** it SHALL have the label `app.kubernetes.io/name: openclaw`
+
+#### Scenario: Deployment has common label
+- **WHEN** the Deployment resource is created
+- **THEN** it SHALL have the label `app.kubernetes.io/name: openclaw`
+
+#### Scenario: Resources queryable by label
+- **WHEN** listing resources with label selector `app.kubernetes.io/name=openclaw`
+- **THEN** all resources managed by the controller SHALL be returned
