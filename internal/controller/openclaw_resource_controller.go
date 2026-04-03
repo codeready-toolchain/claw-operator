@@ -45,8 +45,8 @@ const (
 	OpenClawDeploymentName = "openclaw"
 )
 
-// OpenClawReconciler reconciles all resources for OpenClaw
-type OpenClawReconciler struct {
+// OpenClawResourceReconciler reconciles all resources for OpenClaw
+type OpenClawResourceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
@@ -57,7 +57,7 @@ type OpenClawReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 
 // Reconcile manages the complete lifecycle of resources for OpenClaw instances
-func (r *OpenClawReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Reconciling OpenClaw", "name", req.Name, "namespace", req.Namespace)
 
@@ -88,7 +88,7 @@ func (r *OpenClawReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 }
 
 // applyKustomizedResources builds manifests using Kustomize and applies them via server-side apply
-func (r *OpenClawReconciler) applyKustomizedResources(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
+func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
 	logger := log.FromContext(ctx)
 
 	// Build manifests using Kustomize
@@ -202,7 +202,7 @@ func parseYAMLToObjects(yamlData []byte) ([]*unstructured.Unstructured, error) {
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *OpenClawReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *OpenClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&openclawv1alpha1.OpenClaw{}).
 		Owns(&corev1.ConfigMap{}).
