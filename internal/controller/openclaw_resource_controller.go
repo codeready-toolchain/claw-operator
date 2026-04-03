@@ -23,6 +23,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -55,6 +56,9 @@ type OpenClawResourceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile manages the complete lifecycle of resources for OpenClaw instances
 func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -99,10 +103,16 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 
 	// Write all manifest files (including kustomization.yaml) to in-memory filesystem
 	manifestFiles := map[string][]byte{
-		"manifests/kustomization.yaml": readEmbeddedFile("manifests/kustomization.yaml"),
-		"manifests/configmap.yaml":     readEmbeddedFile("manifests/configmap.yaml"),
-		"manifests/pvc.yaml":           readEmbeddedFile("manifests/pvc.yaml"),
-		"manifests/deployment.yaml":    readEmbeddedFile("manifests/deployment.yaml"),
+		"manifests/kustomization.yaml":    readEmbeddedFile("manifests/kustomization.yaml"),
+		"manifests/configmap.yaml":        readEmbeddedFile("manifests/configmap.yaml"),
+		"manifests/pvc.yaml":              readEmbeddedFile("manifests/pvc.yaml"),
+		"manifests/deployment.yaml":       readEmbeddedFile("manifests/deployment.yaml"),
+		"manifests/service.yaml":          readEmbeddedFile("manifests/service.yaml"),
+		"manifests/route.yaml":            readEmbeddedFile("manifests/route.yaml"),
+		"manifests/proxy-configmap.yaml":  readEmbeddedFile("manifests/proxy-configmap.yaml"),
+		"manifests/proxy-deployment.yaml": readEmbeddedFile("manifests/proxy-deployment.yaml"),
+		"manifests/proxy-service.yaml":    readEmbeddedFile("manifests/proxy-service.yaml"),
+		"manifests/networkpolicy.yaml":    readEmbeddedFile("manifests/networkpolicy.yaml"),
 	}
 
 	for path, content := range manifestFiles {
@@ -156,6 +166,11 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 			Force:        &[]bool{true}[0],
 		})
 		if err != nil {
+			// Skip resources whose CRDs are not registered (e.g., Route on non-OpenShift clusters)
+			if meta.IsNoMatchError(err) {
+				logger.Info("Skipping resource - CRD not registered in cluster", "kind", obj.GetKind(), "name", obj.GetName())
+				continue
+			}
 			logger.Error(err, "Failed to apply resource", "kind", obj.GetKind(), "name", obj.GetName())
 			return err
 		}

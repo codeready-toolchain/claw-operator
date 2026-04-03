@@ -42,10 +42,11 @@ The operator uses a **single unified controller** that manages all resources ato
 
 **OpenClawReconciler** (`internal/controller/openclaw_controller.go`):
 - Reconciles `OpenClaw` CRs named exactly `"instance"` (skips all others)
-- Creates ConfigMap (`openclaw-config`), PersistentVolumeClaim (`openclaw-home-pvc`), and Deployment (`openclaw`)
+- Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (2), proxy Deployment/ConfigMap, and Route (OpenShift only)
 - All resources created atomically as a unit (no ordering dependencies or race conditions)
 - Uses server-side apply for idempotent, conflict-free resource management
 - Automatically labels all resources with `app.kubernetes.io/name: openclaw`
+- Gracefully skips resources whose CRDs aren't registered (e.g., Route on vanilla Kubernetes)
 
 **Key benefits:**
 - Simplified codebase: 1 controller (~200 LOC) vs 3 separate controllers (~400 LOC)
@@ -99,6 +100,12 @@ The `internal/assets/manifests/` directory contains:
 - **configmap.yaml** — OpenClaw configuration
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
 - **deployment.yaml** — OpenClaw application pods
+- **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)
+- **route.yaml** — OpenShift Route for external HTTPS access (skipped on non-OpenShift)
+- **proxy-configmap.yaml** — Nginx configuration for LLM API proxy
+- **proxy-deployment.yaml** — Nginx proxy with credential injection from Secrets
+- **proxy-service.yaml** — ClusterIP service for proxy (port 8080)
+- **networkpolicy.yaml** — Two NetworkPolicies for egress control (OpenClaw → proxy, proxy → internet)
 
 **Runtime process:**
 1. Controller loads entire `manifests/` directory into in-memory filesystem
@@ -112,7 +119,7 @@ The `internal/assets/manifests/` directory contains:
 
 - `api/v1alpha1/` — CRD type definitions (OpenClawSpec, OpenClawStatus)
 - `internal/controller/` — OpenClawReconciler implementation and tests (separate test files per resource type for readability)
-- `internal/assets/manifests/` — Embedded Kustomize directory with kustomization.yaml, ConfigMap, PVC, and Deployment YAML
+- `internal/assets/manifests/` — Embedded Kustomize directory with all manifests (10 total: kustomization.yaml, core resources, networking, and proxy components)
 - `cmd/main.go` — Manager entrypoint, wires up the unified OpenClawReconciler
 - `config/` — Kustomize overlays for CRDs, RBAC, manager deployment
 
