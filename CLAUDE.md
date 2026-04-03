@@ -36,25 +36,26 @@ make docker-build IMG=<registry>/openclaw-operator:tag
 
 ## Architecture
 
-### Two-controller design
+### Split reconcilers design
 
 The operator uses **split reconcilers** (not one monolithic controller):
 
 - **OpenClawConfigMapReconciler** (`internal/controller/openclaw_configmap_controller.go`) — creates a ConfigMap (`openclaw-config`) from an embedded manifest
+- **OpenClawPersistentVolumeClaimReconciler** (`internal/controller/openclaw_pvc_controller.go`) — creates a PersistentVolumeClaim (`openclaw-home-pvc`) from an embedded manifest for persistent storage
 - **OpenClawDeploymentReconciler** (`internal/controller/openclaw_deployment_controller.go`) — creates a Deployment (`openclaw`), but only after the ConfigMap exists (explicit dependency check)
 
-Both controllers only reconcile `OpenClaw` resources named exactly `"instance"` — all other names are skipped.
+All three controllers only reconcile `OpenClaw` resources named exactly `"instance"` — all other names are skipped.
 
 ### Embedded manifests
 
-Kubernetes manifests are embedded via `//go:embed` in `internal/assets/manifests.go`. The actual YAML files live in `internal/assets/manifests/`. At runtime, manifests are decoded with the universal deserializer, then the namespace and owner reference are set dynamically.
+Kubernetes manifests are embedded via `//go:embed` in `internal/assets/manifests.go`. The actual YAML files live in `internal/assets/manifests/` (ConfigMap, PVC, Deployment). At runtime, manifests are decoded with the universal deserializer, then the namespace and owner reference are set dynamically.
 
 ### Key directories
 
 - `api/v1alpha1/` — CRD type definitions (OpenClawSpec, OpenClawStatus)
 - `internal/controller/` — Reconciler implementations and tests
-- `internal/assets/manifests/` — Embedded ConfigMap and Deployment YAML
-- `cmd/main.go` — Manager entrypoint, wires up both controllers
+- `internal/assets/manifests/` — Embedded ConfigMap, PVC, and Deployment YAML
+- `cmd/main.go` — Manager entrypoint, wires up all three controllers
 - `config/` — Kustomize overlays for CRDs, RBAC, manager deployment
 
 ### Code generation
