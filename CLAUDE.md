@@ -9,6 +9,9 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 **CRD Spec Fields:**
 - `apiKey` (string, required): API key for LLM provider authentication (currently Gemini). Injected into `openclaw-proxy-secrets` Secret under `GEMINI_API_KEY` data entry.
 
+**Version Logging:**
+The operator logs version and build time at startup: `version` (short commit SHA) and `buildTime` (RFC3339). Injected via LDFLAGS during `docker-build`. Local builds show defaults (`dev`/`unknown`).
+
 ## Common Commands
 
 ```bash
@@ -146,7 +149,7 @@ The `internal/assets/manifests/` directory contains:
 - `api/v1alpha1/` — CRD type definitions (OpenClawSpec, OpenClawStatus)
 - `internal/controller/` — OpenClawReconciler implementation and tests (separate test files per resource type for readability)
 - `internal/assets/manifests/` — Embedded Kustomize directory with all manifests (10 total: kustomization.yaml, core resources, networking, and proxy components)
-- `cmd/main.go` — Manager entrypoint, wires up the unified OpenClawReconciler
+- `cmd/main.go` — Manager entrypoint, wires up the unified OpenClawReconciler. Contains package-level `version` and `buildTime` variables set via LDFLAGS during build, logged at startup
 - `config/` — Kustomize overlays for CRDs, RBAC, manager deployment
 
 ### Code generation

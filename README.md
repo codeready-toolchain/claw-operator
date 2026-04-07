@@ -78,6 +78,25 @@ spec:
   apiKey: "AIzaSyD-your-actual-gemini-api-key-here"
 ```
 
+## Version Information
+
+The operator logs its version and build time during startup for troubleshooting and deployment tracking:
+
+```
+INFO	setup	Starting OpenClaw Operator	{"version": "fc7c72b0", "buildTime": "2026-04-07T13:17:26Z"}
+```
+
+**Version fields:**
+- `version`: Short commit SHA (7 characters) of the source code used to build the binary
+- `buildTime`: RFC3339 timestamp indicating when the binary was built
+
+**How it works:**
+- Version information is injected at build time via LDFLAGS in the `docker-build` Makefile target
+- Local development builds (e.g., `make run`) show default values: `version="dev"` and `buildTime="unknown"`
+- Production container builds automatically capture the git commit SHA and build timestamp
+
+This allows operators to quickly identify which version is running in any environment by checking the startup logs.
+
 ## Getting Started
 
 ### Prerequisites
