@@ -45,6 +45,7 @@ The operator uses a **single unified controller** that manages all resources ato
 
 **OpenClawResourceReconciler** (`internal/controller/openclaw_resource_controller.go`):
 - Reconciles `OpenClaw` CRs named exactly `"instance"` (skips all others)
+- Creates gateway Secret (`openclaw-secrets`) with randomly-generated authentication token
 - Creates proxy Secret (`openclaw-proxy-secrets`) with API key from CR's `apiKey` field
 - Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (2), proxy Deployment/ConfigMap, and Route (OpenShift only)
 - All resources created atomically as a unit (no ordering dependencies or race conditions)
@@ -68,24 +69,34 @@ Reconcile(ctx, req) called
   ↓
 2. Filter by name (only "instance")
   ↓
-3. applyProxySecret(ctx, instance)
+3. applyGatewaySecret(ctx, instance)
+   ├─ Check if openclaw-secrets Secret already exists
+   ├─ If exists and has OPENCLAW_GATEWAY_TOKEN, preserve existing token
+   ├─ If not exists or missing token, generate new 64-char hex token using crypto/rand
+   ├─ Create/update openclaw-secrets Secret with OPENCLAW_GATEWAY_TOKEN data entry
+   ├─ Set owner reference (for garbage collection)
+   └─ Server-side apply Secret (Patch with Apply)
+  ↓
+4. applyProxySecret(ctx, instance)
    ├─ Read apiKey from instance.Spec.APIKey
    ├─ Create/update openclaw-proxy-secrets Secret with GEMINI_API_KEY data entry
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply Secret (Patch with Apply)
   ↓
-4. applyKustomizedResources(ctx, instance)
+5. applyKustomizedResources(ctx, instance)
    ├─ Build Kustomize in-memory from embedded manifests
    ├─ Parse YAML into unstructured objects
    ├─ Set namespace = instance.Namespace on each resource
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply each resource (Patch with Apply)
   ↓
-5. Return success
+6. Return success
 ```
 
 **Key methods:**
 - `Reconcile()` — main entry point, orchestration logic
+- `generateGatewayToken()` — generates cryptographically secure 64-char hex token using crypto/rand
+- `applyGatewaySecret()` — creates/updates openclaw-secrets Secret with gateway token (preserves existing token)
 - `applyProxySecret()` — creates/updates openclaw-proxy-secrets Secret with API key from CR
 - `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA
 - `parseYAMLToObjects()` — converts multi-doc YAML to unstructured objects
@@ -97,7 +108,9 @@ Reconcile(ctx, req) called
 - `OpenClawPVCName = "openclaw-home-pvc"`
 - `OpenClawDeploymentName = "openclaw"`
 - `OpenClawProxySecretName = "openclaw-proxy-secrets"` — Secret containing LLM API keys
+- `OpenClawGatewaySecretName = "openclaw-secrets"` — Secret containing gateway authentication token
 - `GeminiAPIKeyName = "GEMINI_API_KEY"` — data key for Gemini API key in proxy Secret
+- `GatewayTokenKeyName = "OPENCLAW_GATEWAY_TOKEN"` — data key for gateway token in gateway Secret
 
 ### Kustomize-based manifest generation
 

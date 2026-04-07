@@ -36,7 +36,25 @@ status:
 
 ## Configuration
 
-### API Key Management
+### Secrets Management
+
+The OpenClaw operator automatically creates and manages two Kubernetes Secrets for authentication:
+
+#### 1. Gateway Authentication Token (`openclaw-secrets`)
+
+The controller automatically generates a secure, randomly-generated authentication token for the OpenClaw gateway:
+- **Secret name:** `openclaw-secrets`
+- **Data entry:** `OPENCLAW_GATEWAY_TOKEN` - A cryptographically secure 64-character hex string (256-bit entropy)
+- **Generation:** Automatically created on first reconciliation using Go's `crypto/rand` package
+- **Persistence:** Token is preserved across reconciliations (never regenerated unless the Secret is deleted)
+- **Lifecycle:** Automatically deleted when the OpenClaw instance is removed (via owner references)
+
+**Example retrieval:**
+```sh
+kubectl get secret openclaw-secrets -n openclaw-system -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d
+```
+
+#### 2. LLM API Key (`openclaw-proxy-secrets`)
 
 The `apiKey` field in the OpenClaw CR is mandatory and used for LLM provider authentication. The controller:
 1. Reads the API key from the OpenClaw CR's `spec.apiKey` field
@@ -44,7 +62,8 @@ The `apiKey` field in the OpenClaw CR is mandatory and used for LLM provider aut
 3. The proxy deployment automatically mounts this Secret and uses it for upstream requests
 
 **Security Considerations:**
-- The API key is stored directly in the OpenClaw CR (visible via `kubectl get openclaw -o yaml`)
+- The LLM API key is stored directly in the OpenClaw CR (visible via `kubectl get openclaw -o yaml`)
+- The gateway token is never exposed in the CR, only in the Secret
 - Consider enabling encryption at rest for etcd in your cluster
 - Secret reference support (using SecretKeySelector) is planned for future releases to improve security
 
