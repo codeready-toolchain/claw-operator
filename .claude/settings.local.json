@@ -28,7 +28,16 @@
       "Bash(go clean:*)",
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test ./internal/controller/...)",
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.33.0-darwin-arm64\" go test ./internal/controller/... -run \"Deployment\")",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(timeout 5 go run ./cmd/main.go)",
+      "Bash(timeout 3 ./bin/manager)",
+      "Bash(make docker-build:*)",
+      "Bash(timeout 5 podman run --rm openclaw-operator:test-version)",
+      "Bash(podman create:*)",
+      "Bash(podman cp:*)",
+      "Bash(podman rm:*)",
+      "Bash(chmod +x ./manager-test)",
+      "Bash(timeout 3 ./manager-test)"
     ]
   }
 }

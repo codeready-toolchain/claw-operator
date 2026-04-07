@@ -45,6 +45,10 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+
+	// version and buildTime are set via LDFLAGS during build
+	version   = "dev"
+	buildTime = "unknown"
 )
 
 func init() {
@@ -236,7 +240,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager")
+	setupLog.Info("Starting OpenClaw Operator", "version", version, "buildTime", buildTime)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
