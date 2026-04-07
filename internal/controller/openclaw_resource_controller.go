@@ -19,6 +19,8 @@ package controller
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -39,13 +41,15 @@ import (
 )
 
 const (
-	OpenClawResourceKind    = "OpenClaw"
-	OpenClawInstanceName    = "instance"
-	OpenClawConfigMapName   = "openclaw-config"
-	OpenClawPVCName         = "openclaw-home-pvc"
-	OpenClawDeploymentName  = "openclaw"
-	OpenClawProxySecretName = "openclaw-proxy-secrets"
-	GeminiAPIKeyName        = "GEMINI_API_KEY"
+	OpenClawResourceKind      = "OpenClaw"
+	OpenClawInstanceName      = "instance"
+	OpenClawConfigMapName     = "openclaw-config"
+	OpenClawPVCName           = "openclaw-home-pvc"
+	OpenClawDeploymentName    = "openclaw"
+	OpenClawProxySecretName   = "openclaw-proxy-secrets"
+	OpenClawGatewaySecretName = "openclaw-secrets"
+	GeminiAPIKeyName          = "GEMINI_API_KEY"
+	GatewayTokenKeyName       = "OPENCLAW_GATEWAY_TOKEN"
 )
 
 // OpenClawResourceReconciler reconciles all resources for OpenClaw
@@ -85,6 +89,12 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if instance.Name != OpenClawInstanceName {
 		logger.Info("Skipping reconciliation for OpenClaw with non-matching name", "name", instance.Name)
 		return ctrl.Result{}, nil
+	}
+
+	// Create or update the gateway secrets Secret with token
+	if err := r.applyGatewaySecret(ctx, instance); err != nil {
+		logger.Error(err, "Failed to apply gateway secret")
+		return ctrl.Result{}, err
 	}
 
 	// Create or update the proxy secrets Secret with API key
@@ -187,6 +197,87 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 	}
 
 	logger.Info("Successfully applied all resources", "count", len(objects))
+	return nil
+}
+
+// generateGatewayToken generates a cryptographically secure random token
+// using crypto/rand. Returns a 64-character hex string (32 random bytes).
+func generateGatewayToken() (string, error) {
+	randomBytes := make([]byte, 32)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(randomBytes), nil
+}
+
+// applyGatewaySecret creates or updates the openclaw-secrets Secret with the gateway token
+func (r *OpenClawResourceReconciler) applyGatewaySecret(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
+	logger := log.FromContext(ctx)
+
+	// Check if the secret already exists
+	existingSecret := &corev1.Secret{}
+	secretKey := client.ObjectKey{
+		Namespace: instance.Namespace,
+		Name:      OpenClawGatewaySecretName,
+	}
+	err := r.Get(ctx, secretKey, existingSecret)
+
+	var token string
+	if err == nil {
+		// Secret exists - check if it has the token entry
+		if existingToken, exists := existingSecret.Data[GatewayTokenKeyName]; exists && len(existingToken) > 0 {
+			logger.Info("Gateway secret already exists with token, skipping generation", "name", OpenClawGatewaySecretName)
+			token = string(existingToken)
+		} else {
+			// Secret exists but missing token - generate new one
+			logger.Info("Gateway secret exists but missing token, generating new one")
+			token, err = generateGatewayToken()
+			if err != nil {
+				logger.Error(err, "Failed to generate gateway token")
+				return err
+			}
+		}
+	} else if apierrors.IsNotFound(err) {
+		// Secret doesn't exist - generate new token
+		logger.Info("Gateway secret does not exist, generating new token")
+		token, err = generateGatewayToken()
+		if err != nil {
+			logger.Error(err, "Failed to generate gateway token")
+			return err
+		}
+	} else {
+		// Error fetching secret
+		logger.Error(err, "Failed to check for existing gateway secret")
+		return err
+	}
+
+	// Create the Secret object
+	secret := &corev1.Secret{}
+	secret.SetName(OpenClawGatewaySecretName)
+	secret.SetNamespace(instance.Namespace)
+	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+	secret.Data = map[string][]byte{
+		GatewayTokenKeyName: []byte(token),
+	}
+
+	// Set owner reference for garbage collection
+	if err := controllerutil.SetControllerReference(instance, secret, r.Scheme); err != nil {
+		logger.Error(err, "Failed to set controller reference on gateway secret")
+		return err
+	}
+
+	// Apply the Secret using server-side apply
+	logger.Info("Applying gateway secret", "name", secret.Name)
+	err = r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
+		FieldManager: "openclaw-operator",
+		Force:        &[]bool{true}[0],
+	})
+	if err != nil {
+		logger.Error(err, "Failed to apply gateway secret")
+		return err
+	}
+
+	logger.Info("Successfully applied gateway secret")
 	return nil
 }
 
