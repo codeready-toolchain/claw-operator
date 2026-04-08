@@ -11,7 +11,7 @@ On Dev Sandbox, each OpenClaw instance runs in a user's namespace with their per
 ## Current Security Posture (must keep)
 
 - **OpenClaw pod egress locked to proxy only** — the OpenClaw process can never reach the internet or the Kubernetes API directly, only through the proxy (TCP 8080) + DNS. This is a cornerstone security measure.
-- Credential isolation via reverse proxy (OpenClaw never sees raw API keys)
+- Credential isolation via forward proxy (OpenClaw never sees raw API keys)
 - Proxy pod egress limited to TCP 443 + DNS; proxy L7 blocks unknown paths (returns 403)
 - Pod hardening: non-root (uid 65532), `readOnlyRootFilesystem`, `seccompProfile: RuntimeDefault`, all capabilities dropped, `automountServiceAccountToken: false`
 - Edge TLS on the Route with HTTP-to-HTTPS redirect
@@ -27,28 +27,40 @@ The operator auto-generates a cryptographically random gateway token during reco
 
 ### 2. Credential Provisioning (Q2)
 
-Typed credential CRDs using the `XYZCredential` naming pattern, organized by credential *shape*:
+A single unified `ClawCredential` CRD (short name `cc`) with a `type` discriminator field, organized by credential *shape*:
 
-- **`APIKeyCredential`** — Gemini, Anthropic, OpenAI, OpenRouter, etc. Wraps a Secret ref + target domain + header name/format.
-- **`GCPCredential`** — Vertex AI, GCP APIs. Wraps a Secret ref (SA JSON) + project + location + domain.
-- **`BearerTokenCredential`** — GitHub, simple bearer services. Wraps a Secret ref + target domain.
-- Additional CRDs as needed (e.g., `OAuth2Credential`, `ChannelCredential`).
+- **`apiKey`** — Gemini, Anthropic, Discord, Jira, MCP servers. Secret ref + domain + header name + optional value prefix.
+- **`bearer`** — OpenAI, OpenRouter, GitHub, Slack, WhatsApp, MCP servers. Secret ref + domain.
+- **`gcp`** — Vertex AI, GCP APIs. Secret ref (SA JSON) + project + location + domain.
+- **`pathToken`** — Telegram. Secret ref + domain + URL path prefix.
+- **`oauth2`** — Enterprise MCP servers, corporate APIs. Secret ref (client secret) + domain + token URL + scopes.
+- **`kubernetes`** — Kubernetes API access. ServiceAccount name + domain (kube-apiserver).
+- **`none`** — Internal/cluster services (proxy allowlist only). Domain only.
 
-The OpenClaw CR carries no credential fields. The controller discovers credential CRDs in the namespace by label (`openclaw.sandbox.redhat.com/instance: instance`). Adding a new service with an existing auth shape is purely declarative (new CR instance). Adding a new auth shape requires a new CRD + controller logic.
+The OpenClaw CR carries no credential fields. The controller discovers `ClawCredential` CRs in the namespace by label (`openclaw.sandbox.redhat.com/instance: instance`). Adding a new service with an existing auth shape is purely declarative (new CR instance). Adding a new auth shape is a new type constant + optional config struct on the existing CRD — no new CRD or controller watch needed.
 
-### 3. Credential Injection — Go Proxy (Q7)
+See [credential-examples.md](security-hardening-credential-examples.md) for complete YAML examples of each type.
 
-Replace the nginx reverse proxy with a purpose-built Go reverse proxy:
+### 3. Credential Injection — Go MITM Proxy (Q7, Q12)
+
+Replace the nginx proxy with a purpose-built Go credential-injecting MITM forward proxy. OpenClaw uses standard `HTTP_PROXY`/`HTTPS_PROXY` environment variables with real `https://` API URLs. The proxy intercepts CONNECT tunnels, terminates TLS with an operator-managed CA, injects credentials based on the target domain, and forwards as HTTPS to upstream APIs. This is the same proven pattern used by all reference projects (paude-proxy, OpenShell, onecli). The operator manages the CA lifecycle: generates cert+key at first reconciliation, stores in a Secret, mounts into both pods. On OpenShift, the proxy's outbound trust store uses `config.openshift.io/inject-trusted-cabundle` for corporate proxy CA support.
 
 ```
-OpenClaw ──HTTP──▶ Go Proxy ──HTTPS──▶ LLM APIs / External Services
+OpenClaw ──CONNECT host:443──▶ Go Proxy (MITM) ──HTTPS──▶ LLM APIs / External Services
                       │
+                      ├─ CONNECT + MITM (operator-managed CA, leaf certs per domain)
+                      ├─ HTTP_PROXY/HTTPS_PROXY env vars on OpenClaw (real https:// URLs)
                       ├─ Config derived from credential CRDs
-                      ├─ Domain → injector routing
-                      ├─ Pluggable injectors: bearer, API key header, GCP ADC/OAuth2
-                      ├─ Strips ALL client auth headers, then injects real credentials
+                      ├─ Domain → injector routing (CONNECT target host)
+                      ├─ Pluggable injectors: apiKey, bearer, gcp, pathToken, oauth2, kubernetes, none
+                      ├─ Strips ALL client auth headers before injection (defense in depth)
+                      ├─ Default headers per credential (e.g., anthropic-version)
+                      ├─ GCP token vending — intercepts oauth2 token requests for SDK compat
+                      ├─ Injection failure → 502 (clear signal, not passthrough)
+                      ├─ Credential values redacted in all log output
+                      ├─ Domain matching: exact ("api.github.com") or suffix (".googleapis.com")
                       ├─ Health endpoint (/healthz)
-                      └─ Unknown domains → 403
+                      └─ Unknown/disallowed domains → 403
 ```
 
 Port paude-proxy's credential injection layer (~500 LOC, MIT-licensed) as a starting point. The proxy derives its routing configuration from the credential CRDs — the operator reads them and generates the proxy's config. Estimated ~800-1000 LOC for the full component.
@@ -91,11 +103,16 @@ Document the threat model (prompt injection, excessive agency) and recommended m
                     │    │ proxy only  │                          │
                     │    └──────┬──────┘                          │
                     │           ▼                                 │
-                    │    Go Credential Proxy                      │
+                    │    Go MITM Credential Proxy (operator CA)   │
                     │    ┌──────────────────────────────┐         │
+                    │    │ CONNECT + TLS termination    │         │
                     │    │ Config from credential CRDs  │         │
-                    │    │ Strip client auth headers    │         │
+                    │    │ Strip ALL client auth headers│         │
                     │    │ Inject real credentials      │         │
+                    │    │ Default headers per provider │         │
+                    │    │ Injection failure → 502      │         │
+                    │    │ GCP token vending endpoint   │         │
+                    │    │ Credential redaction in logs │         │
                     │    │ Unknown domains → 403        │         │
                     │    └──────┬───────────────────────┘         │
                     │           │                                 │
@@ -112,18 +129,20 @@ Document the threat model (prompt injection, excessive agency) and recommended m
   CRDs in namespace:
 
   OpenClaw (instance)           ← no credential fields
-  APIKeyCredential (gemini)     ← secretRef + domain + header
-  APIKeyCredential (anthropic)  ← secretRef + domain + header
-  GCPCredential (vertex-ai)     ← secretRef + project + location
-  BearerTokenCredential (github)← secretRef + domain
+  ClawCredential (gemini)       ← type: apiKey, secretRef + domain + header
+  ClawCredential (anthropic)    ← type: apiKey, secretRef + domain + header
+  ClawCredential (vertex-ai)    ← type: gcp, secretRef + project + location
+  ClawCredential (github)       ← type: bearer, secretRef + domain
+  ClawCredential (kube-api)     ← type: kubernetes, SA name + domain
   Secret (openclaw-secrets)     ← auto-generated gateway token
-  Secret (llm-keys)             ← user-created, referenced by credential CRDs
-  Secret (gcp-sa)               ← user-created, referenced by GCPCredential
+  Secret (openclaw-proxy-ca)    ← auto-generated MITM CA cert+key (operator-managed)
+  Secret (llm-keys)             ← user-created, referenced by ClawCredential CRs
+  Secret (gcp-sa)               ← user-created, referenced by ClawCredential CRs
 ```
 
 ## Out of Scope
 
 - **Multi-tenancy within a single OpenClaw instance** — one instance per user per namespace
-- **End-to-end encryption (pod-to-pod TLS)** — typical OpenShift deployments trust the SDN
+- **External CA trust** — the proxy's MITM CA is cluster-internal only, never externally trusted; corporate proxy CAs are handled via OpenShift's `inject-trusted-cabundle` annotation
 - **Full agent sandboxing** (gVisor, Kata, custom seccomp) — disproportionate for a personal assistant
 - **LLM-layer defenses** (prompt injection filters, output sanitization) — upstream OpenClaw concern

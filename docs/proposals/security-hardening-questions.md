@@ -39,72 +39,53 @@ Today `OpenClaw.spec.apiKey` is a single plaintext string field on the CRD, mana
 
 The design must handle this diversity without requiring CRD schema changes for every new integration. No secret data should ever appear in the CRD.
 
-### Option E: Typed credential CRDs
+### Option E: Typed credential CRDs (one CRD per shape)
 
-Define a set of CRDs per credential *shape* (not per service). Each CRD combines a Secret reference with shape-specific configuration. The OpenClaw CR doesn't know about credentials at all — the controller discovers credential CRDs in the same namespace.
+Define a set of CRDs per credential *shape* (not per service): `APIKeyCredential`, `GCPCredential`, `BearerTokenCredential`, etc. Each CRD combines a Secret reference with shape-specific configuration.
 
-**CRDs by credential shape:**
+- **Pro:** Tight CRD schema validation — each Kind has exactly the fields it needs
+- **Pro:** Strong Go type safety — no nil checks on optional sub-structs
+- **Con:** New auth shape = new CRD + new types file + `make manifests` + new controller watch + new RBAC entry
+- **Con:** Real-world analysis reveals 7 distinct shapes needed (apiKey, bearer, gcp, pathToken, oauth2, kubernetes, none) — that's 7 CRDs to install, watch, and maintain
+- **Con:** `NoAuthCredential` is an awkward name for something that holds no credentials (proxy allowlist entry)
+
+### Option F: Unified `ClawCredential` CRD (one CRD, type discriminator)
+
+A single `ClawCredential` CRD (short name `cc`) with a `type` enum field and optional shape-specific config sub-structs. The OpenClaw CR carries no credential fields — the controller discovers `ClawCredential` CRs in the namespace by label.
 
 ```yaml
-# API key credentials (Gemini, Anthropic, OpenAI, OpenRouter, etc.)
 apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: APIKeyCredential
+kind: ClawCredential
 metadata:
   name: gemini
   labels:
     openclaw.sandbox.redhat.com/instance: instance
 spec:
+  type: apiKey
   secretRef:
-    name: my-llm-keys
+    name: llm-keys
     key: GEMINI_API_KEY
   domain: "generativelanguage.googleapis.com"
-  header: "x-goog-api-key"              # or "x-api-key" for Anthropic, etc.
----
-# GCP / Vertex AI credentials (service account JSON → OAuth2)
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: GCPCredential
-metadata:
-  name: vertex-ai
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
-  secretRef:
-    name: gcp-sa-secret
-    key: sa-key.json
-  project: my-project
-  location: us-central1
-  domain: "*.googleapis.com"
----
-# Bearer token credentials (GitHub, etc.)
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: BearerTokenCredential
-metadata:
-  name: github
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
-  secretRef:
-    name: platform-tokens
-    key: GITHUB_TOKEN
-  domain: "api.github.com"
+  apiKey:
+    header: "x-goog-api-key"
 ```
 
-The OpenClaw CR stays clean — no credential fields at all:
-```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: OpenClaw
-metadata:
-  name: instance
-spec: {}
-```
+Supported types: `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `kubernetes`, `none`.
 
-The controller discovers all `APIKeyCredential`, `GCPCredential`, `BearerTokenCredential`, etc. in the namespace (by label) and configures the proxy accordingly.
+- **Pro:** 1 CRD to install, 1 controller watch, 1 RBAC entry — regardless of how many shapes exist
+- **Pro:** Adding a new shape is a new type constant + optional config struct on the existing CRD — no new CRD, no new watch
+- **Pro:** `type: none` reads naturally (proxy allowlist entry)
+- **Pro:** One `kubectl get credentials` shows all credentials
+- **Con:** CRD schema validation is looser — optional sub-structs mean invalid combos are possible (e.g., `type: bearer` with `gcp` set)
+- **Con:** Go types need nil checks on optional config blocks
 
-**Precedent:** Crossplane `ProviderConfig`, cert-manager `Issuer`, External Secrets Operator `SecretStore` — all use per-backend CRDs with Secret ref + typed config.
+**Precedent:** External Secrets Operator `SecretStore` (one Kind, typed `provider` field), Argo CD `Application`.
 
-**Decision:** Option E — typed credential CRDs using the `XYZCredential` naming pattern (singular Kind per Kubernetes convention). CRDs are organized by credential *shape* (e.g., `APIKeyCredential`, `GCPCredential`, `BearerTokenCredential`), not per service. Each CRD combines a Secret reference with shape-specific configuration (domain, header format, project/location, etc.). The OpenClaw CR carries no credential fields — the controller discovers credential CRDs in the namespace by label. Adding a new service with an existing auth shape is data (new CR instance); adding a new auth shape is a new CRD + controller logic.
+See [credential-examples.md](security-hardening-credential-examples.md) for complete YAML examples of every type.
 
-_Considered and rejected: Option A — single Secret ref (can't co-locate credential config; GCP is a special case), Option B — list of typed Secret refs (no config alongside the ref), Option C — per-category fields (rigid, new category = schema change), Option D — single Secret with conventions (fragile naming, mixes API keys with SA JSON)_
+**Decision:** Option F — unified `ClawCredential` CRD with a `type` discriminator. Originally chose Option E (dedicated CRDs per shape), but detailed analysis of real-world credential shapes (LLM providers, channels, MCP servers, Kubernetes API) revealed 7 distinct types needed. The cost-per-new-shape with dedicated CRDs (new Kind, types file, deepcopy, CRD YAML, watch, RBAC) outweighs the tighter schema validation. A single `ClawCredential` CRD keeps the operator simple (1 watch, 1 list call, 1 RBAC entry) and makes adding new shapes a struct-level change rather than a CRD-level one. The distinctive name avoids `kubectl get credentials` collisions with other operators.
+
+_Considered and rejected: Option A — single Secret ref (can't co-locate credential config), Option B — list of typed Secret refs (no config alongside the ref), Option C — per-category fields (rigid, new category = schema change), Option D — single Secret with conventions (fragile naming, mixes API keys with SA JSON), Option E — typed CRDs per shape (7+ CRDs to install/watch/maintain, high cost-per-new-shape)_
 
 ---
 
@@ -169,7 +150,7 @@ _Considered and rejected: Option A — fully out of scope (users expect a "secur
 
 This question is about the **credential injection mechanism** — how user-provided secrets (from Q2) are actually used when OpenClaw calls LLM APIs. This is separate from how users provide the secrets.
 
-Today the operator uses an **nginx reverse proxy** with static `location` blocks per provider. Each block rewrites one path prefix to one upstream, injecting credentials via `proxy_set_header` from environment variables. This works for simple API-key providers but has limitations:
+Today the operator uses an **nginx forward proxy** with static `location` blocks per provider. Each block rewrites one path prefix to one upstream, injecting credentials via `proxy_set_header` from environment variables. This works for simple API-key providers but has limitations:
 
 - **No Vertex AI / OAuth support**: Vertex AI requires short-lived OAuth2 access tokens obtained from a service account, with automatic refresh. Nginx cannot do this natively — it can only inject static values from env vars.
 - **Static configuration**: adding a new provider means editing the nginx config template. The set of upstream hosts and auth header formats is baked into the ConfigMap.
@@ -178,12 +159,16 @@ Today the operator uses an **nginx reverse proxy** with static `location` blocks
 **How reference projects solve this:**
 
 - **openshift-openclaw (PoC)**: same nginx pattern. Vertex AI partially sketched (SA JSON mounted, env vars set) but no actual Vertex route or OAuth token flow in nginx. Gemini only via static API key.
-- **paude-proxy**: Go-based MITM forward proxy. Declarative JSON config maps env vars → injector types (`bearer`, `api_key`, `gcloud`) → domain patterns. For Google/Vertex, loads ADC (SA JSON), obtains short-lived OAuth2 tokens via Go's `oauth2/google` library with automatic refresh, injects `Authorization: Bearer <real-token>` on `*.googleapis.com`. A token vendor intercepts `POST oauth2.googleapis.com/token` returning dummy responses so the client's Google auth library is satisfied without seeing real credentials. Explicitly overrides all client-supplied auth headers.
+- **paude-proxy**: Go-based MITM forward proxy (CONNECT + CA-based TLS interception). Declarative JSON config maps env vars → injector types (`bearer`, `api_key`, `gcloud`) → domain patterns. For Google/Vertex, loads ADC (SA JSON), obtains short-lived OAuth2 tokens via Go's `oauth2/google` library with automatic refresh, injects `Authorization: Bearer <real-token>` on `*.googleapis.com`. A token vendor intercepts `POST oauth2.googleapis.com/token` returning dummy responses so the client's Google auth library is satisfied without seeing real credentials. Returns 502 on injection failure. Explicitly overrides all client-supplied auth headers. Supports exact, `.suffix`, and regex domain matching.
 - **onecli**: Rust gateway with DB-driven injection rules per host/path. Supports Anthropic (API key or OAuth), generic header injection, and vault-backed credentials.
-- **OpenShell**: Go inference router that strips incoming `authorization`/`x-api-key` headers and re-applies route-specific auth. Supports bearer and custom header injection. No Vertex/ADC.
+- **OpenShell**: Go inference router that strips incoming `authorization`/`x-api-key` headers (two-layer: strip at entry, strip again before injection) and re-applies route-specific auth. Supports bearer and custom header injection with default headers per route (e.g., `anthropic-version`). Redacts credentials in debug output. No Vertex/ADC.
 
-**Decision:** Option B — replace nginx with a purpose-built Go reverse proxy. Config-driven domain→injector routing, pluggable injectors (bearer, API key header, GCP ADC/OAuth2), explicit auth header stripping on all requests. Port paude-proxy's credential injection layer (~500 LOC, MIT-licensed, cleanly self-contained) as a starting point rather than building from scratch. Add health endpoint and strict header policy. Estimated ~800-1000 LOC total for a focused component that fits the operator's Go tech stack.
+**Decision:** Option B (revised after Q12 research) — replace nginx with a purpose-built Go credential-injecting MITM forward proxy. OpenClaw uses standard `HTTP_PROXY`/`HTTPS_PROXY` env vars with real `https://` API URLs. The proxy intercepts CONNECT tunnels, terminates TLS with an operator-managed CA, injects credentials, and forwards as HTTPS to upstream APIs. This is the same proven architecture used by all reference projects (paude-proxy, OpenShell, onecli).
 
-The proxy derives its routing configuration from the credential CRDs (Q2) — the operator reads the CRDs and generates the proxy's config, so adding a new service is purely declarative (new CR instance), not a code or config template change.
+Config-driven domain→injector routing (CONNECT target host determines the route), pluggable injectors (bearer, API key header, GCP ADC/OAuth2 with token vending), explicit auth header stripping on all requests (defense in depth — strip before inject, not just overwrite). Port paude-proxy's credential injection and CONNECT/MITM layer as a starting point rather than building from scratch. Add health endpoint, strict header policy, credential redaction in logs, and 502 on injection failure.
 
-_Considered and rejected: Option A — nginx + sidecar for OAuth (band-aid, doesn't fix header stripping or static config), Option C — fork paude-proxy (its MITM/CONNECT/CA machinery is ~850 LOC we don't need; forking to delete half the codebase is worse than porting the valuable 500 LOC), Option D — keep nginx and defer (blocks Vertex AI, accumulates technical debt)_
+The proxy derives its routing configuration from the credential CRDs (Q2) — the operator reads the CRDs and generates the proxy's config, so adding a new service is purely declarative (new CR instance), not a code or config template change. See [Q12](security-hardening-impl-questions.md) for the full traffic routing decision and rationale.
+
+**Why MITM (revised from original decision):** The original decision avoided CONNECT/MITM ("our inbound side is plain HTTP"), but deeper investigation ([Q12](security-hardening-impl-questions.md)) showed that all three reference projects use MITM because it allows OpenClaw to use real `https://` API URLs unchanged — standard SDK defaults work without patching. The alternatives (`http://` URLs, path-based routing, Host header overrides) are all fragile or tightly coupled. The MITM CA is ~30 LOC of Go (`crypto/x509`) and follows the same Secret management pattern the operator already uses. On OpenShift, `config.openshift.io/inject-trusted-cabundle` handles corporate proxy CAs for the outbound leg.
+
+_Considered and rejected: Option A — nginx + sidecar for OAuth (band-aid, doesn't fix header stripping or static config), Option D — keep nginx and defer (blocks Vertex AI, accumulates technical debt). See [Q12](security-hardening-impl-questions.md) for the rejected non-MITM alternatives (plain HTTP proxy, path-based routing, Host header override)._
