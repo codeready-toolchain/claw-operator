@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -59,6 +60,7 @@ type OpenClawResourceReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclaws,verbs=get;list;watch
+// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclaws/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=openclaws/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
@@ -105,6 +107,12 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Apply all resources via Kustomize and server-side apply
 	if err := r.applyKustomizedResources(ctx, instance); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Update status based on deployment readiness
+	if err := r.updateStatus(ctx, instance); err != nil {
+		logger.Error(err, "Failed to update status, will retry")
 		return ctrl.Result{}, err
 	}
 
@@ -349,6 +357,106 @@ func parseYAMLToObjects(yamlData []byte) ([]*unstructured.Unstructured, error) {
 	}
 
 	return objects, nil
+}
+
+// getDeploymentAvailableStatus fetches a Deployment and returns whether its Available condition is True
+func (r *OpenClawResourceReconciler) getDeploymentAvailableStatus(ctx context.Context, namespace, name string) (bool, error) {
+	logger := log.FromContext(ctx)
+
+	deployment := &appsv1.Deployment{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("Deployment not found", "name", name)
+			return false, nil
+		}
+		return false, err
+	}
+
+	// Check for Available condition
+	for _, condition := range deployment.Status.Conditions {
+		if condition.Type == appsv1.DeploymentAvailable {
+			return condition.Status == corev1.ConditionTrue, nil
+		}
+	}
+
+	// No Available condition found
+	return false, nil
+}
+
+// checkDeploymentsReady checks if both openclaw and openclaw-proxy Deployments are ready
+func (r *OpenClawResourceReconciler) checkDeploymentsReady(ctx context.Context, namespace string) (bool, []string, error) {
+	openclawReady, err := r.getDeploymentAvailableStatus(ctx, namespace, OpenClawDeploymentName)
+	if err != nil {
+		return false, nil, err
+	}
+
+	proxyReady, err := r.getDeploymentAvailableStatus(ctx, namespace, "openclaw-proxy")
+	if err != nil {
+		return false, nil, err
+	}
+
+	var pending []string
+	if !openclawReady {
+		pending = append(pending, OpenClawDeploymentName)
+	}
+	if !proxyReady {
+		pending = append(pending, "openclaw-proxy")
+	}
+
+	return len(pending) == 0, pending, nil
+}
+
+// setAvailableCondition sets the Available condition on the OpenClaw instance based on deployment readiness
+func setAvailableCondition(instance *openclawv1alpha1.OpenClaw, ready bool, pendingDeployments []string) {
+	var status metav1.ConditionStatus
+	var reason, message string
+
+	if ready {
+		status = metav1.ConditionTrue
+		reason = "Ready"
+		message = "OpenClaw instance is ready"
+	} else {
+		status = metav1.ConditionFalse
+		reason = "Provisioning"
+		if len(pendingDeployments) > 0 {
+			message = "Waiting for deployments to become ready"
+		} else {
+			message = "Provisioning in progress"
+		}
+	}
+
+	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+		Type:               "Available",
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: instance.Generation,
+	})
+}
+
+// updateStatus updates the OpenClaw status with current deployment conditions
+func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
+	logger := log.FromContext(ctx)
+
+	// Check deployment readiness
+	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace)
+	if err != nil {
+		logger.Error(err, "Failed to check deployment readiness")
+		return err
+	}
+
+	// Set Available condition
+	setAvailableCondition(instance, ready, pending)
+
+	// Update status subresource
+	if err := r.Status().Update(ctx, instance); err != nil {
+		logger.Error(err, "Failed to update OpenClaw status")
+		return err
+	}
+
+	logger.Info("Successfully updated OpenClaw status", "available", ready)
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -9,6 +9,12 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 **CRD Spec Fields:**
 - `apiKey` (string, required): API key for LLM provider authentication (currently Gemini). Injected into `openclaw-proxy-secrets` Secret under `GEMINI_API_KEY` data entry.
 
+**CRD Status Fields:**
+- `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking instance state. Currently includes:
+  - `Available` condition: Indicates whether the OpenClaw instance is ready for use
+    - `Status=False, Reason=Provisioning`: Deployments are not yet ready
+    - `Status=True, Reason=Ready`: Both `openclaw` and `openclaw-proxy` Deployments are available
+
 **Version Logging:**
 The operator logs version and build time at startup: `version` (short commit SHA) and `buildTime` (RFC3339). Injected via LDFLAGS during `docker-build`. Local builds show defaults (`dev`/`unknown`).
 
@@ -55,6 +61,7 @@ The operator uses a **single unified controller** that manages all resources ato
 - Uses server-side apply for idempotent, conflict-free resource management
 - Automatically labels all resources with `app.kubernetes.io/name: openclaw`
 - Gracefully skips resources whose CRDs aren't registered (e.g., Route on vanilla Kubernetes)
+- Updates status conditions based on Deployment readiness after applying resources
 
 **Key benefits:**
 - Simplified codebase: 1 controller (~200 LOC) vs 3 separate controllers (~400 LOC)
@@ -93,7 +100,14 @@ Reconcile(ctx, req) called
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply each resource (Patch with Apply)
   ↓
-6. Return success
+6. updateStatus(ctx, instance)
+   ├─ Fetch openclaw Deployment and check Available condition
+   ├─ Fetch openclaw-proxy Deployment and check Available condition
+   ├─ Set OpenClaw Available condition based on both deployment statuses
+   ├─ Update LastTransitionTime only if condition status changes
+   └─ Update status via status subresource (client.Status().Update)
+  ↓
+7. Return success
 ```
 
 **Key methods:**
@@ -102,6 +116,10 @@ Reconcile(ctx, req) called
 - `applyGatewaySecret()` — creates/updates openclaw-secrets Secret with gateway token (preserves existing token)
 - `applyProxySecret()` — creates/updates openclaw-proxy-secrets Secret with API key from CR
 - `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA
+- `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition
+- `checkDeploymentsReady()` — checks if both openclaw and openclaw-proxy Deployments are ready
+- `setAvailableCondition()` — sets Available condition on OpenClaw based on deployment states
+- `updateStatus()` — updates OpenClaw status conditions via status subresource
 - `parseYAMLToObjects()` — converts multi-doc YAML to unstructured objects
 - `readEmbeddedFile()` — reads files from embedded filesystem
 
@@ -168,7 +186,7 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 - **Shared setup:** `internal/controller/suite_test.go` boots envtest once per suite
 - **Pattern:** Describe/Context/It blocks with `AfterEach` cleanup; uses `Eventually()` for async assertions (10s timeout, 250ms poll)
 - **Test CRs:** All test OpenClaw instances must include the required `apiKey` field (e.g., `instance.Spec.APIKey = "test-api-key"`)
-- **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secret_controller_test.go`, etc.)
+- **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secret_controller_test.go`, `openclaw_status_controller_test.go`, etc.)
 - **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment
 
 ## Conventions

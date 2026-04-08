@@ -25,12 +25,38 @@ spec:
   # Required: API key for authenticating with the LLM provider
   apiKey: "your-gemini-api-key-here"
 status:
-  # Status fields will be populated by the controller
+  # Status fields are populated by the controller
+  conditions:
+    - type: Available
+      status: "True"
+      reason: Ready
+      message: OpenClaw instance is ready
+      lastTransitionTime: "2026-04-08T12:00:00Z"
+      observedGeneration: 1
 ```
 
 #### Spec Fields
 
 - `apiKey` (string, required): The API key for authenticating with your LLM provider (currently Gemini). This key is stored in a Kubernetes Secret (`openclaw-proxy-secrets`) and injected into the proxy for secure upstream authentication.
+
+#### Status Fields
+
+The controller automatically populates status conditions to track the deployment readiness of your OpenClaw instance:
+
+- `conditions` (array): Standard Kubernetes conditions following the [metav1.Condition](https://kubernetes.io/docs/reference/kubernetes-api/common-definitions/condition/) format. Currently includes:
+  - **Available**: Indicates whether the OpenClaw instance is ready for use
+    - `status: "False"`, `reason: Provisioning` — Deployments are being created or are not yet ready
+    - `status: "True"`, `reason: Ready` — Both `openclaw` and `openclaw-proxy` Deployments are available
+
+**Checking instance status:**
+
+```sh
+# View full status
+kubectl get openclaw instance -o yaml
+
+# Check if instance is ready
+kubectl get openclaw instance -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
+```
 
 **Important:** Only OpenClaw instances named `instance` will be reconciled by the controller.
 
