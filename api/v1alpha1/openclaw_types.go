@@ -30,7 +30,11 @@ type OpenClawSpec struct {
 
 // OpenClawStatus defines the observed state of OpenClaw
 type OpenClawStatus struct {
-	// Empty for now
+	// Conditions represent the latest available observations of the OpenClaw's state
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
