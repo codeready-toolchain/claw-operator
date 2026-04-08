@@ -133,6 +133,64 @@ OpenClaw ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inject c
 }
 ```
 
+**Secret delivery — how credentials reach the proxy:**
+
+The operator never copies secret values. It reads each ClawCredential's `spec.secretRef` and generates Kubernetes-native references on the proxy Deployment that the kubelet resolves at pod startup:
+
+1. **Env vars for simple credentials** (API keys, bearer tokens) — the operator adds a `valueFrom.secretKeyRef` per ClawCredential, pointing to the user's own Secret:
+
+    ```yaml
+    # Generated from ClawCredential "gemini" (spec.secretRef: llm-keys/GEMINI_API_KEY)
+    env:
+      - name: CRED_GEMINI
+        valueFrom:
+          secretKeyRef:
+            name: llm-keys
+            key: GEMINI_API_KEY
+    ```
+
+    The config JSON references the env var name (`"envVar": "CRED_GEMINI"`), not the secret value. The proxy reads `os.Getenv("CRED_GEMINI")` at startup.
+
+2. **Volume mounts for large/structured credentials** (GCP SA JSON) — the operator adds a Secret volume mount:
+
+    ```yaml
+    volumes:
+      - name: cred-vertex-ai
+        secret:
+          secretName: gcp-sa-secret
+          items:
+            - key: sa-key.json
+              path: sa-key.json
+    volumeMounts:
+      - name: cred-vertex-ai
+        mountPath: /etc/proxy/credentials/vertex-ai
+        readOnly: true
+    ```
+
+    The config JSON references the file path (`"saFilePath": "/etc/proxy/credentials/vertex-ai/sa-key.json"`). The proxy reads the file at startup and refreshes OAuth2 tokens from the SA JSON.
+
+3. **Projected ServiceAccount tokens** (Kubernetes type) — the operator adds a projected volume for the specified ServiceAccount. The proxy re-reads the token file on each request (tokens rotate automatically).
+
+The env var names (e.g., `CRED_GEMINI`) are operator-generated from the ClawCredential name, ensuring uniqueness. ConfigMap and Deployment changes are applied atomically via SSA; a config hash annotation on the Deployment triggers a rollout when credentials change.
+
+```
+User creates:
+  ClawCredential (gemini)  ──references──▶  Secret (llm-keys)
+       │
+Operator reads ClawCredential, generates:
+  ├─ ConfigMap (proxy config JSON)     ← domain/injector/envVar mappings (no secrets)
+  └─ Proxy Deployment                  ← env vars with secretKeyRef → user's Secret
+       │                                  volume mounts → user's Secret (for GCP)
+       │
+Proxy at runtime:
+  ├─ Reads config JSON from ConfigMap mount
+  ├─ Reads credential values from env vars (populated by kubelet from user's Secrets)
+  ├─ Reads GCP SA JSON from volume mount (populated by kubelet from user's Secret)
+  └─ On each request: match domain → look up injector → read credential → inject header
+```
+
+The actual secret bytes never pass through the operator or the ConfigMap.
+
 **Health endpoint:** `GET /healthz` returns 200.
 
 **Image:** Custom Go binary, built as a distroless container image.

@@ -91,7 +91,17 @@ The operator generates a JSON config describing routes (domain → injector type
 }
 ```
 
-The current proxy Deployment already uses this hybrid pattern (env vars for API keys, volume mount for `openclaw-gcp-credentials`). The proxy reads env vars at startup for simple credentials and loads the SA JSON file for GCP — both well-established Go patterns. ConfigMap changes trigger a Deployment rollout via annotation hash.
+**How the operator wires credentials to the proxy:**
+
+The operator reads each ClawCredential's `spec.secretRef` and generates Kubernetes-native references on the proxy Deployment — it never copies secret values:
+
+- **Env vars** (apiKey, bearer types): adds `valueFrom.secretKeyRef` pointing to the user's Secret. The config JSON references the env var name (e.g., `"envVar": "CRED_GEMINI"`); the proxy reads `os.Getenv(...)` at startup.
+- **Volume mounts** (gcp type): mounts the user's Secret as a read-only volume. The config JSON references the file path (e.g., `"saFilePath": "/etc/proxy/credentials/vertex-ai/sa-key.json"`).
+- **Projected SA tokens** (kubernetes type): adds a projected volume for the ServiceAccount. The proxy re-reads the token file on each request (tokens rotate).
+
+Env var names are operator-generated from the ClawCredential name (e.g., `CRED_GEMINI`), ensuring uniqueness. A config hash annotation on the Deployment triggers a rollout when credentials change.
+
+End-to-end: `User Secret → secretKeyRef/volume on proxy Deployment → kubelet populates env/file → proxy reads at runtime`.
 
 _Considered and rejected: Option A — env vars only (GCP SA JSON as env var is awkward, many env vars at scale), Option B — volume mounts only (operator must aggregate multiple user Secrets into one proxy Secret, adds reconciliation complexity and fsnotify/polling for hot-reload)_
 
