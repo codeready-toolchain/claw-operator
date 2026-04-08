@@ -107,18 +107,6 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Validate that the referenced Gemini API key Secret exists
-	if err := r.validateGeminiAPIKeySecret(ctx, instance); err != nil {
-		logger.Error(err, "Failed to validate Gemini API key Secret")
-		// Set status condition for Secret-related errors
-		r.setSecretErrorCondition(instance, err)
-		// Update status before returning
-		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
-			logger.Error(statusErr, "Failed to update status after Secret error")
-		}
-		return ctrl.Result{}, err
-	}
-
 	// Apply all resources via Kustomize and server-side apply
 	if err := r.applyKustomizedResources(ctx, instance); err != nil {
 		return ctrl.Result{}, err
@@ -309,51 +297,11 @@ func (r *OpenClawResourceReconciler) applyGatewaySecret(ctx context.Context, ins
 	return nil
 }
 
-// validateGeminiAPIKeySecret validates that the referenced Gemini API key Secret exists and has the required key
-func (r *OpenClawResourceReconciler) validateGeminiAPIKeySecret(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
-	logger := log.FromContext(ctx)
-
-	// Note: GeminiAPIKey, Name, and Key are all enforced as non-nil/non-empty by admission validation
-	secretRef := instance.Spec.GeminiAPIKey
-
-	// Fetch the referenced Secret
-	secret := &corev1.Secret{}
-	secretKey := client.ObjectKey{
-		Namespace: instance.Namespace,
-		Name:      secretRef.Name,
-	}
-
-	if err := r.Get(ctx, secretKey, secret); err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("Referenced Secret not found", "secret", secretRef.Name)
-			return fmt.Errorf("secret %s not found in namespace %s", secretRef.Name, instance.Namespace)
-		}
-		return fmt.Errorf("failed to get secret %s: %w", secretRef.Name, err)
-	}
-
-	// Validate the API key exists in the Secret data
-	apiKeyBytes, exists := secret.Data[secretRef.Key]
-	if !exists {
-		logger.Info("API key not found in Secret", "secret", secretRef.Name, "key", secretRef.Key)
-		return fmt.Errorf("key %s not found in secret %s", secretRef.Key, secretRef.Name)
-	}
-
-	if len(apiKeyBytes) == 0 {
-		return fmt.Errorf("key %s in secret %s is empty", secretRef.Key, secretRef.Name)
-	}
-
-	logger.Info("Successfully validated Gemini API key Secret", "secret", secretRef.Name, "key", secretRef.Key)
-	return nil
-}
-
 // patchProxyDeploymentWithSecretRef patches the openclaw-proxy deployment to reference the user's Gemini API key Secret
 func (r *OpenClawResourceReconciler) patchProxyDeploymentWithSecretRef(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
 	logger := log.FromContext(ctx)
 
-	if instance.Spec.GeminiAPIKey == nil {
-		return fmt.Errorf("geminiAPIKey field is required")
-	}
-
+	// Note: GeminiAPIKey is enforced as required by admission validation
 	secretRef := instance.Spec.GeminiAPIKey
 
 	// Fetch the deployment
@@ -579,39 +527,6 @@ func setAvailableCondition(instance *openclawv1alpha1.OpenClaw, ready bool, pend
 		Message:            message,
 		ObservedGeneration: instance.Generation,
 	})
-}
-
-// setSecretErrorCondition sets the Available condition based on Secret-related errors
-func (r *OpenClawResourceReconciler) setSecretErrorCondition(instance *openclawv1alpha1.OpenClaw, err error) {
-	var reason, message string
-	errMsg := err.Error()
-
-	// Detect type of Secret error based on error message
-	// Check for key-specific errors first (more specific match)
-	if containsString(errMsg, "key") && containsString(errMsg, "not found") {
-		reason = "SecretKeyNotFound"
-		message = fmt.Sprintf("Key not found in Secret: %v", err)
-	} else if containsString(errMsg, "not found in namespace") || containsString(errMsg, "not found") {
-		reason = "SecretNotFound"
-		message = fmt.Sprintf("Referenced Secret not found: %v", err)
-	} else {
-		reason = "SecretError"
-		message = fmt.Sprintf("Error accessing Secret: %v", err)
-	}
-
-	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-		Type:               "Available",
-		Status:             metav1.ConditionFalse,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: instance.Generation,
-	})
-}
-
-// containsString checks if a string contains a substring (case-insensitive helper)
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && bytes.Contains([]byte(s), []byte(substr))))
 }
 
 // updateStatus updates the OpenClaw status with current deployment conditions

@@ -23,7 +23,6 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -52,97 +51,6 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 			apiSecret := &corev1.Secret{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, apiSecret)
 			_ = k8sClient.Delete(ctx, apiSecret)
-		})
-
-		It("should set SecretNotFound status when referenced Secret does not exist", func() {
-			By("Creating OpenClaw without creating the referenced Secret")
-			instance := &openclawv1alpha1.OpenClaw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
-			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
-
-			By("Reconciling the OpenClaw instance")
-			reconciler := &OpenClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			Expect(err).To(HaveOccurred())
-
-			By("Checking status condition shows SecretNotFound")
-			Eventually(func() string {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-				if err != nil {
-					return ""
-				}
-				condition := meta.FindStatusCondition(instance.Status.Conditions, "Available")
-				if condition == nil {
-					return ""
-				}
-				return condition.Reason
-			}, timeout, interval).Should(Equal("SecretNotFound"))
-		})
-
-		It("should set SecretKeyNotFound status when Secret exists but key is missing", func() {
-			By("Creating Secret without the expected key")
-			// Create Secret directly (don't use helper which deletes existing Secrets)
-			wrongSecret := &corev1.Secret{}
-			wrongSecret.Name = apiKeySecret
-			wrongSecret.Namespace = namespace
-			wrongSecret.Type = corev1.SecretTypeOpaque
-			wrongSecret.Data = map[string][]byte{
-				"wrong-key": []byte(apiKey),
-			}
-			// Delete any existing Secret first
-			existing := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, existing)
-			_ = k8sClient.Delete(ctx, existing)
-			Expect(k8sClient.Create(ctx, wrongSecret)).Should(Succeed())
-
-			By("Creating OpenClaw with reference to missing key")
-			instance := &openclawv1alpha1.OpenClaw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
-			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
-
-			By("Reconciling the OpenClaw instance")
-			reconciler := &OpenClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			Expect(err).To(HaveOccurred())
-
-			By("Checking status condition shows SecretKeyNotFound")
-			Eventually(func() string {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-				if err != nil {
-					return ""
-				}
-				condition := meta.FindStatusCondition(instance.Status.Conditions, "Available")
-				if condition == nil {
-					return ""
-				}
-				return condition.Reason
-			}, timeout, interval).Should(Equal("SecretKeyNotFound"))
 		})
 
 		It("should configure proxy deployment to reference the user's Secret", func() {

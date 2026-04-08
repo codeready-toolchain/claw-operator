@@ -92,48 +92,39 @@ Reconcile(ctx, req) called
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply Secret (Patch with Apply)
   ↓
-4. validateGeminiAPIKeySecret(ctx, instance)
-   ├─ Validate instance.Spec.GeminiAPIKey is set (name and key fields required)
-   ├─ Fetch the referenced Secret from the same namespace
-   ├─ Verify the Secret exists (return SecretNotFound error if missing)
-   ├─ Verify the key exists in Secret.Data (return SecretKeyNotFound error if missing)
-   └─ Return error if validation fails (triggers status condition update)
-  ↓
-5. applyKustomizedResources(ctx, instance)
+4. applyKustomizedResources(ctx, instance)
    ├─ Build Kustomize in-memory from embedded manifests
    ├─ Parse YAML into unstructured objects
    ├─ Set namespace = instance.Namespace on each resource
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply each resource (Patch with Apply)
   ↓
-6. patchProxyDeploymentWithSecretRef(ctx, instance)
+5. patchProxyDeploymentWithSecretRef(ctx, instance)
    ├─ Fetch openclaw-proxy Deployment
    ├─ Find the proxy container
    ├─ Update GEMINI_API_KEY env var to use valueFrom.secretKeyRef
    ├─ Point secretKeyRef to user's Secret (name and key from instance.Spec.GeminiAPIKey)
-   └─ Update deployment (Kubernetes auto-propagates Secret values to pods)
+   └─ Update deployment (Kubernetes auto-propagates Secret values to pods; if Secret/key doesn't exist, pod fails with clear error)
   ↓
-7. updateStatus(ctx, instance)
+6. updateStatus(ctx, instance)
    ├─ Fetch openclaw Deployment and check Available condition
    ├─ Fetch openclaw-proxy Deployment and check Available condition
    ├─ Set OpenClaw Available condition based on both deployment statuses
    ├─ Update LastTransitionTime only if condition status changes
    └─ Update status via status subresource (client.Status().Update)
   ↓
-8. Return success
+7. Return success
 ```
 
 **Key methods:**
 - `Reconcile()` — main entry point, orchestration logic
 - `generateGatewayToken()` — generates cryptographically secure 64-char hex token using crypto/rand
 - `applyGatewaySecret()` — creates/updates openclaw-secrets Secret with gateway token (preserves existing token)
-- `validateGeminiAPIKeySecret()` — validates user's Secret exists and has the required API key
-- `patchProxyDeploymentWithSecretRef()` — patches openclaw-proxy deployment to reference user's Secret
+- `patchProxyDeploymentWithSecretRef()` — patches openclaw-proxy deployment to reference user's Secret (Kubernetes validates Secret existence when pods start)
 - `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA
 - `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition
 - `checkDeploymentsReady()` — checks if both openclaw and openclaw-proxy Deployments are ready
 - `setAvailableCondition()` — sets Available condition on OpenClaw based on deployment states
-- `setSecretErrorCondition()` — sets Available condition when Secret validation fails (SecretNotFound/SecretKeyNotFound)
 - `updateStatus()` — updates OpenClaw status conditions via status subresource
 - `parseYAMLToObjects()` — converts multi-doc YAML to unstructured objects
 - `readEmbeddedFile()` — reads files from embedded filesystem
