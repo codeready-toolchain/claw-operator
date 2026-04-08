@@ -108,13 +108,8 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Apply all resources via Kustomize and server-side apply
+	// (proxy deployment is pre-configured with user's Secret reference)
 	if err := r.applyKustomizedResources(ctx, instance); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Patch the proxy deployment to reference the user's Gemini API key Secret
-	if err := r.patchProxyDeploymentWithSecretRef(ctx, instance); err != nil {
-		logger.Error(err, "Failed to patch proxy deployment with Secret reference")
 		return ctrl.Result{}, err
 	}
 
@@ -178,6 +173,12 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 	objects, err := parseYAMLToObjects(resources)
 	if err != nil {
 		logger.Error(err, "Failed to parse YAML to objects")
+		return err
+	}
+
+	// Configure proxy deployment with user's Gemini API key Secret reference
+	if err := r.configureProxyDeployment(objects, instance); err != nil {
+		logger.Error(err, "Failed to configure proxy deployment")
 		return err
 	}
 
@@ -297,83 +298,80 @@ func (r *OpenClawResourceReconciler) applyGatewaySecret(ctx context.Context, ins
 	return nil
 }
 
-// patchProxyDeploymentWithSecretRef patches the openclaw-proxy deployment to reference the user's Gemini API key Secret
-func (r *OpenClawResourceReconciler) patchProxyDeploymentWithSecretRef(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
-	logger := log.FromContext(ctx)
-
-	// Note: GeminiAPIKey is enforced as required by admission validation
+// configureProxyDeployment configures the openclaw-proxy deployment's GEMINI_API_KEY env var
+// to reference the user's Secret. This is done BEFORE applying resources so pod template changes
+// trigger automatic pod restarts when the Secret reference changes.
+func (r *OpenClawResourceReconciler) configureProxyDeployment(objects []*unstructured.Unstructured, instance *openclawv1alpha1.OpenClaw) error {
 	secretRef := instance.Spec.GeminiAPIKey
 
-	// Fetch the deployment
-	deployment := &appsv1.Deployment{}
-	deploymentKey := client.ObjectKey{
-		Namespace: instance.Namespace,
-		Name:      "openclaw-proxy",
-	}
+	// Find the openclaw-proxy Deployment
+	for _, obj := range objects {
+		if obj.GetKind() == "Deployment" && obj.GetName() == "openclaw-proxy" {
+			// Navigate to spec.template.spec.containers
+			containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+			if err != nil || !found {
+				return fmt.Errorf("failed to get containers from proxy deployment: %w", err)
+			}
 
-	if err := r.Get(ctx, deploymentKey, deployment); err != nil {
-		logger.Error(err, "Failed to get openclaw-proxy deployment")
-		return err
-	}
-
-	// Find the proxy container and update the GEMINI_API_KEY env var
-	updated := false
-	for i := range deployment.Spec.Template.Spec.Containers {
-		container := &deployment.Spec.Template.Spec.Containers[i]
-		if container.Name == "proxy" {
-			// Find or add the GEMINI_API_KEY env var
-			envVarFound := false
-			for j := range container.Env {
-				if container.Env[j].Name == OpenClawProxyDeploymentGeminiAPiKeyEnvKey {
-					// Update existing env var to reference the user's Secret
-					container.Env[j].ValueFrom = &corev1.EnvVarSource{
-						SecretKeyRef: &corev1.SecretKeySelector{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: secretRef.Name,
-							},
-							Key:      secretRef.Key,
-							Optional: &[]bool{false}[0],
-						},
+			// Find the proxy container
+			for i, c := range containers {
+				container, ok := c.(map[string]any)
+				if !ok {
+					continue
+				}
+				if name, ok := container["name"].(string); ok && name == OpenClawProxyDeploymentContainerName {
+					// Get env vars
+					envVars, _, err := unstructured.NestedSlice(container, "env")
+					if err != nil {
+						return fmt.Errorf("failed to get env vars: %w", err)
 					}
-					envVarFound = true
-					updated = true
-					break
+
+					// Find and update GEMINI_API_KEY
+					found := false
+					for j, e := range envVars {
+						envVar, ok := e.(map[string]any)
+						if !ok {
+							continue
+						}
+						if envName, ok := envVar["name"].(string); ok && envName == OpenClawProxyDeploymentGeminiAPiKeyEnvKey {
+							// Update the secretKeyRef
+							envVar["valueFrom"] = map[string]any{
+								"secretKeyRef": map[string]any{
+									"name":     secretRef.Name,
+									"key":      secretRef.Key,
+									"optional": false,
+								},
+							}
+							envVars[j] = envVar
+							found = true
+							break
+						}
+					}
+
+					if !found {
+						return fmt.Errorf("GEMINI_API_KEY env var not found in proxy container")
+					}
+
+					// Set the updated env vars back
+					if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
+						return fmt.Errorf("failed to set env vars: %w", err)
+					}
+
+					// Set the updated container back
+					containers[i] = container
+					if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+						return fmt.Errorf("failed to set containers: %w", err)
+					}
+
+					return nil
 				}
 			}
 
-			// If env var doesn't exist, add it
-			if !envVarFound {
-				container.Env = append(container.Env, corev1.EnvVar{
-					Name: OpenClawProxyDeploymentGeminiAPiKeyEnvKey,
-					ValueFrom: &corev1.EnvVarSource{
-						SecretKeyRef: &corev1.SecretKeySelector{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: secretRef.Name,
-							},
-							Key:      secretRef.Key,
-							Optional: &[]bool{false}[0],
-						},
-					},
-				})
-				updated = true
-			}
-			break
+			return fmt.Errorf("proxy container not found in openclaw-proxy deployment")
 		}
 	}
 
-	if !updated {
-		return fmt.Errorf("proxy container not found in openclaw-proxy deployment")
-	}
-
-	// Update the deployment
-	logger.Info("Patching openclaw-proxy deployment with Secret reference", "secret", secretRef.Name, "key", secretRef.Key)
-	if err := r.Update(ctx, deployment); err != nil {
-		logger.Error(err, "Failed to update openclaw-proxy deployment")
-		return err
-	}
-
-	logger.Info("Successfully patched openclaw-proxy deployment")
-	return nil
+	return fmt.Errorf("openclaw-proxy deployment not found in manifests")
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem

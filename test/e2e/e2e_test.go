@@ -309,7 +309,196 @@ var _ = Describe("Manager", Ordered, func() {
 			_, _ = utils.Run(cmd)
 		})
 
-		It("should handle Secret rotation", func() {
+		It("should configure openclaw-proxy GEMINI_API_KEY env var with correct Secret reference", func() {
+			By("creating the Gemini API key Secret")
+			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
+				"--from-literal=api-key=test-gemini-key-value",
+				"-n", userNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create Secret")
+
+			By("applying the OpenClaw CR")
+			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_openclaw.yaml",
+				"-n", userNamespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to apply OpenClaw CR")
+
+			By("waiting for openclaw-proxy deployment to be created")
+			verifyProxyDeploymentExists := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+					"-n", userNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(verifyProxyDeploymentExists, 2*time.Minute).Should(Succeed())
+
+			By("verifying GEMINI_API_KEY env var references the correct Secret name")
+			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+				"-o", "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}",
+				"-n", userNamespace)
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("gemini-api-key"), "GEMINI_API_KEY should reference gemini-api-key Secret")
+
+			By("verifying GEMINI_API_KEY env var references the correct Secret key")
+			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+				"-o", "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.key}",
+				"-n", userNamespace)
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("api-key"), "GEMINI_API_KEY should reference 'api-key' key in Secret")
+
+			By("verifying GEMINI_API_KEY env var is not optional")
+			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+				"-o", "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.optional}",
+				"-n", userNamespace)
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("false"), "GEMINI_API_KEY should be required (optional=false)")
+
+			By("verifying the deployment uses the proxy container")
+			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+				"-o", "jsonpath={.spec.template.spec.containers[0].name}",
+				"-n", userNamespace)
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("proxy"), "First container should be named 'proxy'")
+
+			By("verifying pods are running with the Secret reference")
+			verifyProxyPodsRunning := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
+					"-o", "jsonpath={.items[*].status.phase}",
+					"-n", userNamespace)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("Running"), "Proxy pods should be running")
+			}
+			Eventually(verifyProxyPodsRunning, 3*time.Minute).Should(Succeed())
+
+			By("cleaning up the OpenClaw CR")
+			cmd = exec.Command("kubectl", "delete", "openclaw", "instance", "-n", userNamespace)
+			_, _ = utils.Run(cmd)
+
+			By("cleaning up the Secret")
+			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should trigger pod restart when Secret reference changes", func() {
+			By("creating the first Gemini API key Secret")
+			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key-1",
+				"--from-literal=api-key=first-api-key",
+				"-n", userNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create first Secret")
+
+			By("creating a custom OpenClaw CR with first Secret")
+			openclawYAML := `apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+kind: OpenClaw
+metadata:
+  name: instance
+spec:
+  geminiAPIKey:
+    name: gemini-api-key-1
+    key: api-key
+`
+			crFile := filepath.Join("/tmp", "openclaw-e2e-test.yaml")
+			err = os.WriteFile(crFile, []byte(openclawYAML), os.FileMode(0o644))
+			Expect(err).NotTo(HaveOccurred(), "Failed to write CR file")
+
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to apply OpenClaw CR")
+
+			By("waiting for OpenClaw to become Available")
+			verifyOpenClawAvailable := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "openclaw", "instance",
+					"-o", "jsonpath={.status.conditions[?(@.type=='Available')].status}",
+					"-n", userNamespace)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}
+			Eventually(verifyOpenClawAvailable, 3*time.Minute).Should(Succeed())
+
+			By("capturing original pod UID")
+			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
+				"-o", "jsonpath={.items[0].metadata.uid}",
+				"-n", userNamespace)
+			originalPodUID, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(originalPodUID).NotTo(BeEmpty())
+
+			By("creating the second Gemini API key Secret")
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key-2",
+				"--from-literal=api-key=second-api-key",
+				"-n", userNamespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create second Secret")
+
+			By("updating OpenClaw CR to reference the second Secret")
+			openclawYAML2 := `apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+kind: OpenClaw
+metadata:
+  name: instance
+spec:
+  geminiAPIKey:
+    name: gemini-api-key-2
+    key: api-key
+`
+			err = os.WriteFile(crFile, []byte(openclawYAML2), os.FileMode(0o644))
+			Expect(err).NotTo(HaveOccurred(), "Failed to write updated CR file")
+
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to update OpenClaw CR")
+
+			By("verifying the deployment references the new Secret")
+			verifyNewSecretReference := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+					"-o", "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}",
+					"-n", userNamespace)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("gemini-api-key-2"), "Deployment should reference new Secret")
+			}
+			Eventually(verifyNewSecretReference, 1*time.Minute).Should(Succeed())
+
+			By("verifying pod was restarted (different UID)")
+			verifyPodRestarted := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
+					"-o", "jsonpath={.items[0].metadata.uid}",
+					"-n", userNamespace)
+				newPodUID, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(newPodUID).NotTo(BeEmpty())
+				g.Expect(newPodUID).NotTo(Equal(originalPodUID), "Pod should have been recreated with new UID")
+			}
+			Eventually(verifyPodRestarted, 2*time.Minute).Should(Succeed())
+
+			By("verifying new pod is running")
+			verifyNewPodRunning := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
+					"-o", "jsonpath={.items[0].status.phase}",
+					"-n", userNamespace)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Running"), "New pod should be running")
+			}
+			Eventually(verifyNewPodRunning, 2*time.Minute).Should(Succeed())
+
+			By("cleaning up the OpenClaw CR")
+			cmd = exec.Command("kubectl", "delete", "openclaw", "instance", "-n", userNamespace)
+			_, _ = utils.Run(cmd)
+
+			By("cleaning up the Secrets")
+			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-1", "-n", userNamespace)
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-2", "-n", userNamespace)
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should handle Secret value rotation", func() {
 			By("creating the Gemini API key Secret with initial value")
 			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
 				"--from-literal=api-key=initial-api-key",
@@ -334,11 +523,11 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 			Eventually(verifyOpenClawAvailable, 3*time.Minute).Should(Succeed())
 
-			By("updating the Secret value")
+			By("updating the Secret value (not the reference)")
 			cmd = exec.Command("kubectl", "patch", "secret", "gemini-api-key",
 				"-n", userNamespace,
 				"--type=json",
-				"-p", `[{"op": "replace", "path": "/data/api-key", 
+				"-p", `[{"op": "replace", "path": "/data/api-key",
 					"value": "dXBkYXRlZC1hcGkta2V5"}]`) // base64 of "updated-api-key"
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to update Secret")

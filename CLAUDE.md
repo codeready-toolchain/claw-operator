@@ -95,33 +95,32 @@ Reconcile(ctx, req) called
 4. applyKustomizedResources(ctx, instance)
    ├─ Build Kustomize in-memory from embedded manifests
    ├─ Parse YAML into unstructured objects
+   ├─ configureProxyDeployment(objects, instance)
+   │  ├─ Find openclaw-proxy Deployment in parsed objects
+   │  ├─ Navigate to spec.template.spec.containers[].env[]
+   │  ├─ Find GEMINI_API_KEY env var
+   │  ├─ Update valueFrom.secretKeyRef to point to user's Secret (name and key from instance.Spec.GeminiAPIKey)
+   │  └─ Modify in-place BEFORE applying (so pod template changes trigger automatic pod restarts on Secret ref changes)
    ├─ Set namespace = instance.Namespace on each resource
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply each resource (Patch with Apply)
   ↓
-5. patchProxyDeploymentWithSecretRef(ctx, instance)
-   ├─ Fetch openclaw-proxy Deployment
-   ├─ Find the proxy container
-   ├─ Update GEMINI_API_KEY env var to use valueFrom.secretKeyRef
-   ├─ Point secretKeyRef to user's Secret (name and key from instance.Spec.GeminiAPIKey)
-   └─ Update deployment (Kubernetes auto-propagates Secret values to pods; if Secret/key doesn't exist, pod fails with clear error)
-  ↓
-6. updateStatus(ctx, instance)
+5. updateStatus(ctx, instance)
    ├─ Fetch openclaw Deployment and check Available condition
    ├─ Fetch openclaw-proxy Deployment and check Available condition
    ├─ Set OpenClaw Available condition based on both deployment statuses
    ├─ Update LastTransitionTime only if condition status changes
    └─ Update status via status subresource (client.Status().Update)
   ↓
-7. Return success
+6. Return success
 ```
 
 **Key methods:**
 - `Reconcile()` — main entry point, orchestration logic
 - `generateGatewayToken()` — generates cryptographically secure 64-char hex token using crypto/rand
 - `applyGatewaySecret()` — creates/updates openclaw-secrets Secret with gateway token (preserves existing token)
-- `patchProxyDeploymentWithSecretRef()` — patches openclaw-proxy deployment to reference user's Secret (Kubernetes validates Secret existence when pods start)
-- `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA
+- `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA (calls configureProxyDeployment before applying)
+- `configureProxyDeployment()` — modifies openclaw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts)
 - `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition
 - `checkDeploymentsReady()` — checks if both openclaw and openclaw-proxy Deployments are ready
 - `setAvailableCondition()` — sets Available condition on OpenClaw based on deployment states
