@@ -15,9 +15,12 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .metadata.creationTimestamp
-      name: Age
-      type: date
+    - jsonPath: .status.conditions[?(@.type=="Available")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Available")].reason
+      name: Reason
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:

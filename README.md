@@ -51,12 +51,21 @@ The controller automatically populates status conditions to track the deployment
 **Checking instance status:**
 
 ```sh
+# View instance with status columns
+kubectl get openclaw
+# NAME       READY   REASON
+# instance   True    Ready
+
 # View full status
 kubectl get openclaw instance -o yaml
 
 # Check if instance is ready
 kubectl get openclaw instance -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
 ```
+
+The `kubectl get openclaw` output includes:
+- **Ready** column: Shows the Available condition status (True/False/Unknown)
+- **Reason** column: Shows why the instance is in its current state (Provisioning/Ready)
 
 **Important:** Only OpenClaw instances named `instance` will be reconciled by the controller.
 
