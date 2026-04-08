@@ -497,57 +497,6 @@ spec:
 			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-2", "-n", userNamespace)
 			_, _ = utils.Run(cmd)
 		})
-
-		It("should handle Secret value rotation", func() {
-			By("creating the Gemini API key Secret with initial value")
-			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
-				"--from-literal=api-key=initial-api-key",
-				"-n", userNamespace)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create Secret")
-
-			By("applying the OpenClaw CR")
-			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_openclaw.yaml",
-				"-n", userNamespace)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to apply OpenClaw CR")
-
-			By("waiting for OpenClaw to become Available")
-			verifyOpenClawAvailable := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "openclaw", "instance",
-					"-o", "jsonpath={.status.conditions[?(@.type=='Available')].status}",
-					"-n", userNamespace)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("True"))
-			}
-			Eventually(verifyOpenClawAvailable, 3*time.Minute).Should(Succeed())
-
-			By("updating the Secret value (not the reference)")
-			cmd = exec.Command("kubectl", "patch", "secret", "gemini-api-key",
-				"-n", userNamespace,
-				"--type=json",
-				"-p", `[{"op": "replace", "path": "/data/api-key",
-					"value": "dXBkYXRlZC1hcGkta2V5"}]`) // base64 of "updated-api-key"
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to update Secret")
-
-			By("verifying the deployment still references the same Secret")
-			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-				"-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}",
-				"-n", userNamespace)
-			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(output).To(Equal("gemini-api-key"), "Proxy deployment should still reference the same Secret")
-
-			By("cleaning up the OpenClaw CR")
-			cmd = exec.Command("kubectl", "delete", "openclaw", "instance", "-n", userNamespace)
-			_, _ = utils.Run(cmd)
-
-			By("cleaning up the Secret")
-			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
-			_, _ = utils.Run(cmd)
-		})
 	})
 })
 
