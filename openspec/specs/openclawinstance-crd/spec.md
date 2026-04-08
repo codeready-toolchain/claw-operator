@@ -54,3 +54,26 @@ The system SHALL generate a CRD manifest YAML file at `config/crd/bases/` contai
 #### Scenario: CRD includes status subresource
 - **WHEN** examining the generated CRD manifest
 - **THEN** it SHALL include `status: {}` in the subresources section
+
+### Requirement: CRD defines printcolumns for status visibility
+The OpenClaw CRD SHALL define printcolumns to display the Available condition status and reason in kubectl table output.
+
+#### Scenario: Ready column shows Available condition status
+- **WHEN** user runs `kubectl get openclaw`
+- **THEN** the output SHALL include a "Ready" column showing the status value from the Available condition (True, False, or Unknown)
+
+#### Scenario: Reason column shows Available condition reason
+- **WHEN** user runs `kubectl get openclaw`
+- **THEN** the output SHALL include a "Reason" column showing the reason value from the Available condition (e.g., Provisioning, Ready)
+
+#### Scenario: Age column is not displayed
+- **WHEN** user runs `kubectl get openclaw`
+- **THEN** the Age column SHALL NOT appear in the default table output
+
+#### Scenario: Printcolumns use JSONPath to extract condition fields
+- **WHEN** examining the CRD manifest
+- **THEN** printcolumn definitions SHALL use JSONPath expressions to extract status and reason from the Available condition (e.g., `.status.conditions[?(@.type=="Available")].status`)
+
+#### Scenario: Empty status cells when condition not yet set
+- **WHEN** an OpenClaw instance is newly created and the controller has not yet set status conditions
+- **THEN** the Ready and Reason columns MAY be empty until the first reconciliation completes

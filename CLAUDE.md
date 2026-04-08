@@ -15,6 +15,11 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
     - `Status=False, Reason=Provisioning`: Deployments are not yet ready
     - `Status=True, Reason=Ready`: Both `openclaw` and `openclaw-proxy` Deployments are available
 
+**CRD Printcolumns:**
+The CRD defines custom printcolumns for `kubectl get openclaw` output:
+- `Ready`: Shows Available condition status (True/False/Unknown) via JSONPath `.status.conditions[?(@.type=="Available")].status`
+- `Reason`: Shows Available condition reason (Provisioning/Ready) via JSONPath `.status.conditions[?(@.type=="Available")].reason`
+
 **Version Logging:**
 The operator logs version and build time at startup: `version` (short commit SHA) and `buildTime` (RFC3339). Injected via LDFLAGS during `docker-build`. Local builds show defaults (`dev`/`unknown`).
 
