@@ -182,6 +182,12 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 		return err
 	}
 
+	// Stamp Secret version annotation to trigger restarts on Secret value changes
+	if err := r.stampSecretVersionAnnotation(ctx, objects, instance); err != nil {
+		logger.Error(err, "Failed to stamp Secret version annotation")
+		return err
+	}
+
 	// Transform resources: set namespace and owner references
 	for _, obj := range objects {
 		// Set namespace to match instance
@@ -372,6 +378,56 @@ func (r *OpenClawResourceReconciler) configureProxyDeployment(objects []*unstruc
 	}
 
 	return fmt.Errorf("openclaw-proxy deployment not found in manifests")
+}
+
+// stampSecretVersionAnnotation adds an annotation to the openclaw-proxy pod template with the
+// referenced Secret's ResourceVersion. This causes the pod template to change whenever the Secret
+// data changes, triggering automatic pod restarts via Deployment rollout.
+func (r *OpenClawResourceReconciler) stampSecretVersionAnnotation(ctx context.Context, objects []*unstructured.Unstructured, instance *openclawv1alpha1.OpenClaw) error {
+	secretRef := instance.Spec.GeminiAPIKey
+
+	// Fetch the Secret to get its ResourceVersion
+	secret := &corev1.Secret{}
+	secretKey := client.ObjectKey{
+		Namespace: instance.Namespace,
+		Name:      secretRef.Name,
+	}
+
+	if err := r.Get(ctx, secretKey, secret); err != nil {
+		// If Secret doesn't exist, skip stamping - pods will fail to start with clear error
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get Secret %s for version stamping: %w", secretRef.Name, err)
+	}
+
+	// Find the openclaw-proxy Deployment
+	for _, obj := range objects {
+		if obj.GetKind() == "Deployment" && obj.GetName() == "openclaw-proxy" {
+			// Get current pod template annotations
+			annotations, _, err := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
+			if err != nil {
+				return fmt.Errorf("failed to get pod template annotations: %w", err)
+			}
+
+			// Initialize map if nil
+			if annotations == nil {
+				annotations = make(map[string]string)
+			}
+
+			// Stamp the Secret's ResourceVersion
+			annotations["openclaw.sandbox.redhat.com/gemini-secret-version"] = secret.ResourceVersion
+
+			// Set the updated annotations back
+			if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
+				return fmt.Errorf("failed to set pod template annotations: %w", err)
+			}
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("openclaw-proxy deployment not found for Secret version stamping")
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem

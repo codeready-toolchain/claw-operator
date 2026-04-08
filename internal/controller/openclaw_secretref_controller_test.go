@@ -105,5 +105,90 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 				return false
 			}, timeout, interval).Should(BeTrue())
 		})
+
+		It("should stamp Secret ResourceVersion annotation on pod template", func() {
+			By("Creating the referenced Secret")
+			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+
+			By("Creating OpenClaw instance")
+			instance := &openclawv1alpha1.OpenClaw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: apiKeySecret,
+				Key:  apiKeySecretKey,
+			}
+			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+
+			By("Reconciling the OpenClaw instance")
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying pod template has Secret version annotation")
+			deployment := &appsv1.Deployment{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw-proxy",
+					Namespace: namespace,
+				}, deployment)
+				if err != nil {
+					return false
+				}
+				annotations := deployment.Spec.Template.Annotations
+				if annotations == nil {
+					return false
+				}
+				version, exists := annotations["openclaw.sandbox.redhat.com/gemini-secret-version"]
+				return exists && version == secret.ResourceVersion
+			}, timeout, interval).Should(BeTrue())
+
+			By("Updating the Secret data")
+			err = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
+			Expect(err).NotTo(HaveOccurred())
+			originalVersion := secret.ResourceVersion
+			secret.Data[apiKeySecretKey] = []byte("updated-api-key")
+			Expect(k8sClient.Update(ctx, secret)).Should(Succeed())
+
+			By("Fetching updated Secret to get new ResourceVersion")
+			err = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(secret.ResourceVersion).NotTo(Equal(originalVersion), "Secret ResourceVersion should change")
+
+			By("Reconciling again after Secret update")
+			_, err = reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying pod template annotation updated with new Secret version")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      "openclaw-proxy",
+					Namespace: namespace,
+				}, deployment)
+				if err != nil {
+					return false
+				}
+				annotations := deployment.Spec.Template.Annotations
+				if annotations == nil {
+					return false
+				}
+				version, exists := annotations["openclaw.sandbox.redhat.com/gemini-secret-version"]
+				return exists && version == secret.ResourceVersion && version != originalVersion
+			}, timeout, interval).Should(BeTrue())
+		})
 	})
 })

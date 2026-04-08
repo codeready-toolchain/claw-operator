@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. CRD: `OpenClaw` in API group `openclaw.sandbox.redhat.com/v1alpha1`.
 
 **CRD Spec Fields:**
-- `geminiAPIKey` (SecretRef, required): Reference to a user-managed Secret containing the Gemini API key. SecretRef is a custom type with fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1), both validated at admission time. Controller validates the Secret exists and configures the `openclaw-proxy` deployment to reference it directly via environment variable.
+- `geminiAPIKey` (SecretRef, required): Reference to a user-managed Secret containing the Gemini API key. SecretRef is a custom type with fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1), both validated at admission time. Controller validates the Secret exists and configures the `openclaw-proxy` deployment to reference it directly via environment variable. Pod restarts are triggered automatically when: (1) Secret reference changes (name or key field), or (2) Secret data changes (controller stamps Secret ResourceVersion as pod template annotation).
 
 **CRD Status Fields:**
 - `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking instance state. Currently includes:
@@ -101,6 +101,11 @@ Reconcile(ctx, req) called
    │  ├─ Find GEMINI_API_KEY env var
    │  ├─ Update valueFrom.secretKeyRef to point to user's Secret (name and key from instance.Spec.GeminiAPIKey)
    │  └─ Modify in-place BEFORE applying (so pod template changes trigger automatic pod restarts on Secret ref changes)
+   ├─ stampSecretVersionAnnotation(ctx, objects, instance)
+   │  ├─ Fetch user's Secret to get its ResourceVersion
+   │  ├─ Find openclaw-proxy Deployment in parsed objects
+   │  ├─ Add annotation to pod template: openclaw.sandbox.redhat.com/gemini-secret-version=<ResourceVersion>
+   │  └─ This triggers pod restarts when Secret data changes (ResourceVersion updates), not just Secret reference changes
    ├─ Set namespace = instance.Namespace on each resource
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply each resource (Patch with Apply)
@@ -119,8 +124,9 @@ Reconcile(ctx, req) called
 - `Reconcile()` — main entry point, orchestration logic
 - `generateGatewayToken()` — generates cryptographically secure 64-char hex token using crypto/rand
 - `applyGatewaySecret()` — creates/updates openclaw-secrets Secret with gateway token (preserves existing token)
-- `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA (calls configureProxyDeployment before applying)
-- `configureProxyDeployment()` — modifies openclaw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts)
+- `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA (calls configureProxyDeployment and stampSecretVersionAnnotation before applying)
+- `configureProxyDeployment()` — modifies openclaw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
+- `stampSecretVersionAnnotation()` — adds Secret ResourceVersion annotation to pod template BEFORE applying (ensures pod template changes trigger restarts when Secret data changes, not just reference)
 - `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition
 - `checkDeploymentsReady()` — checks if both openclaw and openclaw-proxy Deployments are ready
 - `setAvailableCondition()` — sets Available condition on OpenClaw based on deployment states
