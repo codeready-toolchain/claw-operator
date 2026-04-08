@@ -287,8 +287,10 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyOpenClawAvailable, 3*time.Minute).Should(Succeed())
 
 			By("verifying the openclaw-proxy deployment references the user's Secret")
+			jsonPathSecretName := "jsonpath={.spec.template.spec.containers[0]" +
+				".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-				"-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}",
+				"-o", jsonPathSecretName,
 				"-n", userNamespace)
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
@@ -333,24 +335,30 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyProxyDeploymentExists, 2*time.Minute).Should(Succeed())
 
 			By("verifying GEMINI_API_KEY env var references the correct Secret name")
+			jsonPathSecretName := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+				".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-				"-o", "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}",
+				"-o", jsonPathSecretName,
 				"-n", userNamespace)
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output).To(Equal("gemini-api-key"), "GEMINI_API_KEY should reference gemini-api-key Secret")
 
 			By("verifying GEMINI_API_KEY env var references the correct Secret key")
+			jsonPathSecretKey := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+				".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.key}"
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-				"-o", "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.key}",
+				"-o", jsonPathSecretKey,
 				"-n", userNamespace)
 			output, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output).To(Equal("api-key"), "GEMINI_API_KEY should reference 'api-key' key in Secret")
 
 			By("verifying GEMINI_API_KEY env var is not optional")
+			jsonPathOptional := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+				".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.optional}"
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-				"-o", "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.optional}",
+				"-o", jsonPathOptional,
 				"-n", userNamespace)
 			output, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
@@ -455,8 +463,10 @@ spec:
 
 			By("verifying the deployment references the new Secret")
 			verifyNewSecretReference := func(g Gomega) {
+				jsonPathSecretName := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+					".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
 				cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-					"-o", "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')].env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}",
+					"-o", jsonPathSecretName,
 					"-n", userNamespace)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())

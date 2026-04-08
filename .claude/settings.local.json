@@ -38,7 +38,8 @@
       "Bash(podman rm:*)",
       "Bash(chmod +x ./manager-test)",
       "Bash(timeout 3 ./manager-test)",
-      "Bash(yq eval:*)"
+      "Bash(yq eval:*)",
+      "Bash(golangci-lint run:*)"
     ]
   }
 }
