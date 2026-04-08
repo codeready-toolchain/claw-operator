@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -407,6 +408,47 @@ func (r *OpenClawResourceReconciler) checkDeploymentsReady(ctx context.Context, 
 	return len(pending) == 0, pending, nil
 }
 
+// getRouteURL fetches the Route and returns the HTTPS URL, or empty string if not found
+func (r *OpenClawResourceReconciler) getRouteURL(ctx context.Context, instance *openclawv1alpha1.OpenClaw) (string, error) {
+	logger := log.FromContext(ctx)
+
+	// Create an unstructured object to fetch the Route (OpenShift-specific resource)
+	route := &unstructured.Unstructured{}
+	route.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "route.openshift.io",
+		Version: "v1",
+		Kind:    "Route",
+	})
+
+	err := r.Get(ctx, client.ObjectKey{
+		Namespace: instance.Namespace,
+		Name:      "openclaw",
+	}, route)
+
+	if err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			// Route not found (or CRD not registered on non-OpenShift clusters)
+			logger.Info("Route not found or CRD not registered", "name", "openclaw")
+			return "", nil
+		}
+		logger.Error(err, "Failed to get Route")
+		return "", err
+	}
+
+	// Extract host from Route.Spec.Host
+	host, found, err := unstructured.NestedString(route.Object, "spec", "host")
+	if err != nil {
+		logger.Error(err, "Failed to extract host from Route")
+		return "", err
+	}
+	if !found || host == "" {
+		logger.Info("Route host not found or empty")
+		return "", nil
+	}
+
+	return "https://" + host, nil
+}
+
 // setAvailableCondition sets the Available condition on the OpenClaw instance based on deployment readiness
 func setAvailableCondition(instance *openclawv1alpha1.OpenClaw, ready bool, pendingDeployments []string) {
 	var status metav1.ConditionStatus
@@ -449,13 +491,26 @@ func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance 
 	// Set Available condition
 	setAvailableCondition(instance, ready, pending)
 
+	// Populate URL field only when both deployments are ready
+	if ready {
+		url, err := r.getRouteURL(ctx, instance)
+		if err != nil {
+			logger.Error(err, "Failed to get Route URL")
+			return err
+		}
+		instance.Status.URL = url
+	} else {
+		// Clear URL when deployments are not ready
+		instance.Status.URL = ""
+	}
+
 	// Update status subresource
 	if err := r.Status().Update(ctx, instance); err != nil {
 		logger.Error(err, "Failed to update OpenClaw status")
 		return err
 	}
 
-	logger.Info("Successfully updated OpenClaw status", "available", ready)
+	logger.Info("Successfully updated OpenClaw status", "available", ready, "url", instance.Status.URL)
 	return nil
 }
 

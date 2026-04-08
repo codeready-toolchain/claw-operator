@@ -35,6 +35,10 @@ type OpenClawStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// URL is the HTTPS URL for accessing the OpenClaw instance
+	// +optional
+	URL string `json:"url,omitempty"`
 }
 
 // +kubebuilder:object:root=true
