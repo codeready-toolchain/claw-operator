@@ -17,15 +17,15 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // OpenClawSpec defines the desired state of OpenClaw
 type OpenClawSpec struct {
-	// APIKey is the API key for authenticating with the LLM provider
+	// GeminiAPIKey is a reference to a Secret containing the Gemini API key
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	APIKey string `json:"apiKey"`
+	GeminiAPIKey *corev1.SecretKeySelector `json:"geminiAPIKey"`
 }
 
 // OpenClawStatus defines the observed state of OpenClaw

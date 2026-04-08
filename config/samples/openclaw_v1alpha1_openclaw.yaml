@@ -4,6 +4,8 @@ metadata:
   name: instance
   namespace: default
 spec:
-  # APIKey is the API key for authenticating with the LLM provider (e.g., Gemini)
-  # This value will be injected into the openclaw-proxy-secrets Secret
-  apiKey: "your-gemini-api-key-here"
+  # GeminiAPIKey references a Secret containing the Gemini API key
+  # Create the Secret first using the example in gemini-api-key-secret.yaml
+  geminiAPIKey:
+    name: gemini-api-key
+    key: api-key

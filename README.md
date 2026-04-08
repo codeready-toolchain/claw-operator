@@ -22,8 +22,10 @@ metadata:
   name: instance
   namespace: default
 spec:
-  # Required: API key for authenticating with the LLM provider
-  apiKey: "your-gemini-api-key-here"
+  # Required: Reference to a Secret containing the Gemini API key
+  geminiAPIKey:
+    name: gemini-api-key
+    key: api-key
 status:
   # Status fields are populated by the controller
   conditions:
@@ -37,7 +39,9 @@ status:
 
 #### Spec Fields
 
-- `apiKey` (string, required): The API key for authenticating with your LLM provider (currently Gemini). This key is stored in a Kubernetes Secret (`openclaw-proxy-secrets`) and injected into the proxy for secure upstream authentication.
+- `geminiAPIKey` (SecretKeySelector, required): Reference to a Kubernetes Secret containing the Gemini API key. The controller reads this Secret and propagates the key to the proxy. The Secret must exist in the same namespace as the OpenClaw instance.
+  - `name` (string, required): Name of the Secret containing the API key
+  - `key` (string, required): Key within the Secret data that contains the API key value
 
 #### Status Fields
 
@@ -73,11 +77,11 @@ The `kubectl get openclaw` output includes:
 
 ### Secrets Management
 
-The OpenClaw operator automatically creates and manages two Kubernetes Secrets for authentication:
+The OpenClaw operator manages authentication through two types of Secrets:
 
 #### 1. Gateway Authentication Token (`openclaw-secrets`)
 
-The controller automatically generates a secure, randomly-generated authentication token for the OpenClaw gateway:
+The controller automatically generates and manages a secure authentication token for the OpenClaw gateway:
 - **Secret name:** `openclaw-secrets`
 - **Data entry:** `OPENCLAW_GATEWAY_TOKEN` - A cryptographically secure 64-character hex string (256-bit entropy)
 - **Generation:** Automatically created on first reconciliation using Go's `crypto/rand` package
@@ -89,29 +93,82 @@ The controller automatically generates a secure, randomly-generated authenticati
 kubectl get secret openclaw-secrets -n openclaw-system -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d
 ```
 
-#### 2. LLM API Key (`openclaw-proxy-secrets`)
+#### 2. LLM API Key (User-Managed Secret)
 
-The `apiKey` field in the OpenClaw CR is mandatory and used for LLM provider authentication. The controller:
-1. Reads the API key from the OpenClaw CR's `spec.apiKey` field
-2. Creates or updates a Secret named `openclaw-proxy-secrets` with the key stored under `GEMINI_API_KEY`
-3. The proxy deployment automatically mounts this Secret and uses it for upstream requests
+The `geminiAPIKey` field in the OpenClaw CR references a user-managed Secret containing your Gemini API key. The controller:
+1. Validates the Secret referenced in `spec.geminiAPIKey` exists in the same namespace
+2. Verifies the Secret contains the specified key with a non-empty value
+3. Configures the `openclaw-proxy` deployment to reference your Secret directly via environment variable
+4. Kubernetes automatically propagates Secret updates to the proxy pods (enables key rotation without controller intervention)
+
+**Creating the API key Secret:**
+```sh
+kubectl create secret generic gemini-api-key \
+  --from-literal=api-key="YOUR_GEMINI_API_KEY" \
+  -n openclaw-system
+```
+
+Or using a YAML manifest (see `config/samples/gemini-api-key-secret.yaml`):
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gemini-api-key
+  namespace: openclaw-system
+type: Opaque
+stringData:
+  api-key: "YOUR_GEMINI_API_KEY"
+```
+
+**How it works:**
+- The `openclaw-proxy` deployment's `GEMINI_API_KEY` environment variable uses `valueFrom.secretKeyRef` pointing to your Secret
+- No intermediate Secret is created - the controller directly references your Secret
+- The proxy pod receives the API key value from Kubernetes, which automatically updates if you change the Secret value
 
 **Security Considerations:**
-- The LLM API key is stored directly in the OpenClaw CR (visible via `kubectl get openclaw -o yaml`)
-- The gateway token is never exposed in the CR, only in the Secret
+- The LLM API key is stored only in your user-managed Secret (not visible in the OpenClaw CR)
+- Fully compatible with external secret management tools (Sealed Secrets, External Secrets Operator, Vault, etc.)
+- The controller never copies or stores API key values - it only validates and references your Secret
+- The gateway token is never exposed in the CR, only in the operator-managed Secret
 - Consider enabling encryption at rest for etcd in your cluster
-- Secret reference support (using SecretKeySelector) is planned for future releases to improve security
 
-**Example:**
-```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: OpenClaw
-metadata:
-  name: instance
-  namespace: openclaw-system
-spec:
-  apiKey: "AIzaSyD-your-actual-gemini-api-key-here"
-```
+### Migration from Direct API Key to Secret Reference
+
+**Breaking Change:** The `apiKey` field has been replaced with `geminiAPIKey` Secret reference in v1alpha1.
+
+If you have an existing OpenClaw instance using the old `apiKey` field, follow these steps to migrate:
+
+1. **Create a Secret with your existing API key:**
+   ```sh
+   # Extract the current API key from your OpenClaw CR
+   CURRENT_KEY=$(kubectl get openclaw instance -n openclaw-system -o jsonpath='{.spec.apiKey}')
+   
+   # Create a Secret with the API key
+   kubectl create secret generic gemini-api-key \
+     --from-literal=api-key="$CURRENT_KEY" \
+     -n openclaw-system
+   ```
+
+2. **Update your OpenClaw CR to use the Secret reference:**
+   ```sh
+   kubectl patch openclaw instance -n openclaw-system --type='json' -p='[
+     {"op": "remove", "path": "/spec/apiKey"},
+     {"op": "add", "path": "/spec/geminiAPIKey", "value": {"name": "gemini-api-key", "key": "api-key"}}
+   ]'
+   ```
+
+3. **Verify the migration:**
+   ```sh
+   # Check that the OpenClaw instance is Available
+   kubectl get openclaw instance -n openclaw-system
+   
+   # Verify the proxy deployment references your Secret
+   kubectl get deployment openclaw-proxy -n openclaw-system -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="GEMINI_API_KEY")].valueFrom.secretKeyRef}'
+   ```
+
+**Rollback:** If you need to rollback to the old operator version, the CRD schema change is backward compatible for reads (the old apiKey field will appear empty).
+
+**Note:** After migration, the old `openclaw-proxy-secrets` Secret (if it exists) is no longer used and can be safely deleted. The proxy deployment now references your user-managed Secret directly.
 
 ## Version Information
 

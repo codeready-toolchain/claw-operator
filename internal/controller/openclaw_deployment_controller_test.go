@@ -33,8 +33,10 @@ import (
 
 var _ = Describe("OpenClawDeployment Controller", func() {
 	const (
-		namespace = "default"
-		apiKey    = "test-api-key"
+		namespace       = "default"
+		apiKey          = "test-api-key"
+		apiKeySecret    = "test-gemini-secret"
+		apiKeySecretKey = "api-key"
 	)
 
 	// NOTE: The unified controller creates all resources atomically via server-side apply,
@@ -49,6 +51,11 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
+
+			// Cleanup API key Secret
+			secret := &corev1.Secret{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
+			_ = k8sClient.Delete(ctx, secret)
 
 			// Cleanup all managed resources
 			configMap := &corev1.ConfigMap{}
@@ -65,7 +72,14 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			instance.Spec.APIKey = apiKey
+			// Create API key Secret
+			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+
+			instance.Spec.GeminiAPIKey = &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: apiKeySecret},
+				Key:                  apiKeySecretKey,
+			}
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
@@ -99,7 +113,14 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			instance.Spec.APIKey = apiKey
+			// Create API key Secret
+			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+
+			instance.Spec.GeminiAPIKey = &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: apiKeySecret},
+				Key:                  apiKeySecretKey,
+			}
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
@@ -169,7 +190,14 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			instance.Spec.APIKey = apiKey
+			// Create API key Secret
+			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+
+			instance.Spec.GeminiAPIKey = &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: apiKeySecret},
+				Key:                  apiKeySecretKey,
+			}
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
