@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. CRD: `OpenClaw` in API group `openclaw.sandbox.redhat.com/v1alpha1`.
 
 **CRD Spec Fields:**
-- `geminiAPIKey` (SecretKeySelector, required): Reference to a user-managed Secret containing the Gemini API key. Controller validates the Secret exists and configures the `openclaw-proxy` deployment to reference it directly via environment variable.
+- `geminiAPIKey` (SecretRef, required): Reference to a user-managed Secret containing the Gemini API key. SecretRef is a custom type with fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1), both validated at admission time. Controller validates the Secret exists and configures the `openclaw-proxy` deployment to reference it directly via environment variable.
 
 **CRD Status Fields:**
 - `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking instance state. Currently includes:
@@ -199,7 +199,7 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 - **Framework:** Ginkgo v2 + Gomega with `envtest` (real API server, no full cluster needed)
 - **Shared setup:** `internal/controller/suite_test.go` boots envtest once per suite
 - **Pattern:** Describe/Context/It blocks with `AfterEach` cleanup; uses `Eventually()` for async assertions (10s timeout, 250ms poll)
-- **Test CRs:** All test OpenClaw instances must include the required `geminiAPIKey` field (e.g., `instance.Spec.GeminiAPIKey = &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "test-secret"}, Key: "api-key"}`)
+- **Test CRs:** All test OpenClaw instances must include the required `geminiAPIKey` field (e.g., `instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}`)
 - **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secretref_controller_test.go`, `openclaw_status_controller_test.go`, etc.)
 - **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment
 

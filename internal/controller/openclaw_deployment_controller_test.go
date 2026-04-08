@@ -76,9 +76,9 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
 			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
 
-			instance.Spec.GeminiAPIKey = &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: apiKeySecret},
-				Key:                  apiKeySecretKey,
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: apiKeySecret,
+				Key:  apiKeySecretKey,
 			}
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
@@ -117,9 +117,9 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
 			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
 
-			instance.Spec.GeminiAPIKey = &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: apiKeySecret},
-				Key:                  apiKeySecretKey,
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: apiKeySecret,
+				Key:  apiKeySecretKey,
 			}
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
@@ -194,9 +194,9 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
 			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
 
-			instance.Spec.GeminiAPIKey = &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: apiKeySecret},
-				Key:                  apiKeySecretKey,
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: apiKeySecret,
+				Key:  apiKeySecretKey,
 			}
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 

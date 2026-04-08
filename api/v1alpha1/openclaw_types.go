@@ -17,15 +17,27 @@ limitations under the License.
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// SecretRef references a specific key in a Secret
+type SecretRef struct {
+	// Name is the name of the Secret
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Key is the key in the Secret's data map
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
+}
 
 // OpenClawSpec defines the desired state of OpenClaw
 type OpenClawSpec struct {
 	// GeminiAPIKey is a reference to a Secret containing the Gemini API key
 	// +kubebuilder:validation:Required
-	GeminiAPIKey *corev1.SecretKeySelector `json:"geminiAPIKey"`
+	GeminiAPIKey *SecretRef `json:"geminiAPIKey"`
 }
 
 // OpenClawStatus defines the observed state of OpenClaw

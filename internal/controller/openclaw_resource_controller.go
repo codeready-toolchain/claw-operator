@@ -313,18 +313,8 @@ func (r *OpenClawResourceReconciler) applyGatewaySecret(ctx context.Context, ins
 func (r *OpenClawResourceReconciler) validateGeminiAPIKeySecret(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
 	logger := log.FromContext(ctx)
 
-	// Validate that GeminiAPIKey reference is provided
-	if instance.Spec.GeminiAPIKey == nil {
-		return fmt.Errorf("geminiAPIKey field is required")
-	}
-
+	// Note: GeminiAPIKey, Name, and Key are all enforced as non-nil/non-empty by admission validation
 	secretRef := instance.Spec.GeminiAPIKey
-	if secretRef.Name == "" {
-		return fmt.Errorf("geminiAPIKey.name is required")
-	}
-	if secretRef.Key == "" {
-		return fmt.Errorf("geminiAPIKey.key is required")
-	}
 
 	// Fetch the referenced Secret
 	secret := &corev1.Secret{}
