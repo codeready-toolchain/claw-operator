@@ -11,7 +11,7 @@
 ## ADDED Requirements
 
 ### Requirement: GeminiAPIKey field is mandatory in OpenClawSpec
-The OpenClawSpec MUST include a mandatory `GeminiAPIKey` field of type `corev1.SecretKeySelector` that references a user-managed Secret containing the Gemini API key.
+The OpenClawSpec MUST include a mandatory `GeminiAPIKey` field of type `SecretRef` (custom type with `name` and `key` string fields) that references a user-managed Secret containing the Gemini API key.
 
 #### Scenario: User creates OpenClaw CR without GeminiAPIKey field
 - **WHEN** user attempts to create an OpenClaw CR without specifying the GeminiAPIKey field
@@ -22,12 +22,12 @@ The OpenClawSpec MUST include a mandatory `GeminiAPIKey` field of type `corev1.S
 - **THEN** the CR MUST be accepted and created successfully
 
 #### Scenario: User creates OpenClaw CR with missing Secret name
-- **WHEN** user creates an OpenClaw CR with GeminiAPIKey.Key specified but GeminiAPIKey.Name empty
-- **THEN** the API server MUST reject the request with a validation error indicating Secret name is required
+- **WHEN** user creates an OpenClaw CR with GeminiAPIKey.key specified but GeminiAPIKey.name empty or missing
+- **THEN** the API server MUST reject the request with a validation error indicating Secret name is required (enforced by minLength=1)
 
 #### Scenario: User creates OpenClaw CR with missing Secret key
-- **WHEN** user creates an OpenClaw CR with GeminiAPIKey.Name specified but GeminiAPIKey.Key empty
-- **THEN** the API server MUST reject the request with a validation error indicating Secret key is required
+- **WHEN** user creates an OpenClaw CR with GeminiAPIKey.name specified but GeminiAPIKey.key empty or missing
+- **THEN** the API server MUST reject the request with a validation error indicating Secret key is required (enforced by minLength=1)
 
 ### Requirement: CRD schema includes GeminiAPIKey validation
 The generated CRD YAML MUST include OpenAPI validation schema that marks GeminiAPIKey as a required field with nested validation for name and key subfields.
@@ -42,44 +42,44 @@ The generated CRD YAML MUST include OpenAPI validation schema that marks GeminiA
 
 ## MODIFIED Requirements
 
-### Requirement: Controller injects API key into proxy Secret
-The controller MUST read the API key from the Secret referenced in OpenClawSpec.GeminiAPIKey and inject it into an operator-managed Secret named `openclaw-proxy-secrets` under the data key `GEMINI_API_KEY`.
+### Requirement: Controller configures proxy deployment to reference user's Secret
+The controller MUST configure the `openclaw-proxy` Deployment to directly reference the user-managed Secret specified in OpenClawSpec.GeminiAPIKey by modifying the deployment manifest BEFORE applying it, ensuring the `GEMINI_API_KEY` environment variable uses `valueFrom.secretKeyRef` pointing to the user's Secret.
 
-#### Scenario: Controller reconciles OpenClaw CR when referenced Secret exists
-- **WHEN** the controller reconciles an OpenClaw CR with a valid GeminiAPIKey reference and the referenced Secret exists with the specified key
-- **THEN** the controller MUST read the API key value from the referenced Secret and create/update the `openclaw-proxy-secrets` Secret with that value under the `GEMINI_API_KEY` data entry
-
-#### Scenario: Controller reconciles OpenClaw CR when referenced Secret does not exist
-- **WHEN** the controller reconciles an OpenClaw CR with a GeminiAPIKey reference and the referenced Secret does not exist
-- **THEN** the controller MUST set the Available condition to False with Reason=SecretNotFound and Message indicating which Secret is missing
-
-#### Scenario: Controller reconciles OpenClaw CR when referenced Secret key does not exist
-- **WHEN** the controller reconciles an OpenClaw CR with a GeminiAPIKey reference and the Secret exists but does not contain the specified key
-- **THEN** the controller MUST set the Available condition to False with Reason=SecretKeyNotFound and Message indicating which key is missing from which Secret
-
-#### Scenario: User updates referenced Secret value
-- **WHEN** the user updates the API key value in the referenced Secret
-- **THEN** the controller MUST detect the change and update the `GEMINI_API_KEY` entry in the `openclaw-proxy-secrets` Secret with the new value
-
-#### Scenario: Proxy Secret is deleted manually
-- **WHEN** the `openclaw-proxy-secrets` Secret is deleted manually
-- **THEN** the controller MUST recreate the Secret with the API key from the referenced Secret on the next reconciliation
+#### Scenario: Controller reconciles OpenClaw CR with valid Secret reference
+- **WHEN** the controller reconciles an OpenClaw CR with a valid GeminiAPIKey reference (name and key specified)
+- **THEN** the controller MUST modify the `openclaw-proxy` deployment manifest before applying it to set the `GEMINI_API_KEY` env var's `valueFrom.secretKeyRef.name` to the user's Secret name and `valueFrom.secretKeyRef.key` to the user's Secret key
 
 #### Scenario: User changes GeminiAPIKey reference to different Secret
-- **WHEN** the user updates the GeminiAPIKey field to reference a different Secret
-- **THEN** the controller MUST detect the change, read the API key from the new Secret, and update the `openclaw-proxy-secrets` Secret accordingly
+- **WHEN** the user updates the GeminiAPIKey field to reference a different Secret (e.g., changing name from `secret-a` to `secret-b`)
+- **THEN** the controller MUST update the `openclaw-proxy` deployment manifest to reference the new Secret, triggering Kubernetes to automatically restart pods with the new Secret reference
 
-### Requirement: API key is securely mounted in proxy
-The proxy Deployment MUST mount the `openclaw-proxy-secrets` Secret and use the `GEMINI_API_KEY` data entry for upstream LLM provider authentication.
+#### Scenario: User changes GeminiAPIKey key within same Secret
+- **WHEN** the user updates the GeminiAPIKey.key field to reference a different key in the same Secret (e.g., changing from `api-key` to `gemini-key`)
+- **THEN** the controller MUST update the `openclaw-proxy` deployment manifest to reference the new key, triggering Kubernetes to automatically restart pods
 
-#### Scenario: Proxy container starts with credentials
+#### Scenario: User updates value in referenced Secret
+- **WHEN** the user updates the API key value in the referenced Secret (without changing the Secret name or key)
+- **THEN** the deployment manifest remains unchanged (same secretKeyRef), and Kubernetes automatically propagates the new value to running pods without restart
+
+#### Scenario: Referenced Secret does not exist when pods start
+- **WHEN** the controller applies the deployment with a Secret reference and the referenced Secret does not exist in the namespace
+- **THEN** the deployment MUST be created successfully, but pods MUST fail to start with a clear error indicating the Secret is missing (Kubernetes validates Secret existence at pod creation time)
+
+#### Scenario: Referenced Secret key does not exist when pods start
+- **WHEN** the controller applies the deployment with a Secret reference and the Secret exists but does not contain the specified key
+- **THEN** the deployment MUST be created successfully, but pods MUST fail to start with a clear error indicating the key is missing from the Secret (Kubernetes validates key existence at pod creation time)
+
+### Requirement: Proxy deployment mounts user's Secret directly
+The proxy Deployment MUST reference the user-managed Secret directly via `valueFrom.secretKeyRef` for the `GEMINI_API_KEY` environment variable, with `optional: false` to ensure the Secret and key exist before pods start.
+
+#### Scenario: Proxy container starts with user's Secret
 - **WHEN** the proxy Deployment is created or updated by the controller
-- **THEN** the proxy Pod MUST mount the `openclaw-proxy-secrets` Secret and expose the `GEMINI_API_KEY` entry as an environment variable
+- **THEN** the proxy container MUST have an environment variable `GEMINI_API_KEY` that references the user's Secret via `valueFrom.secretKeyRef` with `optional: false`
 
-#### Scenario: Proxy uses API key for upstream requests
+#### Scenario: Proxy uses API key from user's Secret
 - **WHEN** the proxy forwards a request to an LLM provider
-- **THEN** the proxy MUST include the API key from the `GEMINI_API_KEY` environment variable in the authentication header
+- **THEN** the proxy MUST include the API key from the `GEMINI_API_KEY` environment variable (populated by Kubernetes from the user's Secret) in the authentication header
 
-#### Scenario: Proxy Secret is updated with new key
-- **WHEN** the `openclaw-proxy-secrets` Secret is updated with a new API key value
-- **THEN** the proxy Pod MUST eventually use the new API key for subsequent requests (may require Pod restart depending on mount propagation)
+#### Scenario: Pod template spec changes trigger restart
+- **WHEN** the controller updates the deployment's pod template spec (e.g., changing the Secret reference)
+- **THEN** Kubernetes MUST automatically trigger a rolling restart of proxy pods to apply the new configuration
