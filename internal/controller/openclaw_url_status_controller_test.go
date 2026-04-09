@@ -181,4 +181,167 @@ var _ = Describe("OpenClaw URL Status Field", func() {
 			Skip("Route CRD not available in envtest - requires e2e test with OpenShift cluster")
 		})
 	})
+
+	Context("When testing gateway token retrieval", func() {
+		ctx := context.Background()
+
+		BeforeEach(func() {
+			// Ensure cleanup of any existing gateway secret before each test
+			gatewaySecret := &corev1.Secret{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret); err == nil {
+				_ = k8sClient.Delete(ctx, gatewaySecret)
+				// Wait for deletion to complete
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret)
+					return err != nil
+				}, timeout, interval).Should(BeTrue())
+			}
+		})
+
+		AfterEach(func() {
+			// Cleanup gateway secret
+			gatewaySecret := &corev1.Secret{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret)
+			_ = k8sClient.Delete(ctx, gatewaySecret)
+		})
+
+		It("should retrieve and decode gateway token from openclaw-secrets", func() {
+			By("Creating gateway secret with token")
+			gatewaySecret := &corev1.Secret{}
+			gatewaySecret.Name = OpenClawGatewaySecretName
+			gatewaySecret.Namespace = namespace
+			testToken := "test-gateway-token-123456"
+			gatewaySecret.Data = map[string][]byte{
+				GatewayTokenKeyName: []byte(testToken),
+			}
+			Expect(k8sClient.Create(ctx, gatewaySecret)).Should(Succeed())
+
+			By("Calling getGatewayToken method")
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+			token := reconciler.getGatewayToken(ctx, namespace)
+
+			By("Verifying token is correctly retrieved")
+			Expect(token).To(Equal(testToken))
+		})
+
+		It("should return empty string when gateway secret does not exist", func() {
+			By("Calling getGatewayToken without creating secret")
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+			token := reconciler.getGatewayToken(ctx, namespace)
+
+			By("Verifying empty string is returned")
+			Expect(token).To(BeEmpty())
+		})
+
+		It("should return empty string when token key is missing from secret", func() {
+			By("Creating gateway secret without token key")
+			gatewaySecret := &corev1.Secret{}
+			gatewaySecret.Name = OpenClawGatewaySecretName
+			gatewaySecret.Namespace = namespace
+			gatewaySecret.Data = map[string][]byte{
+				"other-key": []byte("other-value"),
+			}
+			Expect(k8sClient.Create(ctx, gatewaySecret)).Should(Succeed())
+
+			By("Calling getGatewayToken method")
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+			token := reconciler.getGatewayToken(ctx, namespace)
+
+			By("Verifying empty string is returned")
+			Expect(token).To(BeEmpty())
+		})
+
+		It("should return empty string when token value is empty", func() {
+			By("Creating gateway secret with empty token")
+			gatewaySecret := &corev1.Secret{}
+			gatewaySecret.Name = OpenClawGatewaySecretName
+			gatewaySecret.Namespace = namespace
+			gatewaySecret.Data = map[string][]byte{
+				GatewayTokenKeyName: []byte(""),
+			}
+			Expect(k8sClient.Create(ctx, gatewaySecret)).Should(Succeed())
+
+			By("Calling getGatewayToken method")
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+			token := reconciler.getGatewayToken(ctx, namespace)
+
+			By("Verifying empty string is returned")
+			Expect(token).To(BeEmpty())
+		})
+	})
+
+	Context("When testing URL construction with token fragment", func() {
+		type urlTestCase struct {
+			name     string
+			routeURL string
+			token    string
+			expected string
+		}
+
+		DescribeTable("URL construction scenarios",
+			func(tc urlTestCase) {
+				result := buildOpenClawURL(tc.routeURL, tc.token)
+				Expect(result).To(Equal(tc.expected))
+			},
+			Entry("should append token fragment when both route and token are provided",
+				urlTestCase{
+					name:     "with route and token",
+					routeURL: "https://openclaw-route.apps.example.com",
+					token:    "abc123def456",
+					expected: "https://openclaw-route.apps.example.com#token=abc123def456",
+				}),
+			Entry("should return route URL without fragment when token is empty",
+				urlTestCase{
+					name:     "with route but no token",
+					routeURL: "https://openclaw-route.apps.example.com",
+					token:    "",
+					expected: "https://openclaw-route.apps.example.com",
+				}),
+			Entry("should return empty string when route URL is empty",
+				urlTestCase{
+					name:     "no route URL",
+					routeURL: "",
+					token:    "abc123def456",
+					expected: "",
+				}),
+			Entry("should return empty string when both route and token are empty",
+				urlTestCase{
+					name:     "no route or token",
+					routeURL: "",
+					token:    "",
+					expected: "",
+				}),
+			Entry("should percent-encode special characters in token",
+				urlTestCase{
+					name:     "token with special characters",
+					routeURL: "https://openclaw-route.apps.example.com",
+					token:    "token+with=special&chars#fragment",
+					expected: "https://openclaw-route.apps.example.com#token=token%2Bwith%3Dspecial%26chars%23fragment",
+				}),
+		)
+
+		It("should follow format https://<route-host>#token=<gateway-token>", func() {
+			By("Constructing URL with typical OpenShift route and hex token")
+			routeURL := "https://openclaw-default.apps.cluster.example.com"
+			token := "64chartoken1234567890abcdef64chartoken1234567890abcdef123456"
+
+			result := buildOpenClawURL(routeURL, token)
+
+			Expect(result).To(Equal("https://openclaw-default.apps.cluster.example.com#token=64chartoken1234567890abcdef64chartoken1234567890abcdef123456"))
+			Expect(result).To(HavePrefix("https://"))
+			Expect(result).To(ContainSubstring("#token="))
+		})
+	})
 })

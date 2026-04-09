@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -678,6 +679,50 @@ func setAvailableCondition(instance *openclawv1alpha1.OpenClaw, ready bool, pend
 	})
 }
 
+// getGatewayToken fetches the gateway token from the openclaw-secrets Secret and Base64-decodes it.
+// Returns the token string, or empty string if the Secret cannot be read.
+func (r *OpenClawResourceReconciler) getGatewayToken(ctx context.Context, namespace string) string {
+	logger := log.FromContext(ctx)
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Namespace: namespace,
+		Name:      OpenClawGatewaySecretName,
+	}, secret); err != nil {
+		logger.Error(err, "Failed to get gateway secret for status URL", "secret", OpenClawGatewaySecretName)
+		return ""
+	}
+
+	tokenBytes, exists := secret.Data[GatewayTokenKeyName]
+	if !exists || len(tokenBytes) == 0 {
+		logger.Info("Gateway token not found in secret", "secret", OpenClawGatewaySecretName, "key", GatewayTokenKeyName)
+		return ""
+	}
+
+	// Secret data is already raw bytes (not Base64-encoded in the Data field)
+	// Kubernetes automatically handles Base64 decoding when accessing Secret.Data
+	return string(tokenBytes)
+}
+
+// encodeFragmentValue percent-encodes a string for safe use in a URL fragment.
+// This ensures special characters don't break URL parsing.
+func encodeFragmentValue(v string) string {
+	return url.QueryEscape(v)
+}
+
+// buildOpenClawURL constructs the OpenClaw status URL by appending the gateway token
+// as a URL fragment if both routeURL and token are provided.
+// Returns empty string if routeURL is empty.
+func buildOpenClawURL(routeURL, token string) string {
+	if routeURL == "" {
+		return ""
+	}
+	if token == "" {
+		return routeURL
+	}
+	return routeURL + "#token=" + encodeFragmentValue(token)
+}
+
 // updateStatus updates the OpenClaw status with current deployment conditions
 func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
 	// Check deployment readiness
@@ -691,11 +736,13 @@ func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance 
 
 	// Populate URL field only when both deployments are ready
 	if ready {
-		url, err := r.getRouteURL(ctx, instance)
+		routeURL, err := r.getRouteURL(ctx, instance)
 		if err != nil {
 			return fmt.Errorf("failed to get Route URL: %w", err)
 		}
-		instance.Status.URL = url
+
+		token := r.getGatewayToken(ctx, instance.Namespace)
+		instance.Status.URL = buildOpenClawURL(routeURL, token)
 	} else {
 		// Clear URL when deployments are not ready
 		instance.Status.URL = ""
