@@ -22,6 +22,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -59,6 +61,11 @@ const (
 	OpenClawProxyDeploymentName               = "openclaw-proxy"
 	OpenClawProxyDeploymentContainerName      = "proxy"
 	OpenClawProxyDeploymentGeminiAPiKeyEnvKey = "GEMINI_API_KEY"
+
+	// Kubernetes resource kinds
+	RouteKind      = "Route"
+	DeploymentKind = "Deployment"
+	ConfigMapKind  = "ConfigMap"
 )
 
 // OpenClawResourceReconciler reconciles all resources for OpenClaw
@@ -101,31 +108,80 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, nil
 	}
 
-	// Create or update the gateway secrets Secret with token
+	// Phase 1: Create or update the gateway secrets Secret with token
 	if err := r.applyGatewaySecret(ctx, instance); err != nil {
 		logger.Error(err, "Failed to apply gateway secret")
 		return ctrl.Result{}, err
 	}
 
-	// Apply all resources via Kustomize and server-side apply
-	// (proxy deployment is pre-configured with user's Secret reference)
-	if err := r.applyKustomizedResources(ctx, instance); err != nil {
+	// Phase 2: Apply Route and wait for ingress host to be populated
+	var routeHost string
+	var routeApplied int
+	routeApplied, err = r.applyRouteOnly(ctx, instance)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to apply Route: %w", err)
+	}
+
+	// Only try to fetch Route URL if Route was actually applied (CRD available)
+	if routeApplied > 0 {
+		routeHost, err = r.getRouteURL(ctx, instance)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to get Route URL: %w", err)
+		}
+		if routeHost == "" {
+			// Route exists but status not yet populated - requeue
+			logger.Info("Route exists but status not populated, requeuing")
+			return ctrl.Result{Requeue: true, RequeueAfter: 5 * time.Second}, nil
+		}
+	} else {
+		// Route CRD not registered - proceed with localhost fallback
+		logger.Info("Route CRD not registered, using localhost fallback for CORS")
+	}
+
+	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
+	// Note: We need to build kustomize again to get fresh objects for injection
+	// Build manifests and get objects
+	objects, err := r.buildKustomizedObjects(ctx, instance)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Inject Route host into ConfigMap
+	if err := r.injectRouteHostIntoConfigMap(objects, routeHost); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
+	}
+
+	// Filter for remaining resources (non-Route)
+	remainingObjects := []*unstructured.Unstructured{}
+	for _, obj := range objects {
+		if obj.GetKind() != RouteKind {
+			remainingObjects = append(remainingObjects, obj)
+		}
+	}
+
+	// Set namespace and owner references
+	for _, obj := range remainingObjects {
+		obj.SetNamespace(instance.Namespace)
+		if err := controllerutil.SetControllerReference(instance, obj, r.Scheme); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set controller reference: %w", err)
+		}
+	}
+
+	// Apply remaining resources (ConfigMap, Deployments, Services, NetworkPolicies)
+	if _, err := r.applyResources(ctx, remainingObjects); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Update status based on deployment readiness
 	if err := r.updateStatus(ctx, instance); err != nil {
-		logger.Error(err, "Failed to update status, will retry")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("failed to update status (will retry): %w", err)
 	}
 
 	return ctrl.Result{}, nil
 }
 
-// applyKustomizedResources builds manifests using Kustomize and applies them via server-side apply
-func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
-	logger := log.FromContext(ctx)
-
+// buildKustomizedObjects builds Kustomize manifests and returns parsed objects with proxy configuration
+func (r *OpenClawResourceReconciler) buildKustomizedObjects(ctx context.Context, instance *openclawv1alpha1.OpenClaw) ([]*unstructured.Unstructured, error) {
 	// Write all manifest files (including kustomization.yaml) to in-memory filesystem
 	fs := filesys.MakeFsInMemory()
 	manifestFiles := map[string][]byte{
@@ -142,7 +198,7 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 	}
 	for path, content := range manifestFiles {
 		if err := fs.WriteFile(path, content); err != nil {
-			return fmt.Errorf("failed to write manifest to in-memory filesystem: %w", err)
+			return nil, fmt.Errorf("failed to write manifest to in-memory filesystem: %w", err)
 		}
 	}
 
@@ -150,37 +206,36 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 	kustomizer := krusty.MakeKustomizer(krusty.MakeDefaultOptions())
 	resMap, err := kustomizer.Run(fs, "manifests")
 	if err != nil {
-		return fmt.Errorf("failed to run kustomize build: %w", err)
+		return nil, fmt.Errorf("failed to run kustomize build: %w", err)
 	}
 	// Convert resource map to unstructured objects
 	resources, err := resMap.AsYaml()
 	if err != nil {
-		return fmt.Errorf("failed to convert resource map to YAML: %w", err)
+		return nil, fmt.Errorf("failed to convert resource map to YAML: %w", err)
 	}
 	// Parse YAML into unstructured objects
 	objects, err := parseYAMLToObjects(resources)
 	if err != nil {
-		return fmt.Errorf("failed to parse YAML to objects: %w", err)
+		return nil, fmt.Errorf("failed to parse YAML to objects: %w", err)
 	}
 	// Configure proxy deployment with user's Gemini API key Secret reference
 	if err := r.configureProxyDeployment(objects, instance); err != nil {
-		return fmt.Errorf("failed to configure proxy deployment: %w", err)
+		return nil, fmt.Errorf("failed to configure proxy deployment: %w", err)
 	}
 	// Stamp Secret version annotation to trigger restarts on Secret value changes
 	if err := r.stampSecretVersionAnnotation(ctx, objects, instance); err != nil {
-		return fmt.Errorf("failed to stamp Secret version annotation: %w", err)
-	}
-	// set namespace and owner references
-	for _, obj := range objects {
-		// Set namespace to match instance
-		obj.SetNamespace(instance.Namespace)
-		// Set owner reference
-		if err := controllerutil.SetControllerReference(instance, obj, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set controller reference: %w", err)
-		}
+		return nil, fmt.Errorf("failed to stamp Secret version annotation: %w", err)
 	}
 
-	// Apply resources using server-side apply
+	return objects, nil
+}
+
+// applyResources applies a list of unstructured objects using server-side apply
+// Returns the number of resources successfully applied (excluding skipped resources)
+func (r *OpenClawResourceReconciler) applyResources(ctx context.Context, objects []*unstructured.Unstructured) (int, error) {
+	logger := log.FromContext(ctx)
+	appliedCount := 0
+
 	for _, obj := range objects {
 		if err := r.Patch(ctx, obj, client.Apply, &client.PatchOptions{
 			FieldManager: "openclaw-operator",
@@ -191,11 +246,78 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 				logger.Info("Skipping resource - CRD not registered in cluster", "kind", obj.GetKind(), "name", obj.GetName())
 				continue
 			}
-			return fmt.Errorf("failed to apply resource: %w", err)
+			return 0, fmt.Errorf("failed to apply resource: %w", err)
+		}
+		appliedCount++
+	}
+	logger.Info("Successfully applied resources", "count", appliedCount)
+	return appliedCount, nil
+}
+
+// applyRouteOnly applies only the Route resource from Kustomize manifests
+// Returns number of routes applied (0 if CRD not registered)
+func (r *OpenClawResourceReconciler) applyRouteOnly(ctx context.Context, instance *openclawv1alpha1.OpenClaw) (int, error) {
+	// Build objects from Kustomize
+	objects, err := r.buildKustomizedObjects(ctx, instance)
+	if err != nil {
+		return 0, err
+	}
+
+	// Filter for Route only
+	routeObjects := []*unstructured.Unstructured{}
+	for _, obj := range objects {
+		if obj.GetKind() == RouteKind {
+			routeObjects = append(routeObjects, obj)
 		}
 	}
-	logger.Info("Successfully applied all resources", "namespace", instance.Namespace, "count", len(objects))
-	return nil
+
+	// Set namespace and owner references
+	for _, obj := range routeObjects {
+		obj.SetNamespace(instance.Namespace)
+		if err := controllerutil.SetControllerReference(instance, obj, r.Scheme); err != nil {
+			return 0, fmt.Errorf("failed to set controller reference: %w", err)
+		}
+	}
+
+	// Apply Route and return count
+	return r.applyResources(ctx, routeObjects)
+}
+
+// injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in ConfigMap with actual Route host
+// If routeHost is empty (vanilla Kubernetes), uses localhost fallback
+func (r *OpenClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstructured.Unstructured, routeHost string) error {
+	// Determine replacement value
+	replacement := routeHost
+	if replacement == "" {
+		// Vanilla Kubernetes fallback
+		replacement = "http://localhost:18789"
+	}
+
+	// Find ConfigMap in objects
+	for _, obj := range objects {
+		if obj.GetKind() == ConfigMapKind && obj.GetName() == OpenClawConfigMapName {
+			// Extract openclaw.json data
+			openclawJSON, found, err := unstructured.NestedString(obj.Object, "data", "openclaw.json")
+			if err != nil {
+				return fmt.Errorf("failed to extract openclaw.json from ConfigMap: %w", err)
+			}
+			if !found {
+				return fmt.Errorf("openclaw.json not found in ConfigMap data")
+			}
+
+			// Replace placeholder with Route host
+			updatedJSON := strings.ReplaceAll(openclawJSON, "OPENCLAW_ROUTE_HOST", replacement)
+
+			// Set modified JSON back into ConfigMap
+			if err := unstructured.SetNestedField(obj.Object, updatedJSON, "data", "openclaw.json"); err != nil {
+				return fmt.Errorf("failed to set updated openclaw.json in ConfigMap: %w", err)
+			}
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("ConfigMap %s not found in manifests", OpenClawConfigMapName)
 }
 
 // generateGatewayToken generates a cryptographically secure random token
@@ -284,7 +406,7 @@ func (r *OpenClawResourceReconciler) configureProxyDeployment(objects []*unstruc
 
 	// Find the openclaw-proxy Deployment
 	for _, obj := range objects {
-		if obj.GetKind() == "Deployment" && obj.GetName() == "openclaw-proxy" {
+		if obj.GetKind() == DeploymentKind && obj.GetName() == OpenClawProxyDeploymentName {
 			// Navigate to spec.template.spec.containers
 			containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
 			if err != nil || !found {
@@ -373,7 +495,7 @@ func (r *OpenClawResourceReconciler) stampSecretVersionAnnotation(ctx context.Co
 
 	// Find the openclaw-proxy Deployment
 	for _, obj := range objects {
-		if obj.GetKind() == "Deployment" && obj.GetName() == OpenClawProxyDeploymentName {
+		if obj.GetKind() == DeploymentKind && obj.GetName() == OpenClawProxyDeploymentName {
 			// Get current pod template annotations
 			annotations, _, err := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
 			if err != nil {
@@ -490,7 +612,7 @@ func (r *OpenClawResourceReconciler) getRouteURL(ctx context.Context, instance *
 	route.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "route.openshift.io",
 		Version: "v1",
-		Kind:    "Route",
+		Kind:    RouteKind,
 	})
 
 	if err := r.Get(ctx, client.ObjectKey{
@@ -505,12 +627,28 @@ func (r *OpenClawResourceReconciler) getRouteURL(ctx context.Context, instance *
 		return "", fmt.Errorf("failed to get Route: %w", err)
 	}
 
-	// Extract host from Route.Spec.Host
-	host, found, err := unstructured.NestedString(route.Object, "spec", "host")
+	// Extract host from Route.Status.Ingress[0].Host (authoritative source)
+	ingress, found, err := unstructured.NestedSlice(route.Object, "status", "ingress")
 	if err != nil {
-		return "", fmt.Errorf("failed to extract host from Route: %w", err)
+		return "", fmt.Errorf("failed to extract ingress from Route status: %w", err)
+	}
+	if !found || len(ingress) == 0 {
+		// Route exists but status not yet populated by OpenShift router
+		return "", nil
+	}
+
+	// Get first ingress entry (primary router)
+	firstIngress, ok := ingress[0].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("failed to parse ingress entry")
+	}
+
+	host, found, err := unstructured.NestedString(firstIngress, "host")
+	if err != nil {
+		return "", fmt.Errorf("failed to extract host from ingress: %w", err)
 	}
 	if !found || host == "" {
+		// Ingress entry exists but host not yet populated
 		return "", nil
 	}
 
