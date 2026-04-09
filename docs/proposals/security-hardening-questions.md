@@ -27,7 +27,7 @@ _Considered and rejected: Option B — user-provided token in CRD spec (same pla
 
 This question is about the **user-facing API** — how credentials get into the cluster and how the CRD references them. How those credentials are consumed by the proxy is a separate concern (see Q7).
 
-Today `OpenClaw.spec.apiKey` is a single plaintext string field on the CRD, managing only Gemini. In reality, the credential surface is much broader:
+Today `OpenClaw.spec.geminiAPIKey` is a `SecretRef` field on the CRD (referencing a user-owned Secret), managing only Gemini. In reality, the credential surface is much broader:
 
 | Category | Examples | Credential shape |
 |----------|----------|-----------------|

@@ -4,7 +4,7 @@
 
 ## Problem
 
-The OpenClaw operator deploys a personal AI assistant with access to LLM APIs and the user's Kubernetes namespace. Today, credential isolation (nginx proxy) and egress NetworkPolicies are in place, but several security gaps remain: the gateway has no managed authentication, the CRD carries a plaintext API key, ingress is unrestricted, and the proxy can't handle OAuth-based providers like Vertex AI.
+The OpenClaw operator deploys a personal AI assistant with access to LLM APIs and the user's Kubernetes namespace. Today, credential isolation (nginx proxy), egress NetworkPolicies, gateway token authentication, and Route host injection are in place. Several security gaps remain: the CRD carries a single hardcoded Gemini Secret reference (`spec.geminiAPIKey`), ingress is unrestricted, and the proxy can't handle OAuth-based providers like Vertex AI.
 
 On Dev Sandbox, each OpenClaw instance runs in a user's namespace with their permissions. A security failure here means either leaked LLM credentials (cost and privacy), unauthorized access to the assistant (abuse of the user's namespace permissions), or lateral movement from a compromised pod.
 
@@ -16,14 +16,17 @@ On Dev Sandbox, each OpenClaw instance runs in a user's namespace with their per
 - Pod hardening: non-root (uid 65532), `readOnlyRootFilesystem`, `seccompProfile: RuntimeDefault`, all capabilities dropped, `automountServiceAccountToken: false`
 - Edge TLS on the Route with HTTP-to-HTTPS redirect
 - Server-side apply with field ownership tracking
+- **Gateway token authentication** — auto-generated cryptographic token in `openclaw-secrets`, injected into gateway Deployment
+- **Route host injection** — two-pass reconciliation injects real Route hostname into ConfigMap `allowedOrigins`
+- **Secret-based credential reference** — `spec.geminiAPIKey` is a `SecretRef` (not plaintext), proxy Deployment patched with `secretKeyRef`
 
 ## Decisions
 
 All questions resolved — see [security-hardening-questions.md](security-hardening-questions.md) for full context, options considered, and rationale.
 
-### 1. Gateway Authentication (Q1)
+### 1. Gateway Authentication (Q1) — already implemented
 
-The operator auto-generates a cryptographically random gateway token during reconciliation, stores it in a Secret (`openclaw-secrets`), and injects it as `OPENCLAW_GATEWAY_TOKEN` into the gateway Deployment. The Secret name is written to the CR status (`status.gatewayTokenSecretRef`) so the UI can discover and retrieve it using the user's kube token.
+The operator already auto-generates a cryptographically random gateway token during reconciliation via `applyGatewaySecret()`, stores it in a Secret (`openclaw-secrets`), and injects it as `OPENCLAW_GATEWAY_TOKEN` into the gateway Deployment. The full URL (including token) is available via `status.url`. Remaining: add `status.gatewayTokenSecretRef` so the UI can discover the Secret by name.
 
 ### 2. Credential Provisioning (Q2)
 
@@ -71,9 +74,9 @@ Add an **ingress NetworkPolicy** restricting gateway access to the OpenShift rou
 
 ### 5. Container Hardening (Q5)
 
-Two quick wins:
+One remaining quick win:
 - **Init container security context** — add explicit `securityContext` matching the main container (required for Pod Security Admission restricted profile)
-- **Route host placeholder** — operator injects the real Route hostname into the ConfigMap during reconciliation, fixing broken CORS `allowedOrigins`
+- ~~**Route host placeholder**~~ — already implemented (`injectRouteHostIntoConfigMap` with two-pass reconciliation)
 
 Deferred: image digest pinning (needs CI automation), Route TLS config (cluster-level concern on OpenShift).
 

@@ -157,19 +157,19 @@ _Considered and rejected: Option B — separate Containerfile triggered independ
 
 ---
 
-## Q5: How should the existing `spec.apiKey` field be handled during migration?
+## Q5: How should the existing `spec.geminiAPIKey` field be handled during migration?
 
-Today, `OpenClawSpec.APIKey` is a required field. The new `ClawCredential` CRD model has no credential fields on the OpenClaw CR. Changing a required field is a breaking API change.
+Today, `OpenClawSpec.GeminiAPIKey` is a required `*SecretRef` field (references a user-owned Secret by name/key). The new `ClawCredential` CRD model has no credential fields on the OpenClaw CR. Changing a required field is a breaking API change.
 
-**Decision:** Option B — clean break. Remove `apiKey` from the CRD spec immediately. Users create a `ClawCredential` CR (type `apiKey`) and a Secret instead. The operator is pre-v1 (`v1alpha1`) with no production users yet — there is no one to migrate. No dual code paths, no synthetic credential logic, no legacy support code. One way to configure credentials, period.
+**Decision:** Option B — clean break. Remove `geminiAPIKey` from the CRD spec immediately. Users create a `ClawCredential` CR (type `apiKey`) and a Secret instead. The operator is pre-v1 (`v1alpha1`) with no production users yet — there is no one to migrate. No dual code paths, no synthetic credential logic, no legacy support code. One way to configure credentials, period.
 
-_Considered and rejected: Option A — two-phase deprecation (adds ~20 LOC of synthetic credential code and a dual code path that would exist only to support zero users), Option C — keep `apiKey` as permanent shortcut (contradicts the "no plaintext credentials in CRDs" principle, two ways to do the same thing forever)_
+_Considered and rejected: Option A — two-phase deprecation (adds ~20 LOC of synthetic credential code and a dual code path that would exist only to support zero users), Option C — keep `geminiAPIKey` as permanent shortcut (two ways to do the same thing forever)_
 
 ---
 
 ## Q6: What status fields and conditions should the OpenClaw CR report?
 
-The current `OpenClawStatus` is empty. The sketch calls for `gatewayTokenSecretRef`. This is an opportunity to add structured observability.
+The current `OpenClawStatus` has `Conditions` (with an `Available` condition) and `URL`. The sketch calls for `gatewayTokenSecretRef`. This is an opportunity to extend and refine the status with more granular conditions.
 
 **Decision:** Option B — secret ref + standard conditions.
 
@@ -238,17 +238,17 @@ The sketch identifies 7 work areas. Some have dependencies; others are independe
 **Phase 1** (independent, no API changes):
 - Init container security context
 - Ingress NetworkPolicy
-- Route host injection into ConfigMap
-- `gatewayTokenSecretRef` status field + conditions (`Ready`, `CredentialsResolved`, `ProxyConfigured`)
+- ~~Route host injection into ConfigMap~~ — already implemented (`injectRouteHostIntoConfigMap`)
+- `gatewayTokenSecretRef` status field + replace `Available` condition with `Ready`/`CredentialsResolved`/`ProxyConfigured`
 
 **Phase 2** (ClawCredential CRD + Go proxy + remove legacy):
-- Remove `spec.apiKey` from OpenClaw CRD (clean break, Q5)
+- Remove `spec.geminiAPIKey` from OpenClaw CRD (clean break, Q5)
 - Define `ClawCredential` CRD type (unified, with type discriminator)
 - ClawCredential discovery in controller (single watch + list)
 - Go proxy implementation (`apiKey`, `bearer`, `gcp`, `kubernetes` injectors)
 - Container image build pipeline (podman) + OLM bundle integration (Q4)
 - Replace nginx manifests
-- Remove `applyProxySecret`
+- Remove `configureProxyDeployment` + `stampSecretVersionAnnotation`
 
 **Phase 3** (remaining types + cleanup):
 - Add `pathToken`, `oauth2`, `none` injectors to the Go proxy
