@@ -222,7 +222,8 @@ func (r *OpenClawResourceReconciler) applyGatewaySecret(ctx context.Context, ins
 		// Secret exists - check if it has the token entry
 		if existingToken, exists := existingSecret.Data[GatewayTokenKeyName]; exists && len(existingToken) > 0 {
 			logger.Info("Gateway secret already exists with token, skipping generation", "name", OpenClawGatewaySecretName)
-			return nil
+			// no need to generate new token, just ensure owner reference is set
+			return r.doCreateGatewaySecret(ctx, instance, string(existingToken))
 		} else {
 			// Secret exists but missing or empty token - generate new one
 			logger.Info("Gateway secret exists but missing token, generating new one")

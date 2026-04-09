@@ -105,3 +105,26 @@ func createTestAPIKeySecret(name, namespace, key, value string) *corev1.Secret {
 		},
 	}
 }
+
+// createTestGatewaySecret creates a test Secret containing a gateway token for use in tests
+// It ensures any existing Secret with the same name is deleted first to avoid conflicts
+func createTestGatewaySecret(name, namespace string) *corev1.Secret { //nolint:unparam
+	// Delete any existing Secret with this name (ignore errors)
+	existing := &corev1.Secret{}
+	existing.Name = name
+	existing.Namespace = namespace
+	_ = k8sClient.Delete(context.Background(), existing)
+
+	token, err := generateGatewayToken()
+	Expect(err).NotTo(HaveOccurred())
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			GatewayTokenKeyName: []byte(token),
+		},
+	}
+}
