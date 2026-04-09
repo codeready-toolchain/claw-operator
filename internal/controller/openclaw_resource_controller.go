@@ -114,10 +114,16 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
+	// Build kustomized objects once (before Phase 2)
+	objects, err := r.buildKustomizedObjects(ctx, instance)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Phase 2: Apply Route and wait for ingress host to be populated
 	var routeHost string
 	var routeApplied int
-	routeApplied, err = r.applyRouteOnly(ctx, instance)
+	routeApplied, err = r.applyRouteOnly(ctx, objects, instance)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to apply Route: %w", err)
 	}
@@ -139,12 +145,6 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
-	// Note: We need to build kustomize again to get fresh objects for injection
-	// Build manifests and get objects
-	objects, err := r.buildKustomizedObjects(ctx, instance)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
 
 	// Inject Route host into ConfigMap
 	if err := r.injectRouteHostIntoConfigMap(objects, routeHost); err != nil {
@@ -254,13 +254,12 @@ func (r *OpenClawResourceReconciler) applyResources(ctx context.Context, objects
 	return appliedCount, nil
 }
 
-// applyRouteOnly applies only the Route resource from Kustomize manifests
+// applyRouteOnly applies only the Route resource from provided objects
 // Returns number of routes applied (0 if CRD not registered)
-func (r *OpenClawResourceReconciler) applyRouteOnly(ctx context.Context, instance *openclawv1alpha1.OpenClaw) (int, error) {
-	// Build objects from Kustomize
-	objects, err := r.buildKustomizedObjects(ctx, instance)
-	if err != nil {
-		return 0, err
+func (r *OpenClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*unstructured.Unstructured, instance *openclawv1alpha1.OpenClaw) (int, error) {
+	// Handle empty objects safely (len() on nil slice returns 0)
+	if len(objects) == 0 {
+		return 0, nil
 	}
 
 	// Filter for Route only
