@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -30,10 +31,15 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
@@ -43,15 +49,16 @@ import (
 )
 
 const (
-	OpenClawResourceKind      = "OpenClaw"
-	OpenClawInstanceName      = "instance"
-	OpenClawConfigMapName     = "openclaw-config"
-	OpenClawPVCName           = "openclaw-home-pvc"
-	OpenClawDeploymentName    = "openclaw"
-	OpenClawProxySecretName   = "openclaw-proxy-secrets"
-	OpenClawGatewaySecretName = "openclaw-secrets"
-	GeminiAPIKeyName          = "GEMINI_API_KEY"
-	GatewayTokenKeyName       = "OPENCLAW_GATEWAY_TOKEN"
+	OpenClawResourceKind                      = "OpenClaw"
+	OpenClawInstanceName                      = "instance"
+	OpenClawConfigMapName                     = "openclaw-config"
+	OpenClawPVCName                           = "openclaw-home-pvc"
+	OpenClawDeploymentName                    = "openclaw"
+	OpenClawGatewaySecretName                 = "openclaw-secrets"
+	GatewayTokenKeyName                       = "OPENCLAW_GATEWAY_TOKEN"
+	OpenClawProxyDeploymentName               = "openclaw-proxy"
+	OpenClawProxyDeploymentContainerName      = "proxy"
+	OpenClawProxyDeploymentGeminiAPiKeyEnvKey = "GEMINI_API_KEY"
 )
 
 // OpenClawResourceReconciler reconciles all resources for OpenClaw
@@ -100,13 +107,8 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Create or update the proxy secrets Secret with API key
-	if err := r.applyProxySecret(ctx, instance); err != nil {
-		logger.Error(err, "Failed to apply proxy secret")
-		return ctrl.Result{}, err
-	}
-
 	// Apply all resources via Kustomize and server-side apply
+	// (proxy deployment is pre-configured with user's Secret reference)
 	if err := r.applyKustomizedResources(ctx, instance); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -171,6 +173,18 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 	objects, err := parseYAMLToObjects(resources)
 	if err != nil {
 		logger.Error(err, "Failed to parse YAML to objects")
+		return err
+	}
+
+	// Configure proxy deployment with user's Gemini API key Secret reference
+	if err := r.configureProxyDeployment(objects, instance); err != nil {
+		logger.Error(err, "Failed to configure proxy deployment")
+		return err
+	}
+
+	// Stamp Secret version annotation to trigger restarts on Secret value changes
+	if err := r.stampSecretVersionAnnotation(ctx, objects, instance); err != nil {
+		logger.Error(err, "Failed to stamp Secret version annotation")
 		return err
 	}
 
@@ -290,38 +304,130 @@ func (r *OpenClawResourceReconciler) applyGatewaySecret(ctx context.Context, ins
 	return nil
 }
 
-// applyProxySecret creates or updates the openclaw-proxy-secrets Secret with the API key
-func (r *OpenClawResourceReconciler) applyProxySecret(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
-	logger := log.FromContext(ctx)
+// configureProxyDeployment configures the openclaw-proxy deployment's GEMINI_API_KEY env var
+// to reference the user's Secret. This is done BEFORE applying resources so pod template changes
+// trigger automatic pod restarts when the Secret reference changes.
+func (r *OpenClawResourceReconciler) configureProxyDeployment(objects []*unstructured.Unstructured, instance *openclawv1alpha1.OpenClaw) error {
+	secretRef := instance.Spec.GeminiAPIKey
 
-	// Create the Secret object
+	// Find the openclaw-proxy Deployment
+	for _, obj := range objects {
+		if obj.GetKind() == "Deployment" && obj.GetName() == "openclaw-proxy" {
+			// Navigate to spec.template.spec.containers
+			containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+			if err != nil || !found {
+				return fmt.Errorf("failed to get containers from proxy deployment: %w", err)
+			}
+
+			// Find the proxy container
+			for i, c := range containers {
+				container, ok := c.(map[string]any)
+				if !ok {
+					continue
+				}
+				if name, ok := container["name"].(string); ok && name == OpenClawProxyDeploymentContainerName {
+					// Get env vars
+					envVars, _, err := unstructured.NestedSlice(container, "env")
+					if err != nil {
+						return fmt.Errorf("failed to get env vars: %w", err)
+					}
+
+					// Find and update GEMINI_API_KEY
+					found := false
+					for j, e := range envVars {
+						envVar, ok := e.(map[string]any)
+						if !ok {
+							continue
+						}
+						if envName, ok := envVar["name"].(string); ok && envName == OpenClawProxyDeploymentGeminiAPiKeyEnvKey {
+							// Update the secretKeyRef
+							envVar["valueFrom"] = map[string]any{
+								"secretKeyRef": map[string]any{
+									"name":     secretRef.Name,
+									"key":      secretRef.Key,
+									"optional": false,
+								},
+							}
+							envVars[j] = envVar
+							found = true
+							break
+						}
+					}
+
+					if !found {
+						return fmt.Errorf("GEMINI_API_KEY env var not found in proxy container")
+					}
+
+					// Set the updated env vars back
+					if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
+						return fmt.Errorf("failed to set env vars: %w", err)
+					}
+
+					// Set the updated container back
+					containers[i] = container
+					if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+						return fmt.Errorf("failed to set containers: %w", err)
+					}
+
+					return nil
+				}
+			}
+
+			return fmt.Errorf("proxy container not found in openclaw-proxy deployment")
+		}
+	}
+
+	return fmt.Errorf("openclaw-proxy deployment not found in manifests")
+}
+
+// stampSecretVersionAnnotation adds an annotation to the openclaw-proxy pod template with the
+// referenced Secret's ResourceVersion. This causes the pod template to change whenever the Secret
+// data changes, triggering automatic pod restarts via Deployment rollout.
+func (r *OpenClawResourceReconciler) stampSecretVersionAnnotation(ctx context.Context, objects []*unstructured.Unstructured, instance *openclawv1alpha1.OpenClaw) error {
+	secretRef := instance.Spec.GeminiAPIKey
+
+	// Fetch the Secret to get its ResourceVersion
 	secret := &corev1.Secret{}
-	secret.SetName(OpenClawProxySecretName)
-	secret.SetNamespace(instance.Namespace)
-	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
-	secret.Data = map[string][]byte{
-		GeminiAPIKeyName: []byte(instance.Spec.APIKey),
+	secretKey := client.ObjectKey{
+		Namespace: instance.Namespace,
+		Name:      secretRef.Name,
 	}
 
-	// Set owner reference for garbage collection
-	if err := controllerutil.SetControllerReference(instance, secret, r.Scheme); err != nil {
-		logger.Error(err, "Failed to set controller reference on Secret")
-		return err
+	if err := r.Get(ctx, secretKey, secret); err != nil {
+		// If Secret doesn't exist, skip stamping - pods will fail to start with clear error
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get Secret %s for version stamping: %w", secretRef.Name, err)
 	}
 
-	// Apply the Secret using server-side apply
-	logger.Info("Applying proxy secret", "name", secret.Name)
-	err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
-		FieldManager: "openclaw-operator",
-		Force:        &[]bool{true}[0],
-	})
-	if err != nil {
-		logger.Error(err, "Failed to apply proxy secret")
-		return err
+	// Find the openclaw-proxy Deployment
+	for _, obj := range objects {
+		if obj.GetKind() == "Deployment" && obj.GetName() == OpenClawProxyDeploymentName {
+			// Get current pod template annotations
+			annotations, _, err := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
+			if err != nil {
+				return fmt.Errorf("failed to get pod template annotations: %w", err)
+			}
+
+			// Initialize map if nil
+			if annotations == nil {
+				annotations = make(map[string]string)
+			}
+
+			// Stamp the Secret's ResourceVersion
+			annotations["openclaw.sandbox.redhat.com/gemini-secret-version"] = secret.ResourceVersion
+
+			// Set the updated annotations back
+			if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
+				return fmt.Errorf("failed to set pod template annotations: %w", err)
+			}
+
+			return nil
+		}
 	}
 
-	logger.Info("Successfully applied proxy secret")
-	return nil
+	return fmt.Errorf("openclaw-proxy deployment not found for Secret version stamping")
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem
@@ -392,7 +498,7 @@ func (r *OpenClawResourceReconciler) checkDeploymentsReady(ctx context.Context, 
 		return false, nil, err
 	}
 
-	proxyReady, err := r.getDeploymentAvailableStatus(ctx, namespace, "openclaw-proxy")
+	proxyReady, err := r.getDeploymentAvailableStatus(ctx, namespace, OpenClawProxyDeploymentName)
 	if err != nil {
 		return false, nil, err
 	}
@@ -402,7 +508,7 @@ func (r *OpenClawResourceReconciler) checkDeploymentsReady(ctx context.Context, 
 		pending = append(pending, OpenClawDeploymentName)
 	}
 	if !proxyReady {
-		pending = append(pending, "openclaw-proxy")
+		pending = append(pending, OpenClawProxyDeploymentName)
 	}
 
 	return len(pending) == 0, pending, nil
@@ -522,6 +628,51 @@ func (r *OpenClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&appsv1.Deployment{}).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.findOpenClawsReferencingSecret),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
 		Named("openclaw").
 		Complete(r)
+}
+
+// findOpenClawsReferencingSecret maps a Secret to all OpenClaw CRs that reference it
+func (r *OpenClawResourceReconciler) findOpenClawsReferencingSecret(ctx context.Context, obj client.Object) []reconcile.Request {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	// Skip operator-managed secrets (openclaw-secrets for gateway token)
+	if secret.Name == OpenClawGatewaySecretName {
+		return nil
+	}
+
+	// List all OpenClaw CRs in the same namespace
+	openClawList := &openclawv1alpha1.OpenClawList{}
+	if err := r.List(ctx, openClawList, client.InNamespace(secret.Namespace)); err != nil {
+		return nil
+	}
+
+	// Find OpenClaw CRs that reference this Secret
+	var requests []reconcile.Request
+	for _, instance := range openClawList.Items {
+		// Only reconcile instances named "instance"
+		if instance.Name != OpenClawInstanceName {
+			continue
+		}
+
+		// Check if this instance references the Secret
+		if instance.Spec.GeminiAPIKey != nil && instance.Spec.GeminiAPIKey.Name == secret.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      instance.Name,
+					Namespace: instance.Namespace,
+				},
+			})
+		}
+	}
+
+	return requests
 }

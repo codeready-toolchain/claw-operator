@@ -20,12 +20,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// OpenClawSpec defines the desired state of OpenClaw
-type OpenClawSpec struct {
-	// APIKey is the API key for authenticating with the LLM provider
+// SecretRef references a specific key in a Secret
+type SecretRef struct {
+	// Name is the name of the Secret
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	APIKey string `json:"apiKey"`
+	Name string `json:"name"`
+
+	// Key is the key in the Secret's data map
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
+}
+
+// OpenClawSpec defines the desired state of OpenClaw
+type OpenClawSpec struct {
+	// GeminiAPIKey is a reference to a Secret containing the Gemini API key
+	// +kubebuilder:validation:Required
+	GeminiAPIKey *SecretRef `json:"geminiAPIKey"`
 }
 
 // OpenClawStatus defines the observed state of OpenClaw

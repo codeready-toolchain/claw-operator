@@ -46,13 +46,24 @@ spec:
           spec:
             description: OpenClawSpec defines the desired state of OpenClaw
             properties:
-              apiKey:
-                description: APIKey is the API key for authenticating with the LLM
-                  provider
-                minLength: 1
-                type: string
+              geminiAPIKey:
+                description: GeminiAPIKey is a reference to a Secret containing the
+                  Gemini API key
+                properties:
+                  key:
+                    description: Key is the key in the Secret's data map
+                    minLength: 1
+                    type: string
+                  name:
+                    description: Name is the name of the Secret
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - name
+                type: object
             required:
-            - apiKey
+            - geminiAPIKey
             type: object
           status:
             description: OpenClawStatus defines the observed state of OpenClaw

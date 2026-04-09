@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. CRD: `OpenClaw` in API group `openclaw.sandbox.redhat.com/v1alpha1`.
 
 **CRD Spec Fields:**
-- `apiKey` (string, required): API key for LLM provider authentication (currently Gemini). Injected into `openclaw-proxy-secrets` Secret under `GEMINI_API_KEY` data entry.
+- `geminiAPIKey` (SecretRef, required): Reference to a user-managed Secret containing the Gemini API key. SecretRef is a custom type with fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1), both validated at admission time. Controller validates the Secret exists and configures the `openclaw-proxy` deployment to reference it directly via environment variable. Pod restarts are triggered automatically when: (1) Secret reference changes (name or key field), or (2) Secret data changes (controller stamps Secret ResourceVersion as pod template annotation).
 
 **CRD Status Fields:**
 - `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking instance state. Currently includes:
@@ -60,7 +60,7 @@ The operator uses a **single unified controller** that manages all resources ato
 **OpenClawResourceReconciler** (`internal/controller/openclaw_resource_controller.go`):
 - Reconciles `OpenClaw` CRs named exactly `"instance"` (skips all others)
 - Creates gateway Secret (`openclaw-secrets`) with randomly-generated authentication token
-- Creates proxy Secret (`openclaw-proxy-secrets`) with API key from CR's `apiKey` field
+- Validates user-provided Secret containing Gemini API key (referenced in CR's `geminiAPIKey` field)
 - Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (2), proxy Deployment/ConfigMap, and Route (OpenShift only)
 - All resources created atomically as a unit (no ordering dependencies or race conditions)
 - Uses server-side apply for idempotent, conflict-free resource management
@@ -92,50 +92,55 @@ Reconcile(ctx, req) called
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply Secret (Patch with Apply)
   ↓
-4. applyProxySecret(ctx, instance)
-   ├─ Read apiKey from instance.Spec.APIKey
-   ├─ Create/update openclaw-proxy-secrets Secret with GEMINI_API_KEY data entry
-   ├─ Set owner reference (for garbage collection)
-   └─ Server-side apply Secret (Patch with Apply)
-  ↓
-5. applyKustomizedResources(ctx, instance)
+4. applyKustomizedResources(ctx, instance)
    ├─ Build Kustomize in-memory from embedded manifests
    ├─ Parse YAML into unstructured objects
+   ├─ configureProxyDeployment(objects, instance)
+   │  ├─ Find openclaw-proxy Deployment in parsed objects
+   │  ├─ Navigate to spec.template.spec.containers[].env[]
+   │  ├─ Find GEMINI_API_KEY env var
+   │  ├─ Update valueFrom.secretKeyRef to point to user's Secret (name and key from instance.Spec.GeminiAPIKey)
+   │  └─ Modify in-place BEFORE applying (so pod template changes trigger automatic pod restarts on Secret ref changes)
+   ├─ stampSecretVersionAnnotation(ctx, objects, instance)
+   │  ├─ Fetch user's Secret to get its ResourceVersion
+   │  ├─ Find openclaw-proxy Deployment in parsed objects
+   │  ├─ Add annotation to pod template: openclaw.sandbox.redhat.com/gemini-secret-version=<ResourceVersion>
+   │  └─ This triggers pod restarts when Secret data changes (ResourceVersion updates), not just Secret reference changes
    ├─ Set namespace = instance.Namespace on each resource
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply each resource (Patch with Apply)
   ↓
-6. updateStatus(ctx, instance)
+5. updateStatus(ctx, instance)
    ├─ Fetch openclaw Deployment and check Available condition
    ├─ Fetch openclaw-proxy Deployment and check Available condition
    ├─ Set OpenClaw Available condition based on both deployment statuses
    ├─ Update LastTransitionTime only if condition status changes
    └─ Update status via status subresource (client.Status().Update)
   ↓
-7. Return success
+6. Return success
 ```
 
 **Key methods:**
 - `Reconcile()` — main entry point, orchestration logic
 - `generateGatewayToken()` — generates cryptographically secure 64-char hex token using crypto/rand
 - `applyGatewaySecret()` — creates/updates openclaw-secrets Secret with gateway token (preserves existing token)
-- `applyProxySecret()` — creates/updates openclaw-proxy-secrets Secret with API key from CR
-- `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA
+- `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA (calls configureProxyDeployment and stampSecretVersionAnnotation before applying)
+- `configureProxyDeployment()` — modifies openclaw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
+- `stampSecretVersionAnnotation()` — adds Secret ResourceVersion annotation to pod template BEFORE applying (ensures pod template changes trigger restarts when Secret data changes, not just reference)
 - `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition
 - `checkDeploymentsReady()` — checks if both openclaw and openclaw-proxy Deployments are ready
 - `setAvailableCondition()` — sets Available condition on OpenClaw based on deployment states
 - `updateStatus()` — updates OpenClaw status conditions via status subresource
 - `parseYAMLToObjects()` — converts multi-doc YAML to unstructured objects
 - `readEmbeddedFile()` — reads files from embedded filesystem
+- `findOpenClawsReferencingSecret()` — maps Secret events to OpenClaw reconcile requests (for Secret watching)
 
 **Shared constants** (`internal/controller/openclaw_resource_controller.go`):
 - `OpenClawInstanceName = "instance"` — only this name is reconciled
 - `OpenClawConfigMapName = "openclaw-config"`
 - `OpenClawPVCName = "openclaw-home-pvc"`
 - `OpenClawDeploymentName = "openclaw"`
-- `OpenClawProxySecretName = "openclaw-proxy-secrets"` — Secret containing LLM API keys
 - `OpenClawGatewaySecretName = "openclaw-secrets"` — Secret containing gateway authentication token
-- `GeminiAPIKeyName = "GEMINI_API_KEY"` — data key for Gemini API key in proxy Secret
 - `GatewayTokenKeyName = "OPENCLAW_GATEWAY_TOKEN"` — data key for gateway token in gateway Secret
 
 ### Kustomize-based manifest generation
@@ -155,7 +160,7 @@ The `internal/assets/manifests/` directory contains:
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)
 - **route.yaml** — OpenShift Route for external HTTPS access (skipped on non-OpenShift)
 - **proxy-configmap.yaml** — Nginx configuration for LLM API proxy
-- **proxy-deployment.yaml** — Nginx proxy with credential injection from Secrets
+- **proxy-deployment.yaml** — Nginx proxy (env vars reference user-managed Secrets; controller patches GEMINI_API_KEY after applying)
 - **proxy-service.yaml** — ClusterIP service for proxy (port 8080)
 - **networkpolicy.yaml** — Two NetworkPolicies for egress control (OpenClaw → proxy, proxy → internet)
 
@@ -190,8 +195,8 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 - **Framework:** Ginkgo v2 + Gomega with `envtest` (real API server, no full cluster needed)
 - **Shared setup:** `internal/controller/suite_test.go` boots envtest once per suite
 - **Pattern:** Describe/Context/It blocks with `AfterEach` cleanup; uses `Eventually()` for async assertions (10s timeout, 250ms poll)
-- **Test CRs:** All test OpenClaw instances must include the required `apiKey` field (e.g., `instance.Spec.APIKey = "test-api-key"`)
-- **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secret_controller_test.go`, `openclaw_status_controller_test.go`, etc.)
+- **Test CRs:** All test OpenClaw instances must include the required `geminiAPIKey` field (e.g., `instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}`)
+- **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secretref_controller_test.go`, `openclaw_status_controller_test.go`, etc.)
 - **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment
 
 ## Conventions
