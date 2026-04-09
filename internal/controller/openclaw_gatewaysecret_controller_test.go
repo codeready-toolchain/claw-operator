@@ -64,7 +64,7 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			// Create API key Secret
+			// Create required API key Secret
 			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
 			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
 
@@ -108,7 +108,7 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			// Create API key Secret
+			// Create required API key Secret
 			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
 			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
 
@@ -158,7 +158,7 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			// Create API key Secret
+			// Create required API key Secret
 			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
 			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
 
@@ -222,7 +222,7 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			// Create API key Secret
+			// Create required API key Secret
 			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
 			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
 
@@ -286,15 +286,14 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 		})
 
-		It("should set correct owner reference on gateway Secret", func() {
+		It("should set correct owner reference on gateway Secret during initial creation", func() {
 			By("Creating a new OpenClaw named 'instance'")
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			// Create API key Secret
+			// Create required API key Secret
 			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
 			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
-
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
 				Name: apiKeySecret,
 				Key:  apiKeySecretKey,
@@ -337,12 +336,65 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 		})
 
+		It("should set correct owner reference on gateway Secret when it already existed", func() {
+			By("Creating a new OpenClaw named 'instance'")
+			instance := &openclawv1alpha1.OpenClaw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			// Create required API key Secret
+			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
+			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: apiKeySecret,
+				Key:  apiKeySecretKey,
+			}
+			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			// Create gateway secret
+			gatewaySecret := createTestGatewaySecret(OpenClawGatewaySecretName, namespace)
+			Expect(k8sClient.Create(ctx, gatewaySecret)).Should(Succeed())
+			Expect(gatewaySecret.OwnerReferences).To(BeEmpty())
+			// Setup reconciler
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			By("Reconciling the created resource")
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking gateway Secret has correct owner reference")
+			secret := &corev1.Secret{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      OpenClawGatewaySecretName,
+					Namespace: namespace,
+				}, secret)
+				if err != nil {
+					return false
+				}
+				if len(secret.OwnerReferences) == 0 {
+					return false
+				}
+				ownerRef := secret.OwnerReferences[0]
+				return ownerRef.Kind == OpenClawResourceKind &&
+					ownerRef.Name == resourceName &&
+					ownerRef.Controller != nil &&
+					*ownerRef.Controller == true
+			}, timeout, interval).Should(BeTrue())
+		})
+
 		It("should have owner reference that enables garbage collection", func() {
 			By("Creating a new OpenClaw named 'instance'")
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			// Create API key Secret
+			// Create required API key Secret
 			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
 			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
 
