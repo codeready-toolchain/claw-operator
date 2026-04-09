@@ -7,7 +7,7 @@
 
 ## Q1: How should the gateway token be managed?
 
-The OpenClaw gateway requires `OPENCLAW_GATEWAY_TOKEN` for authentication. The PoC generated this in a bash script. The operator needs an automated, secure approach. Without this, anyone who can reach the Route can interact with the assistant using the user's namespace permissions.
+The gateway requires `OPENCLAW_GATEWAY_TOKEN` for authentication. The PoC generated this in a bash script. The operator needs an automated, secure approach. Without this, anyone who can reach the Route can interact with the assistant using the user's namespace permissions.
 
 ### Option A: Operator generates a random token and stores it in a Secret
 
@@ -27,7 +27,7 @@ _Considered and rejected: Option B — user-provided token in CRD spec (same pla
 
 This question is about the **user-facing API** — how credentials get into the cluster and how the CRD references them. How those credentials are consumed by the proxy is a separate concern (see Q7).
 
-Today `OpenClaw.spec.geminiAPIKey` is a `SecretRef` field on the CRD (referencing a user-owned Secret), managing only Gemini. In reality, the credential surface is much broader:
+Today `Claw.spec.geminiAPIKey` (formerly `OpenClaw`) is a `SecretRef` field on the CRD (referencing a user-owned Secret), managing only Gemini. In reality, the credential surface is much broader:
 
 | Category | Examples | Credential shape |
 |----------|----------|-----------------|
@@ -49,57 +49,62 @@ Define a set of CRDs per credential *shape* (not per service): `APIKeyCredential
 - **Con:** Real-world analysis reveals 7 distinct shapes needed (apiKey, bearer, gcp, pathToken, oauth2, kubernetes, none) — that's 7 CRDs to install, watch, and maintain
 - **Con:** `NoAuthCredential` is an awkward name for something that holds no credentials (proxy allowlist entry)
 
-### Option F: Unified `ClawCredential` CRD (one CRD, type discriminator)
+### Option F: Unified CRD with type discriminator
 
-A single `ClawCredential` CRD (short name `cc`) with a `type` enum field and optional shape-specific config sub-structs. The OpenClaw CR carries no credential fields — the controller discovers `ClawCredential` CRs in the namespace by label.
+Originally this option proposed a separate `ClawCredential` CRD. After further analysis, credentials are merged directly into the `Claw` CRD as an inline `spec.credentials[]` array with a `type` enum field and optional shape-specific config sub-structs:
 
 ```yaml
 apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
+kind: Claw
 metadata:
-  name: gemini
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
+  name: instance
 spec:
-  type: apiKey
-  secretRef:
-    name: llm-keys
-    key: GEMINI_API_KEY
-  domain: "generativelanguage.googleapis.com"
-  apiKey:
-    header: "x-goog-api-key"
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        name: llm-keys
+        key: GEMINI_API_KEY
+      domain: "generativelanguage.googleapis.com"
+      apiKey:
+        header: "x-goog-api-key"
+    - name: github
+      type: bearer
+      secretRef:
+        name: platform-tokens
+        key: GITHUB_TOKEN
+      domain: "api.github.com"
 ```
 
 Supported types: `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `kubernetes`, `none`.
 
-- **Pro:** 1 CRD to install, 1 controller watch, 1 RBAC entry — regardless of how many shapes exist
-- **Pro:** Adding a new shape is a new type constant + optional config struct on the existing CRD — no new CRD, no new watch
+- **Pro:** Single resource to manage — `kubectl get claw instance -o yaml` shows everything
+- **Pro:** No label-based discovery, no additional `Watches()`, no separate CRD RBAC
+- **Pro:** Atomic updates — changing credentials and config is one API call
+- **Pro:** Adding a new shape is a new type constant + optional config struct — no schema change
 - **Pro:** `type: none` reads naturally (proxy allowlist entry)
-- **Pro:** One `kubectl get credentials` shows all credentials
-- **Con:** CRD schema validation is looser — optional sub-structs mean invalid combos are possible (e.g., `type: bearer` with `gcp` set)
+- **Con:** CRD schema validation is looser — optional sub-structs mean invalid combos are possible (CEL catches these)
 - **Con:** Go types need nil checks on optional config blocks
-
-**Precedent:** External Secrets Operator `SecretStore` (one Kind, typed `provider` field), Argo CD `Application`.
 
 See [credential-examples.md](security-hardening-credential-examples.md) for complete YAML examples of every type.
 
-**Decision:** Option F — unified `ClawCredential` CRD with a `type` discriminator. Originally chose Option E (dedicated CRDs per shape), but detailed analysis of real-world credential shapes (LLM providers, channels, MCP servers, Kubernetes API) revealed 7 distinct types needed. The cost-per-new-shape with dedicated CRDs (new Kind, types file, deepcopy, CRD YAML, watch, RBAC) outweighs the tighter schema validation. A single `ClawCredential` CRD keeps the operator simple (1 watch, 1 list call, 1 RBAC entry) and makes adding new shapes a struct-level change rather than a CRD-level one. The distinctive name avoids `kubectl get credentials` collisions with other operators.
+**Decision:** Option F (revised) — inline `spec.credentials[]` array on the `Claw` CRD with a `type` discriminator. Originally considered as a separate `ClawCredential` CRD, but merging into the main CRD is simpler: one resource to manage, no label discovery, no extra Watch, atomic updates. CEL validation on array items catches invalid type/config combinations at admission time.
 
-_Considered and rejected: Option A — single Secret ref (can't co-locate credential config), Option B — list of typed Secret refs (no config alongside the ref), Option C — per-category fields (rigid, new category = schema change), Option D — single Secret with conventions (fragile naming, mixes API keys with SA JSON), Option E — typed CRDs per shape (7+ CRDs to install/watch/maintain, high cost-per-new-shape)_
+_Considered and rejected: Option A — single Secret ref (can't co-locate credential config), Option B — list of typed Secret refs (no config alongside the ref), Option C — per-category fields (rigid, new category = schema change), Option D — single Secret with conventions (fragile naming, mixes API keys with SA JSON), Option E — typed CRDs per shape (7+ CRDs to install/watch/maintain, high cost-per-new-shape), Option F original — separate `ClawCredential` CRD (unnecessary complexity when inline array works)_
 
 ---
 
 ## Q3: How should network policies be tightened?
 
 **Already implemented (must keep):**
-- **OpenClaw pod egress** — restricted to proxy pod only (TCP 8080) + DNS. This is a key security measure: the OpenClaw process can never reach the internet or the Kubernetes API directly, only through the proxy.
+- **Gateway pod egress** — restricted to proxy pod only (TCP 8080) + DNS. This is a key security measure: the gateway process can never reach the internet or the Kubernetes API directly, only through the proxy.
 - **Proxy pod egress** — TCP 443 to anywhere + DNS. L7 blocking in the proxy (unknown paths return 403) is the primary control; L4 is intentionally broad because LLM API IPs are dynamic/CDN-hosted.
 
-**Gap:** No ingress restriction on the OpenClaw gateway pod — any in-cluster pod that can route to the Service can reach it.
+**Gap:** No ingress restriction on the gateway pod — any in-cluster pod that can route to the Service can reach it.
 
 ### Option A: Add ingress NetworkPolicy for the gateway pod
 
-Add an ingress policy allowing traffic to OpenClaw pods only from the OpenShift router (for user access via the Route). Proxy egress stays unchanged — the proxy itself handles L7 allowlisting.
+Add an ingress policy allowing traffic to the gateway pods only from the OpenShift router (for user access via the Route). Proxy egress stays unchanged — the proxy itself handles L7 allowlisting.
 
 Additional NetworkPolicies managed outside the operator (e.g., by cluster admins or monitoring operators) can open access for other needs like Prometheus scraping, logging agents, etc. Since Kubernetes NetworkPolicies are additive (union of all matching rules), these compose cleanly with the operator's policies.
 
@@ -167,7 +172,7 @@ Today the operator uses an **nginx forward proxy** with static `location` blocks
 
 Config-driven domain→injector routing (CONNECT target host determines the route), pluggable injectors (bearer, API key header, GCP ADC/OAuth2 with token vending), explicit auth header stripping on all requests (defense in depth — strip before inject, not just overwrite). Port paude-proxy's credential injection and CONNECT/MITM layer as a starting point rather than building from scratch. Add health endpoint, strict header policy, credential redaction in logs, and 502 on injection failure.
 
-The proxy derives its routing configuration from the credential CRDs (Q2) — the operator reads the CRDs and generates the proxy's config, so adding a new service is purely declarative (new CR instance), not a code or config template change. See [Q12](security-hardening-impl-questions.md) for the full traffic routing decision and rationale.
+The proxy derives its routing configuration from `spec.credentials` (Q2) — the operator reads the credential entries and generates the proxy's config, so adding a new service is purely declarative (new entry in `spec.credentials`), not a code or config template change. See [Q12](security-hardening-impl-questions.md) for the full traffic routing decision and rationale.
 
 **Why MITM (revised from original decision):** The original decision avoided CONNECT/MITM ("our inbound side is plain HTTP"), but deeper investigation ([Q12](security-hardening-impl-questions.md)) showed that all three reference projects use MITM because it allows OpenClaw to use real `https://` API URLs unchanged — standard SDK defaults work without patching. The alternatives (`http://` URLs, path-based routing, Host header overrides) are all fragile or tightly coupled. The MITM CA is ~30 LOC of Go (`crypto/x509`) and follows the same Secret management pattern the operator already uses. On OpenShift, `config.openshift.io/inject-trusted-cabundle` handles corporate proxy CAs for the outbound leg.
 

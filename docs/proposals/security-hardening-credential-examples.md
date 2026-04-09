@@ -1,22 +1,33 @@
-# ClawCredential CRD Examples
+# Credential Examples (`spec.credentials[]`)
 
 **Related:** [Sketch](security-hardening-sketch.md), [Design](security-hardening-design.md)
 
-This document shows how real-world services map to the unified `ClawCredential` CRD. Each credential has a `type` that selects the injection mechanism, a `secretRef` pointing to a Kubernetes Secret, a `domain` for proxy routing, and optional type-specific config blocks.
+This document shows how real-world services map to entries in the `Claw` CRD's `spec.credentials[]` array. Each credential entry has a `name`, a `type` that selects the injection mechanism, a `secretRef` pointing to a Kubernetes Secret, a `domain` for proxy routing, and optional type-specific config blocks.
 
 **Domain matching:** exact string (`api.github.com`) or suffix with leading dot (`.googleapis.com` matches `generativelanguage.googleapis.com`, `aiplatform.googleapis.com`, etc.). First match wins.
-
-All credentials are labeled `openclaw.sandbox.redhat.com/instance: instance` so the controller can discover them.
 
 ---
 
 ## Go Types
 
 ```go
-type ClawCredentialSpec struct {
+type ClawSpec struct {
+    // Credentials configures proxy credential injection per domain.
+    // +optional
+    Credentials []CredentialSpec `json:"credentials,omitempty"`
+}
+
+// CredentialSpec defines a single credential entry in spec.credentials[].
+// +kubebuilder:validation:XValidation:rule="self.type != 'apiKey' || has(self.apiKey)",message="apiKey config is required when type is apiKey"
+// +kubebuilder:validation:XValidation:rule="self.type != 'gcp' || has(self.gcp)",message="gcp config is required when type is gcp"
+type CredentialSpec struct {
+    // Name uniquely identifies this credential entry.
+    // +kubebuilder:validation:MinLength=1
+    Name string `json:"name"`
+
     // Type selects the credential injection mechanism
     // +kubebuilder:validation:Enum=apiKey;bearer;gcp;pathToken;oauth2;kubernetes;none
-    Type ClawCredentialType `json:"type"`
+    Type CredentialType `json:"type"`
 
     // SecretRef references the Kubernetes Secret holding the credential value.
     // Not required for types "kubernetes" (uses projected SA token) and "none".
@@ -42,16 +53,16 @@ type ClawCredentialSpec struct {
     // Bearer and None need no extra config.
 }
 
-type ClawCredentialType string
+type CredentialType string
 
 const (
-    ClawCredentialTypeAPIKey      ClawCredentialType = "apiKey"
-    ClawCredentialTypeBearer      ClawCredentialType = "bearer"
-    ClawCredentialTypeGCP         ClawCredentialType = "gcp"
-    ClawCredentialTypePathToken   ClawCredentialType = "pathToken"
-    ClawCredentialTypeOAuth2      ClawCredentialType = "oauth2"
-    ClawCredentialTypeKubernetes  ClawCredentialType = "kubernetes"
-    ClawCredentialTypeNone        ClawCredentialType = "none"        // proxy allowlist only, no credential injection — see "Proxy Allowlist" below
+    CredentialTypeAPIKey      CredentialType = "apiKey"
+    CredentialTypeBearer      CredentialType = "bearer"
+    CredentialTypeGCP         CredentialType = "gcp"
+    CredentialTypePathToken   CredentialType = "pathToken"
+    CredentialTypeOAuth2      CredentialType = "oauth2"
+    CredentialTypeKubernetes  CredentialType = "kubernetes"
+    CredentialTypeNone        CredentialType = "none"        // proxy allowlist only, no credential injection — see "Proxy Allowlist" below
 )
 
 type SecretKeyRef struct {
@@ -100,13 +111,7 @@ type KubernetesConfig struct {
 ### Gemini (API key)
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: gemini
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: gemini
   type: apiKey
   secretRef:
     name: llm-keys
@@ -121,13 +126,7 @@ spec:
 Anthropic requires an `anthropic-version` header on every request. Use `defaultHeaders` to inject it alongside the API key.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: anthropic
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: anthropic
   type: apiKey
   secretRef:
     name: llm-keys
@@ -142,13 +141,7 @@ spec:
 ### OpenAI (Bearer token)
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: openai
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: openai
   type: bearer
   secretRef:
     name: llm-keys
@@ -159,13 +152,7 @@ spec:
 ### OpenRouter (Bearer token, OpenAI-compatible)
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: openrouter
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: openrouter
   type: bearer
   secretRef:
     name: llm-keys
@@ -184,13 +171,7 @@ The proxy loads the service account JSON, obtains a short-lived OAuth2 access to
 **GCP token vending** (pattern from paude-proxy): Google client SDKs inside OpenClaw try to obtain tokens from `oauth2.googleapis.com/token` via Application Default Credentials (ADC). The proxy intercepts these `POST` requests and returns a dummy access token, so the SDK is satisfied without ever seeing real credentials. The proxy then replaces the dummy token with the real one on subsequent API calls. This allows unmodified Google SDK code inside OpenClaw to work transparently with the proxy.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: vertex-ai
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: vertex-ai
   type: gcp
   secretRef:
     name: gcp-sa
@@ -212,13 +193,7 @@ spec:
 The Telegram Bot API places the token in the URL path: `/bot<TOKEN>/sendMessage`.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: telegram
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: telegram
   type: pathToken
   secretRef:
     name: channel-tokens
@@ -235,13 +210,7 @@ spec:
 The access token is a standard Bearer header. The phone number ID is part of the request URL constructed by the client, not a credential concern.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: whatsapp
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: whatsapp
   type: bearer
   secretRef:
     name: meta-tokens
@@ -254,13 +223,7 @@ spec:
 Slack Bot tokens use `Authorization: Bearer xoxb-...`.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: slack
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: slack
   type: bearer
   secretRef:
     name: channel-tokens
@@ -273,13 +236,7 @@ spec:
 Discord uses `Authorization: Bot <TOKEN>` — not standard Bearer. Modeled as an API key injection on the `Authorization` header with a `valuePrefix`.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: discord
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: discord
   type: apiKey
   secretRef:
     name: channel-tokens
@@ -299,13 +256,7 @@ spec:
 ### GitHub (Bearer token)
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: github
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: github
   type: bearer
   secretRef:
     name: platform-tokens
@@ -318,13 +269,7 @@ spec:
 Jira uses `Authorization: Basic base64(email:token)`. The user pre-computes the base64 value and stores it in the Secret.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: jira
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: jira
   type: apiKey
   secretRef:
     name: platform-tokens
@@ -339,20 +284,14 @@ spec:
 
 ## Kubernetes API
 
-OpenClaw needs access to the Kubernetes API to manage resources in the user's namespace (deploy apps, debug workloads, etc.). The OpenClaw pod's egress is locked to the proxy only, so Kubernetes API calls must also go through the proxy.
+The gateway needs access to the Kubernetes API to manage resources in the user's namespace (deploy apps, debug workloads, etc.). The gateway pod's egress is locked to the proxy only, so Kubernetes API calls must also go through the proxy.
 
 ### Kubernetes via dedicated ServiceAccount
 
 The operator creates a ServiceAccount with scoped RBAC and mounts its projected token into the proxy pod. The proxy injects the SA bearer token for requests to the Kubernetes API server.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: kube-api
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: kube-api
   type: kubernetes
   domain: "kubernetes.default.svc"
   kubernetes:
@@ -371,16 +310,10 @@ spec:
 
 ### Kubernetes via user token (future)
 
-If OpenClaw is integrated with OpenShift OAuth, the user's token could be passed through for Kubernetes API calls, giving user-level permissions. This would require the gateway to forward the user's bearer token to the proxy, and the proxy to re-inject it for kube-apiserver requests only. This is more complex and deferred — documenting the pattern here for completeness:
+If the gateway is integrated with OpenShift OAuth, the user's token could be passed through for Kubernetes API calls, giving user-level permissions. This would require the gateway to forward the user's bearer token to the proxy, and the proxy to re-inject it for kube-apiserver requests only. This is more complex and deferred — documenting the pattern here for completeness:
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: kube-api-user
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: kube-api-user
   type: kubernetes
   domain: "kubernetes.default.svc"
   kubernetes:
@@ -399,13 +332,7 @@ This is speculative — the `passThrough` field is not part of the initial desig
 ### Remote MCP server with API key
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: mcp-web-search
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: mcp-web-search
   type: apiKey
   secretRef:
     name: mcp-secrets
@@ -418,13 +345,7 @@ spec:
 ### Remote MCP server with Bearer token
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: mcp-code-analysis
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: mcp-code-analysis
   type: bearer
   secretRef:
     name: mcp-secrets
@@ -437,13 +358,7 @@ spec:
 The proxy exchanges the client secret for a short-lived access token at the configured token URL, caches and auto-refreshes it, and injects `Authorization: Bearer <token>`.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: mcp-enterprise-crm
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: mcp-enterprise-crm
   type: oauth2
   secretRef:
     name: oauth-secrets
@@ -462,13 +377,7 @@ spec:
 The proxy blocks all unknown domains with a 403. When the proxy should forward requests to a domain without injecting any credentials — for example, a service where authentication is handled at another layer (mTLS via service mesh, NetworkPolicy-based isolation, etc.) — `type: none` serves as a pure allowlist entry.
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: ClawCredential
-metadata:
-  name: allowed-service
-  labels:
-    openclaw.sandbox.redhat.com/instance: instance
-spec:
+- name: allowed-service
   type: none
   domain: "some-service.example.com"
 ```
@@ -498,7 +407,7 @@ The proxy passes the request through without modifying any headers. No `secretRe
 - **GCP token vending:** The `gcp` injector intercepts `POST oauth2.googleapis.com/token` and returns a dummy access token so Google SDK clients work with placeholder ADC credentials. Real token injection happens on subsequent API calls. The suffix domain `.googleapis.com` covers both API and token endpoints.
 - **Domain matching precedence:** Routes are checked in config order; first match wins. Exact matches (`api.github.com`) should be listed before suffix matches (`.googleapis.com`) to avoid unintended catches.
 - **Multiple credentials for the same domain:** Possible (e.g., two GCP projects). The proxy config should support this — route matching may need path-based disambiguation in the future.
-- **Secret ownership:** The Secrets referenced by ClawCredential CRs are user-created and user-owned. The operator reads but does not create or modify them. Only operator-managed Secrets (`openclaw-secrets`, proxy config) have owner references.
+- **Secret ownership:** The Secrets referenced by `spec.credentials` entries are user-created and user-owned. The operator reads but does not create or modify them. Only operator-managed Secrets (`openclaw-secrets`, proxy config) have owner references.
 - **Kubernetes token rotation:** Projected ServiceAccount tokens are short-lived and auto-rotated by the kubelet. The proxy must re-read the token file before each request (or watch for changes) rather than caching it at startup.
 - **Injection failure:** If a route matches but credential injection fails (e.g., expired GCP SA, missing Secret), the proxy returns **502** with a descriptive error body — not a silent passthrough that would result in a confusing 401/403 from the upstream.
 - **Credential redaction:** All proxy log output redacts credential values (Secret data, tokens) as `[REDACTED]`. Debug logging of request/response headers strips auth header values.

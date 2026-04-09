@@ -10,8 +10,8 @@
 
 The OpenClaw operator deploys a personal AI assistant into a user's Kubernetes namespace. Today, the operator handles basic credential injection (single Gemini Secret reference on the CRD via `spec.geminiAPIKey`), egress NetworkPolicies, gateway token generation, and Route hostname injection. This design extends the security posture across five areas:
 
-1. **ClawCredential CRD** — unified `ClawCredential` CRD with type discriminator, replacing `spec.geminiAPIKey`
-2. **Go credential proxy** — replaces the nginx proxy with a Go credential-injecting forward proxy driven by ClawCredential CRs
+1. **Inline credentials** — `spec.credentials[]` array on the `Claw` CRD (renamed from `OpenClaw`) with type discriminator, replacing `spec.geminiAPIKey`
+2. **Go credential proxy** — replaces the nginx proxy with a Go credential-injecting forward proxy driven by `spec.credentials`
 3. **Ingress NetworkPolicy** — restricts gateway access to the OpenShift router
 4. **Container hardening** — init container security context (Route host injection already implemented)
 5. **Status reporting** — `gatewayTokenSecretRef` and granular conditions (replacing the existing `Available` condition)
@@ -19,18 +19,40 @@ The OpenClaw operator deploys a personal AI assistant into a user's Kubernetes n
 ## Design Principles
 
 - **Zero plaintext credentials in CRDs** — all secrets live in Kubernetes Secrets, referenced by name/key
-- **Declarative extensibility** — adding a new service with an existing auth shape is a new CR instance, not a code change
+- **Declarative extensibility** — adding a new service with an existing auth shape is a new entry in `spec.credentials`, not a code change
 - **Atomic resource management** — the Kustomize + SSA pattern is preserved; new resources integrate into the existing pipeline
-- **Clean break, no legacy code** — the operator is pre-v1 with no production users; `spec.geminiAPIKey` is removed outright, credentials flow exclusively through ClawCredential CRs
+- **Clean break, no legacy code** — the operator is pre-v1 with no production users; `spec.geminiAPIKey` is replaced by `spec.credentials[]`
 - **Defense in depth** — NetworkPolicies (L4) + proxy allowlisting (L7) + two-layer auth header stripping (strip then inject) + credential redaction in logs + 502 on injection failure
 
 ---
 
 ## Architecture
 
-### ClawCredential CRD
+### CRD Rename: OpenClaw → Claw
 
-One new CRD (`ClawCredential`, short name `cc`) in the `openclaw.sandbox.redhat.com/v1alpha1` API group with a `type` discriminator:
+The CRD Kind is renamed from `OpenClaw` to `Claw` to support potential future distributions (e.g., NemoClaw). The API group remains `openclaw.sandbox.redhat.com/v1alpha1` (the operator project identity). Internal resource names (`openclaw-secrets`, `openclaw-config`, etc.) are unchanged.
+
+### Inline Credentials (`spec.credentials[]`)
+
+Credentials are an array field on the `Claw` CRD spec, each with a `type` discriminator. No separate CRD — everything is in one resource:
+
+```yaml
+apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef: { name: llm-keys, key: GEMINI_API_KEY }
+      domain: ".googleapis.com"
+      apiKey: { header: x-goog-api-key }
+    - name: github
+      type: bearer
+      secretRef: { name: platform-tokens, key: GITHUB_TOKEN }
+      domain: api.github.com
+```
 
 | Type | Shape | Key fields |
 |------|-------|------------|
@@ -44,33 +66,31 @@ One new CRD (`ClawCredential`, short name `cc`) in the `openclaw.sandbox.redhat.
 
 **Domain format:** exact match (`api.github.com`) or suffix match (`.googleapis.com`, leading dot). See [credential-examples.md](security-hardening-credential-examples.md) for syntax details.
 
-Each ClawCredential CR is labeled `openclaw.sandbox.redhat.com/instance: instance` so the controller can discover all credentials for a given OpenClaw instance.
+**Controller architecture ([Q1](security-hardening-impl-questions.md)):** Single unified controller. Credentials are read directly from `instance.Spec.Credentials` — no label-based discovery, no additional `Watches()` for a separate CRD. Secret watching still uses the existing `findOpenClawsReferencingSecret` pattern (updated to scan `spec.credentials[*].secretRef`).
 
-**Controller architecture ([Q1](security-hardening-impl-questions.md)):** Single unified controller with one additional `Watches()` for `ClawCredential` that enqueues the parent `OpenClaw` CR. SSA applies are idempotent, so re-applying all resources on a credential change is harmless.
-
-**Validation ([Q10](security-hardening-impl-questions.md)):** CEL validation rules on the CRD enforce that the correct type-specific sub-struct is present for each `type` value. The controller validates during reconciliation as defense-in-depth (e.g., checking that referenced Secrets exist).
+**Validation ([Q10](security-hardening-impl-questions.md)):** CEL validation rules on the `credentials` array items enforce that the correct type-specific sub-struct is present for each `type` value. The controller validates during reconciliation as defense-in-depth (e.g., checking that referenced Secrets exist).
 
 **Phase 2 types ([Q11](security-hardening-impl-questions.md)):** `apiKey`, `bearer`, `gcp`, and `kubernetes` ship in Phase 2. All 7 types are registered in the CRD schema from the start; unsupported types (`pathToken`, `oauth2`, `none`) log a warning and set a condition.
 
-**Type definitions** live in `api/v1alpha1/` alongside the existing `OpenClaw` types in a single `clawcredential_types.go` file. See [credential-examples.md](security-hardening-credential-examples.md) for the full Go types and YAML examples for each type.
+**Type definitions** live in `api/v1alpha1/openclaw_types.go` alongside the existing `Claw` types. The `CredentialSpec` struct is used as the array element type for `ClawSpec.Credentials`. See [credential-examples.md](security-hardening-credential-examples.md) for the full Go types and YAML examples for each type.
 
 ### Go Credential Proxy
 
-A credential-injecting MITM forward proxy replacing the nginx proxy. OpenClaw uses standard `HTTP_PROXY`/`HTTPS_PROXY` environment variables with real `https://` API URLs. The proxy intercepts CONNECT tunnels, terminates TLS with an operator-managed CA, injects credentials based on the target domain, and forwards as HTTPS to upstream APIs. This is the same proven architecture used by all reference projects (paude-proxy, OpenShell, onecli). See [Q12](security-hardening-impl-questions.md) for full rationale.
+A credential-injecting MITM forward proxy replacing the nginx proxy. The Claw gateway uses standard `HTTP_PROXY`/`HTTPS_PROXY` environment variables with real `https://` API URLs. The proxy intercepts CONNECT tunnels, terminates TLS with an operator-managed CA, injects credentials based on the target domain, and forwards as HTTPS to upstream APIs. This is the same proven architecture used by all reference projects (paude-proxy, OpenShell, onecli). See [Q12](security-hardening-impl-questions.md) for full rationale.
 
 **Traffic flow ([Q12](security-hardening-impl-questions.md)):**
 
 ```
-OpenClaw ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inject creds) ──HTTPS──▶ upstream API
+Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inject creds) ──HTTPS──▶ upstream API
 ```
 
-1. The operator sets `HTTP_PROXY`/`HTTPS_PROXY` env vars on the OpenClaw Deployment pointing to the proxy Service
-2. OpenClaw's HTTP clients (undici `EnvHttpProxyAgent`) send `CONNECT api.anthropic.com:443` to the proxy
+1. The operator sets `HTTP_PROXY`/`HTTPS_PROXY` env vars on the gateway Deployment pointing to the proxy Service
+2. The gateway's HTTP clients (undici `EnvHttpProxyAgent`) send `CONNECT api.anthropic.com:443` to the proxy
 3. The proxy accepts the CONNECT, generates a leaf cert for the target domain signed by its CA, TLS-terminates the client side
 4. On the decrypted stream, the proxy reads HTTP requests and applies credential injection
-5. NetworkPolicy prevents OpenClaw from reaching the internet directly (enforcement layer)
+5. NetworkPolicy prevents the gateway from reaching the internet directly (enforcement layer)
 
-**CA management:** The operator generates a CA cert+key pair at first reconciliation, stores it in Secret `openclaw-proxy-ca`. The CA cert+key is mounted into the proxy pod (for signing leaf certs). The CA cert only is mounted into the OpenClaw pod with `NODE_EXTRA_CA_CERTS` pointing to it (additive — supplements system CAs). On OpenShift, the proxy's outbound trust store uses `config.openshift.io/inject-trusted-cabundle` to handle corporate proxy CAs transparently.
+**CA management:** The operator generates a CA cert+key pair at first reconciliation, stores it in Secret `openclaw-proxy-ca`. The CA cert+key is mounted into the proxy pod (for signing leaf certs). The CA cert only is mounted into the gateway pod with `NODE_EXTRA_CA_CERTS` pointing to it (additive — supplements system CAs). On OpenShift, the proxy's outbound trust store uses `config.openshift.io/inject-trusted-cabundle` to handle corporate proxy CAs transparently.
 
 **Source location ([Q2](security-hardening-impl-questions.md)):** Same repo — `cmd/proxy/main.go` + `internal/proxy/`. Proxy can import `api/v1alpha1` types directly. CRD type changes, proxy config format, and manifests land in one PR.
 
@@ -86,7 +106,7 @@ OpenClaw ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inject c
 9. If route matches but injection **fails** (e.g., GCP token refresh error) → **502** with `"credential injection failed"` (pattern from paude-proxy — clear signal vs. confusing 401 from upstream)
 10. Unknown/disallowed domains → **403**
 
-**Injector types** (one per `ClawCredential.spec.type`):
+**Injector types** (one per credential entry's `type`):
 - `apiKey` — sets a configured header to the secret value (with optional value prefix); injects optional `defaultHeaders` (e.g., `anthropic-version: 2023-06-01`)
 - `bearer` — sets `Authorization: Bearer <token>`
 - `gcp` — loads SA JSON, obtains short-lived OAuth2 token via `golang.org/x/oauth2/google`, caches and auto-refreshes; includes **token vending** — intercepts `POST oauth2.googleapis.com/token` and returns a dummy token so Google SDK clients inside OpenClaw work with placeholder credentials (pattern from paude-proxy)
@@ -106,7 +126,7 @@ OpenClaw ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inject c
 - **Auth header stripping before injection** — explicit `Del` on all known auth headers before `Set`, not relying on overwrite semantics alone
 - **502 on injection failure** — matched route + failed injection → 502, not silent passthrough
 
-**Configuration format ([Q3](security-hardening-impl-questions.md)):** JSON ConfigMap with hybrid secret delivery. API keys and tokens use environment variables; GCP SA JSON uses a mounted volume. The operator generates the JSON config from ClawCredential CRs. ConfigMap changes trigger a Deployment rollout via annotation hash. Example:
+**Configuration format ([Q3](security-hardening-impl-questions.md)):** JSON ConfigMap with hybrid secret delivery. API keys and tokens use environment variables; GCP SA JSON uses a mounted volume. The operator generates the JSON config from `spec.credentials` entries. ConfigMap changes trigger a Deployment rollout via annotation hash. Example:
 
 ```json
 {
@@ -135,12 +155,12 @@ OpenClaw ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inject c
 
 **Secret delivery — how credentials reach the proxy:**
 
-The operator never copies secret values. It reads each ClawCredential's `spec.secretRef` and generates Kubernetes-native references on the proxy Deployment that the kubelet resolves at pod startup:
+The operator never copies secret values. It reads each credential entry's `secretRef` and generates Kubernetes-native references on the proxy Deployment that the kubelet resolves at pod startup:
 
-1. **Env vars for simple credentials** (API keys, bearer tokens) — the operator adds a `valueFrom.secretKeyRef` per ClawCredential, pointing to the user's own Secret:
+1. **Env vars for simple credentials** (API keys, bearer tokens) — the operator adds a `valueFrom.secretKeyRef` per credential entry, pointing to the user's own Secret:
 
     ```yaml
-    # Generated from ClawCredential "gemini" (spec.secretRef: llm-keys/GEMINI_API_KEY)
+    # Generated from spec.credentials[name=gemini] (secretRef: llm-keys/GEMINI_API_KEY)
     env:
       - name: CRED_GEMINI
         valueFrom:
@@ -171,16 +191,16 @@ The operator never copies secret values. It reads each ClawCredential's `spec.se
 
 3. **Projected ServiceAccount tokens** (Kubernetes type) — the operator adds a projected volume for the specified ServiceAccount. The proxy re-reads the token file on each request (tokens rotate automatically).
 
-The env var names (e.g., `CRED_GEMINI`) are operator-generated from the ClawCredential name, ensuring uniqueness. ConfigMap and Deployment changes are applied atomically via SSA; a config hash annotation on the Deployment triggers a rollout when credentials change.
+The env var names (e.g., `CRED_GEMINI`) are operator-generated from the credential entry's `name` field, ensuring uniqueness. ConfigMap and Deployment changes are applied atomically via SSA; a config hash annotation on the Deployment triggers a rollout when credentials change.
 
 ```
 User creates:
-  ClawCredential (gemini)  ──references──▶  Secret (llm-keys)
+  Claw (instance) with spec.credentials[]  ──each entry references──▶  Secret (llm-keys, gcp-sa, ...)
        │
-Operator reads ClawCredential, generates:
+Operator reads spec.credentials, generates:
   ├─ ConfigMap (proxy config JSON)     ← domain/injector/envVar mappings (no secrets)
-  └─ Proxy Deployment                  ← env vars with secretKeyRef → user's Secret
-       │                                  volume mounts → user's Secret (for GCP)
+  └─ Proxy Deployment                  ← env vars with secretKeyRef → user's Secrets
+       │                                  volume mounts → user's Secrets (for GCP)
        │
 Proxy at runtime:
   ├─ Reads config JSON from ConfigMap mount
@@ -204,7 +224,7 @@ The actual secret bytes never pass through the operator or the ConfigMap.
 ```
 Reconcile(ctx, req)
  ↓
-1. Fetch OpenClaw CR (unchanged)
+1. Fetch Claw CR (unchanged, new Kind name)
  ↓
 2. Filter by name "instance" (unchanged)
  ↓
@@ -217,9 +237,8 @@ Reconcile(ctx, req)
  ├─ Set owner reference
  └─ SSA apply
  ↓
-5. discoverCredentials(ctx, instance)          ← NEW
- ├─ List all ClawCredential CRs in namespace by label
- ├─ Validate each (type-specific fields present, secretRef exists, domain non-empty)
+5. validateCredentials(instance.Spec.Credentials)  ← NEW (reads directly from CR spec)
+ ├─ Validate each entry (type-specific fields present, secretRef exists, domain non-empty)
  └─ Return aggregated credential config
  ↓
 6. generateProxyConfig(credentials)            ← NEW
@@ -245,14 +264,14 @@ Reconcile(ctx, req)
 11. Return success
 ```
 
-**Gemini credential wiring removal:** The existing `configureProxyDeployment()` method (which patches the proxy Deployment's `GEMINI_API_KEY` env var to reference the user's Secret via `secretKeyRef`) and `stampSecretVersionAnnotation()` (which triggers rollouts on Secret changes) are removed, along with `spec.geminiAPIKey` on the OpenClaw CRD. Credentials flow exclusively through ClawCredential CRs → proxy config. See [Q5](security-hardening-impl-questions.md) for rationale.
+**Gemini credential wiring removal:** The existing `configureProxyDeployment()` method (which patches the proxy Deployment's `GEMINI_API_KEY` env var to reference the user's Secret via `secretKeyRef`) and `stampSecretVersionAnnotation()` (which triggers rollouts on Secret changes) are removed, along with `spec.geminiAPIKey` on the Claw CRD. Credentials flow exclusively through `spec.credentials[]` → proxy config. See [Q5](security-hardening-impl-questions.md) for rationale.
 
 **Status fields ([Q6](security-hardening-impl-questions.md)):**
 
-The current `OpenClawStatus` already has `Conditions` (with an `Available` condition) and `URL`. The design extends it with `GatewayTokenSecretRef` and replaces the single `Available` condition with more granular conditions:
+The current status already has `Conditions` (with an `Available` condition) and `URL`. The design extends it with `GatewayTokenSecretRef` and replaces the single `Available` condition with more granular conditions:
 
 ```go
-type OpenClawStatus struct {
+type ClawStatus struct {
     GatewayTokenSecretRef string             `json:"gatewayTokenSecretRef,omitempty"`
     URL                   string             `json:"url,omitempty"`
     Conditions            []metav1.Condition `json:"conditions,omitempty"`
@@ -261,12 +280,12 @@ type OpenClawStatus struct {
 
 Conditions following Kubernetes conventions (replacing `Available`):
 - `Ready` — overall instance health (gates on Route hostname resolution, credentials, proxy config)
-- `CredentialsResolved` — all ClawCredential CRs reference valid Secrets
+- `CredentialsResolved` — all `spec.credentials` entries reference valid Secrets
 - `ProxyConfigured` — proxy ConfigMap generated successfully
 
 ### Ingress NetworkPolicy
 
-A new NetworkPolicy restricting ingress to the OpenClaw gateway pod:
+A new NetworkPolicy restricting ingress to the gateway pod:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -322,25 +341,26 @@ The init container writes to `/home/node/.openclaw` (PVC-mounted), so `readOnlyR
 
 **Phasing ([Q9](security-hardening-impl-questions.md)):** Two main phases plus cleanup. Originally three, but Q11 requires `gcp` and `kubernetes` from launch (which need the Go proxy), merging the CRD and proxy phases.
 
-### Phase 1: Quick wins (no new CRDs, no proxy rewrite)
+### Phase 1: Quick wins (no CRD schema changes, no proxy rewrite)
 
-1. **Init container security context** — single manifest change
-2. ~~**Route host injection**~~ — already implemented (`injectRouteHostIntoConfigMap` with two-pass reconciliation via `applyRouteOnly` → `getRouteURL`)
-3. **Ingress NetworkPolicy** — new manifest in `internal/assets/manifests/`
-4. **Status fields** — add `gatewayTokenSecretRef`, replace `Available` condition with `Ready`/`CredentialsResolved`/`ProxyConfigured`
+1. **Rename CRD** — `OpenClaw` → `Claw` (Kind, Go types, constants, manifests, tests)
+2. **Init container security context** — single manifest change
+3. ~~**Route host injection**~~ — already implemented (`injectRouteHostIntoConfigMap` with two-pass reconciliation via `applyRouteOnly` → `getRouteURL`)
+4. **Ingress NetworkPolicy** — new manifest in `internal/assets/manifests/`
+5. **Status fields** — add `gatewayTokenSecretRef`, replace `Available` condition with `Ready`/`CredentialsResolved`/`ProxyConfigured`
 
-### Phase 2: ClawCredential CRD + Go proxy
+### Phase 2: Inline credentials + Go proxy
 
-5. **Remove `spec.geminiAPIKey`** — clean break, no deprecation (no production users yet)
-6. **Define credential CRD types** — `api/v1alpha1/` type definitions + CEL validation + `make manifests && make generate`
-7. **Credential discovery** — controller logic to list ClawCredential CRs by label
-8. **Proxy CA management** — `applyProxyCA()` generates/stores CA cert+key in Secret, mounts into proxy and OpenClaw pods (Q12)
-9. **Proxy config generation** — operator builds proxy config JSON from discovered credentials
-10. **Build the Go proxy** — CONNECT + MITM handler, leaf cert generation, `apiKey`/`bearer`/`gcp`/`kubernetes` injectors; port paude-proxy injection layer, add health endpoint, config-driven routing
-11. **OpenClaw config generation** — operator generates `openclaw.json` from ClawCredential CRs with real `https://` base URLs, placeholder API keys, and `request.proxy.mode: "env-proxy"`; sets `HTTP_PROXY`/`HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` env vars on OpenClaw Deployment
-12. **Proxy container image** — Containerfile, CI pipeline (podman), OLM bundle with `relatedImages` + `PROXY_IMAGE` env var
-13. **Replace nginx manifests** — update `proxy-deployment.yaml`, `proxy-configmap.yaml`, remove nginx entrypoint
-14. **Remove `configureProxyDeployment`** — credentials now flow through credential CRDs → proxy config
+6. **Replace `spec.geminiAPIKey` with `spec.credentials[]`** — clean break, no deprecation (no production users yet)
+7. **Define credential types** — `CredentialSpec`, `CredentialType`, sub-config structs in `api/v1alpha1/openclaw_types.go` + CEL validation + `make manifests && make generate`
+8. **Credential validation** — controller reads `instance.Spec.Credentials` directly, validates Secrets exist
+9. **Proxy CA management** — `applyProxyCA()` generates/stores CA cert+key in Secret, mounts into proxy and gateway pods (Q12)
+10. **Proxy config generation** — operator builds proxy config JSON from `spec.credentials`
+11. **Build the Go proxy** — CONNECT + MITM handler, leaf cert generation, `apiKey`/`bearer`/`gcp`/`kubernetes` injectors; port paude-proxy injection layer, add health endpoint, config-driven routing
+12. **Gateway config generation** — operator generates `openclaw.json` from `spec.credentials` with real `https://` base URLs, placeholder API keys, and `request.proxy.mode: "env-proxy"`; sets `HTTP_PROXY`/`HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` env vars on gateway Deployment
+13. **Proxy container image** — Containerfile, CI pipeline (podman), OLM bundle with `relatedImages` + `PROXY_IMAGE` env var
+14. **Replace nginx manifests** — update `proxy-deployment.yaml`, `proxy-configmap.yaml`, remove nginx entrypoint
+15. **Remove `configureProxyDeployment`** — credentials now flow through `spec.credentials` → proxy config
 
 ### Phase 3: Remaining types + cleanup
 
@@ -356,15 +376,15 @@ All implementation questions are resolved. See [security-hardening-impl-question
 
 | # | Question | Decision |
 |---|----------|----------|
-| Q1 | Controller architecture | Single unified controller + one `Watches()` for `ClawCredential` |
+| Q1 | Controller architecture | Single unified controller; credentials read from `spec.credentials[]` (no separate CRD watch) |
 | Q2 | Proxy source location | Same repo: `cmd/proxy/` + `internal/proxy/` |
 | Q3 | Proxy config format | JSON ConfigMap + hybrid secrets (env vars + volume for GCP) |
 | Q4 | Proxy image build | `Containerfile.proxy`, podman, OLM bundle with `relatedImages` |
-| Q5 | `spec.geminiAPIKey` migration | Clean break — removed outright (no production users) |
+| Q5 | `spec.geminiAPIKey` migration | Clean break — replaced by `spec.credentials[]` (no production users) |
 | Q6 | Status fields | `gatewayTokenSecretRef` + conditions (`Ready`, `CredentialsResolved`, `ProxyConfigured`) |
 | Q7 | Ingress NP router labels | `policy-group.network.openshift.io/ingress` + conditional skip on non-OpenShift |
 | Q8 | Route hostname discovery | Two-pass reconciliation, `Ready=False` until resolved |
-| Q9 | Implementation phasing | Phase 1 (quick wins) → Phase 2 (CRDs + Go proxy) → Phase 3 (remaining types + cleanup) |
-| Q10 | CRD field validation | CEL validation rules + controller defense-in-depth |
+| Q9 | Implementation phasing | Phase 1 (quick wins + CRD rename) → Phase 2 (inline credentials + Go proxy) → Phase 3 (remaining types + cleanup) |
+| Q10 | Credential validation | CEL validation rules on `spec.credentials[]` items + controller defense-in-depth |
 | Q11 | Phase 2 credential types | `apiKey`, `bearer`, `gcp`, `kubernetes` (all 7 registered in schema) |
 | Q12 | Proxy traffic routing | CONNECT + MITM with operator-managed CA; `HTTP_PROXY`/`HTTPS_PROXY` env vars |

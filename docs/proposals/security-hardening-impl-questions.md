@@ -7,26 +7,15 @@ The [sketch questions](security-hardening-questions.md) resolved the high-level 
 
 ---
 
-## Q1: How should the controller discover and react to ClawCredential CR changes?
+## Q1: How should the controller discover and react to credential changes?
 
-The operator needs to watch the new `ClawCredential` CRD in addition to the existing `OpenClaw` CRD. When any ClawCredential CR is created, updated, or deleted, the proxy configuration must be regenerated. The design choice affects controller complexity, reconciliation latency, and how many controllers are registered with the manager.
+With credentials merged into the `Claw` CRD as `spec.credentials[]`, this question is largely resolved: credential changes are changes to the `Claw` CR itself, which already triggers reconciliation. No additional `Watches()` or label-based discovery is needed.
 
-With the unified `ClawCredential` CRD (decided in the sketch), this is simpler than the original multi-CRD design — only one additional watch is needed.
+The remaining concern is Secret watching: when a user-owned Secret referenced by `spec.credentials[].secretRef` changes, the proxy needs to pick up the new value. The existing `findOpenClawsReferencingSecret` pattern (which watches Secrets and maps them to Claw CRs) is updated to scan `spec.credentials[*].secretRef` instead of `spec.geminiAPIKey`.
 
-### Option A: Single unified controller with cross-type watch
+**Decision:** Single unified controller with no additional CRD watch. Credentials are read directly from `instance.Spec.Credentials`. Secret watching uses the existing `findOpenClawsReferencingSecret` pattern (updated for the new field paths). SSA applies are idempotent and cheap, so re-applying all resources on any change is harmless.
 
-Keep the existing `OpenClawResourceReconciler` and add a `Watches()` for `ClawCredential` that enqueues the parent `OpenClaw` CR. When any ClawCredential changes, the main reconciler re-discovers all credentials and regenerates everything.
-
-- **Pro:** Stays consistent with the current single-controller architecture
-- **Pro:** All resource generation happens in one reconcile loop — easy to reason about ordering
-- **Pro:** Only one additional watch needed (unified CRD benefit)
-- **Pro:** ClawCredential changes automatically trigger a full reconciliation (proxy config + manifests)
-- **Con:** A single credential change triggers reconciliation of *all* resources, not just the proxy config
-- **Con:** Requires a mapping function (ClawCredential → OpenClaw CR) for the watch
-
-**Decision:** Option A — single unified controller with one additional `Watches()` for `ClawCredential`. SSA applies are idempotent and cheap, so re-applying all resources on a credential change is harmless. One watch + mapping function is ~20 LOC. Preserves the single-controller simplicity.
-
-_Considered and rejected: Option B — separate credential controller (ordering concerns, coordination complexity for marginal benefit), Option C — hash-based selective reconciliation (unnecessary optimization given SSA idempotency)_
+_Considered and rejected (from original separate-CRD design): Option B — separate credential controller (ordering concerns, coordination complexity), Option C — hash-based selective reconciliation (unnecessary optimization given SSA idempotency). The move to inline credentials eliminated the need for a separate CRD watch entirely._
 
 ---
 
@@ -60,7 +49,7 @@ _Considered and rejected: Option B — separate repository (cross-repo CRD type 
 
 ## Q3: What is the proxy configuration format and how is it delivered?
 
-The operator reads credential CRDs and generates a configuration for the Go proxy. This config tells the proxy which domains map to which injectors and which secrets to use. The question is the format, structure, and delivery mechanism.
+The operator reads `spec.credentials` and generates a configuration for the Go proxy. This config tells the proxy which domains map to which injectors and which secrets to use. The question is the format, structure, and delivery mechanism.
 
 **Decision:** Option C — JSON ConfigMap with hybrid secret delivery. API keys and tokens use environment variables (simple, small). GCP SA JSON uses a mounted volume (large, structured). The config format indicates which delivery mechanism each route uses.
 
@@ -93,13 +82,13 @@ The operator generates a JSON config describing routes (domain → injector type
 
 **How the operator wires credentials to the proxy:**
 
-The operator reads each ClawCredential's `spec.secretRef` and generates Kubernetes-native references on the proxy Deployment — it never copies secret values:
+The operator reads each credential entry's `secretRef` and generates Kubernetes-native references on the proxy Deployment — it never copies secret values:
 
 - **Env vars** (apiKey, bearer types): adds `valueFrom.secretKeyRef` pointing to the user's Secret. The config JSON references the env var name (e.g., `"envVar": "CRED_GEMINI"`); the proxy reads `os.Getenv(...)` at startup.
 - **Volume mounts** (gcp type): mounts the user's Secret as a read-only volume. The config JSON references the file path (e.g., `"saFilePath": "/etc/proxy/credentials/vertex-ai/sa-key.json"`).
 - **Projected SA tokens** (kubernetes type): adds a projected volume for the ServiceAccount. The proxy re-reads the token file on each request (tokens rotate).
 
-Env var names are operator-generated from the ClawCredential name (e.g., `CRED_GEMINI`), ensuring uniqueness. A config hash annotation on the Deployment triggers a rollout when credentials change.
+Env var names are operator-generated from the credential entry's `name` field (e.g., `CRED_GEMINI`), ensuring uniqueness. A config hash annotation on the Deployment triggers a rollout when credentials change.
 
 End-to-end: `User Secret → secretKeyRef/volume on proxy Deployment → kubelet populates env/file → proxy reads at runtime`.
 
@@ -159,30 +148,31 @@ _Considered and rejected: Option B — separate Containerfile triggered independ
 
 ## Q5: How should the existing `spec.geminiAPIKey` field be handled during migration?
 
-Today, `OpenClawSpec.GeminiAPIKey` is a required `*SecretRef` field (references a user-owned Secret by name/key). The new `ClawCredential` CRD model has no credential fields on the OpenClaw CR. Changing a required field is a breaking API change.
+Today, `ClawSpec.GeminiAPIKey` (formerly `OpenClawSpec`) is a required `*SecretRef` field (references a user-owned Secret by name/key). The new `spec.credentials[]` model replaces it with a generic credential array. Changing a required field is a breaking API change.
 
-**Decision:** Option B — clean break. Remove `geminiAPIKey` from the CRD spec immediately. Users create a `ClawCredential` CR (type `apiKey`) and a Secret instead. The operator is pre-v1 (`v1alpha1`) with no production users yet — there is no one to migrate. No dual code paths, no synthetic credential logic, no legacy support code. One way to configure credentials, period.
+**Decision:** Option B — clean break. Replace `geminiAPIKey` with `spec.credentials[]` immediately. Users add an `apiKey`-type entry in `spec.credentials` referencing their Secret instead. The operator is pre-v1 (`v1alpha1`) with no production users yet — there is no one to migrate. No dual code paths, no synthetic credential logic, no legacy support code. One way to configure credentials, period.
 
 _Considered and rejected: Option A — two-phase deprecation (adds ~20 LOC of synthetic credential code and a dual code path that would exist only to support zero users), Option C — keep `geminiAPIKey` as permanent shortcut (two ways to do the same thing forever)_
 
 ---
 
-## Q6: What status fields and conditions should the OpenClaw CR report?
+## Q6: What status fields and conditions should the Claw CR report?
 
-The current `OpenClawStatus` has `Conditions` (with an `Available` condition) and `URL`. The sketch calls for `gatewayTokenSecretRef`. This is an opportunity to extend and refine the status with more granular conditions.
+The current `ClawStatus` (formerly `OpenClawStatus`) has `Conditions` (with an `Available` condition) and `URL`. The sketch calls for `gatewayTokenSecretRef`. This is an opportunity to extend and refine the status with more granular conditions.
 
 **Decision:** Option B — secret ref + standard conditions.
 
 ```go
-type OpenClawStatus struct {
+type ClawStatus struct {
     GatewayTokenSecretRef string             `json:"gatewayTokenSecretRef,omitempty"`
+    URL                   string             `json:"url,omitempty"`
     Conditions            []metav1.Condition `json:"conditions,omitempty"`
 }
 ```
 
 Conditions following Kubernetes conventions:
 - `Ready` — overall instance health
-- `CredentialsResolved` — all ClawCredential CRs reference valid Secrets
+- `CredentialsResolved` — all `spec.credentials` entries reference valid Secrets
 - `ProxyConfigured` — proxy ConfigMap generated successfully
 
 Standard Kubernetes pattern — works with `kubectl wait --for=condition=Ready`. `gatewayTokenSecretRef` addresses the UI need. Conditions like `CredentialsResolved` give a clear signal when credentials are misconfigured.
@@ -213,7 +203,7 @@ _Considered and rejected: Option B — `kubernetes.io/metadata.name: openshift-i
 
 ## Q8: How does the operator discover the Route hostname for ConfigMap injection?
 
-The OpenClaw ConfigMap has `"allowedOrigins": ["https://OPENCLAW_ROUTE_HOST"]`. The operator needs to replace this placeholder with the actual Route URL. The Route hostname is either explicitly set in `spec.host` or auto-generated by OpenShift after the Route is created.
+The ConfigMap has `"allowedOrigins": ["https://OPENCLAW_ROUTE_HOST"]`. The operator needs to replace this placeholder with the actual Route URL. The Route hostname is either explicitly set in `spec.host` or auto-generated by OpenShift after the Route is created.
 
 **Decision:** Option A — two-pass reconciliation.
 
@@ -235,16 +225,17 @@ The sketch identifies 7 work areas. Some have dependencies; others are independe
 
 **Decision:** Option A (revised) — two phases. Originally three, but Q11 requires `gcp` and `kubernetes` from launch, which need the Go proxy. Phases 2 and 3 merge into a single phase.
 
-**Phase 1** (independent, no API changes):
+**Phase 1** (independent, no credential changes):
+- Rename CRD: `OpenClaw` → `Claw` (Kind, Go types, constants, manifests, tests)
 - Init container security context
 - Ingress NetworkPolicy
 - ~~Route host injection into ConfigMap~~ — already implemented (`injectRouteHostIntoConfigMap`)
 - `gatewayTokenSecretRef` status field + replace `Available` condition with `Ready`/`CredentialsResolved`/`ProxyConfigured`
 
-**Phase 2** (ClawCredential CRD + Go proxy + remove legacy):
-- Remove `spec.geminiAPIKey` from OpenClaw CRD (clean break, Q5)
-- Define `ClawCredential` CRD type (unified, with type discriminator)
-- ClawCredential discovery in controller (single watch + list)
+**Phase 2** (inline credentials + Go proxy + remove legacy):
+- Replace `spec.geminiAPIKey` with `spec.credentials[]` (clean break, Q5)
+- Define credential types (`CredentialSpec`, `CredentialType`, sub-config structs in `api/v1alpha1/`)
+- Credential validation in controller (reads `instance.Spec.Credentials` directly)
 - Go proxy implementation (`apiKey`, `bearer`, `gcp`, `kubernetes` injectors)
 - Container image build pipeline (podman) + OLM bundle integration (Q4)
 - Replace nginx manifests
@@ -261,13 +252,13 @@ _Considered and rejected: original three-phase split (Phase 2 without the Go pro
 
 ---
 
-## Q10: How should the unified ClawCredential CRD validate type-specific fields?
+## Q10: How should the inline credentials validate type-specific fields?
 
-The unified `ClawCredential` CRD has optional sub-structs (`apiKey`, `gcp`, `pathToken`, `oauth2`, `kubernetes`) — only one should be set, matching the `type` field. Invalid combinations (e.g., `type: bearer` with a `gcp` block) need to be caught.
+Each entry in `spec.credentials[]` has optional sub-structs (`apiKey`, `gcp`, `pathToken`, `oauth2`, `kubernetes`) — only one should be set, matching the `type` field. Invalid combinations (e.g., `type: bearer` with a `gcp` block) need to be caught.
 
 **Decision:** Option B — CEL validation rules on the CRD.
 
-Use kubebuilder's CEL validation markers to enforce constraints at the schema level:
+Use kubebuilder's CEL validation markers on the `CredentialSpec` struct to enforce constraints at the schema level:
 
 ```go
 // +kubebuilder:validation:XValidation:rule="self.type != 'apiKey' || has(self.apiKey)",message="apiKey config is required when type is apiKey"
@@ -276,13 +267,13 @@ Use kubebuilder's CEL validation markers to enforce constraints at the schema le
 
 Invalid CRs are rejected at admission time — immediate feedback on `kubectl apply`. No webhook infrastructure needed — CEL runs in the API server. Rules are declarative and live in the CRD schema. Combined with the `type` enum validation that kubebuilder already generates, this catches the most common mistakes at admission time. The controller still validates during reconciliation as defense-in-depth (e.g., checking that the referenced Secret actually exists). Requires Kubernetes 1.25+, available on all supported OpenShift versions.
 
-_Considered and rejected: Option A — controller-level validation only (invalid CRs accepted by API server, user discovers errors only after reconciliation), Option C — validating webhook (certs, service, deployment add significant operational complexity, webhook unavailability blocks all ClawCredential CR operations)_
+_Considered and rejected: Option A — controller-level validation only (invalid CRs accepted by API server, user discovers errors only after reconciliation), Option C — validating webhook (certs, service, deployment add significant operational complexity, webhook unavailability blocks all CR operations)_
 
 ---
 
 ## Q11: Which credential types should be implemented in Phase 2 (initial release)?
 
-The unified `ClawCredential` CRD defines 7 types. The question is which types to support initially.
+The `spec.credentials[]` array supports 7 types. The question is which types to support initially.
 
 **Decision:** Ship `apiKey`, `bearer`, `gcp`, and `kubernetes` in Phase 2. These cover the required use cases:
 
@@ -299,40 +290,40 @@ _Considered and rejected: Option A — `apiKey` and `bearer` only (blocks Vertex
 
 ---
 
-## Q12: How does OpenClaw's traffic reach the proxy instead of going to third-party APIs directly?
+## Q12: How does the gateway's traffic reach the proxy instead of going to third-party APIs directly?
 
-The proxy needs to intercept OpenClaw's outbound HTTP(S) requests, inspect the target domain, inject credentials, and forward upstream. The routing mechanism determines how OpenClaw's traffic is directed to the proxy and how the proxy knows which upstream to target.
+The proxy needs to intercept the gateway's outbound HTTP(S) requests, inspect the target domain, inject credentials, and forward upstream. The routing mechanism determines how the gateway's traffic is directed to the proxy and how the proxy knows which upstream to target.
 
-**Research:** Common pattern: `HTTP_PROXY`/`HTTPS_PROXY` environment variables → HTTP CONNECT tunneling → MITM TLS interception with an operator-managed CA. OpenClaw itself supports `request.proxy: { mode: "env-proxy" }` per provider, which activates undici's `EnvHttpProxyAgent`. Node.js native `fetch` does not honor `HTTP_PROXY` by default, but OpenClaw's guarded fetch paths use undici dispatchers explicitly.
+**Research:** Common pattern: `HTTP_PROXY`/`HTTPS_PROXY` environment variables → HTTP CONNECT tunneling → MITM TLS interception with an operator-managed CA. OpenClaw (the current gateway software) supports `request.proxy: { mode: "env-proxy" }` per provider, which activates undici's `EnvHttpProxyAgent`. Node.js native `fetch` does not honor `HTTP_PROXY` by default, but OpenClaw's guarded fetch paths use undici dispatchers explicitly.
 
 **Decision:** Option A — CONNECT + MITM with operator-managed CA. The same proven pattern used by paude-proxy, OpenShell, and onecli.
 
 **Mechanism:**
 
-1. The operator sets `HTTP_PROXY=http://openclaw-proxy-svc:8080` and `HTTPS_PROXY=http://openclaw-proxy-svc:8080` on the OpenClaw Deployment
+1. The operator sets `HTTP_PROXY=http://openclaw-proxy-svc:8080` and `HTTPS_PROXY=http://openclaw-proxy-svc:8080` on the gateway Deployment
 2. The operator generates a CA cert+key pair, stores it in a Secret (`openclaw-proxy-ca`)
-3. The CA cert is mounted into the OpenClaw pod; `NODE_EXTRA_CA_CERTS` points to it (additive — supplements system CAs)
-4. OpenClaw uses real `https://` API URLs (e.g., `https://generativelanguage.googleapis.com`) — the standard SDK defaults
+3. The CA cert is mounted into the gateway pod; `NODE_EXTRA_CA_CERTS` points to it (additive — supplements system CAs)
+4. The gateway uses real `https://` API URLs (e.g., `https://generativelanguage.googleapis.com`) — the standard SDK defaults
 5. The HTTP client (undici `EnvHttpProxyAgent`) sends `CONNECT generativelanguage.googleapis.com:443` to the proxy
 6. The proxy accepts the CONNECT, generates a leaf cert for the target domain signed by its CA, TLS-terminates the client side
 7. On the decrypted stream, the proxy reads the HTTP request, matches the Host header against configured domain patterns, strips auth headers, injects credentials
 8. The proxy opens an HTTPS connection to the real upstream and forwards the request
-9. NetworkPolicy prevents OpenClaw from reaching the internet directly (even if `HTTP_PROXY` were somehow bypassed)
+9. NetworkPolicy prevents the gateway from reaching the internet directly (even if `HTTP_PROXY` were somehow bypassed)
 
 **CA lifecycle:**
 - Generated once at first reconciliation (~30 LOC using Go's `crypto/x509` + `crypto/ecdsa`)
 - Stored in Secret `openclaw-proxy-ca` with owner reference
 - CA cert+key mounted into proxy pod (for signing leaf certs)
-- CA cert only mounted into OpenClaw pod + `NODE_EXTRA_CA_CERTS`
+- CA cert only mounted into gateway pod + `NODE_EXTRA_CA_CERTS`
 - Long validity (5 years) — cluster-internal only, not externally trusted
 - Operator checks expiry during reconciliation, regenerates if nearing expiration
 - On OpenShift, the proxy's outbound trust store uses `config.openshift.io/inject-trusted-cabundle` to handle corporate proxy CAs
 
-**OpenClaw configuration changes:**
+**Gateway configuration changes:**
 - `models.providers.*.baseUrl` uses real API URLs (e.g., `https://generativelanguage.googleapis.com/v1beta`) — no path-prefix routing
 - `models.providers.*.apiKey` uses placeholder values (proxy replaces them)
 - `models.providers.*.request.proxy.mode: "env-proxy"` activates undici's proxy agent for the guarded model fetch paths
-- The operator generates this config from ClawCredential CRs
+- The operator generates this config from `spec.credentials`
 
 **Why MITM, not plain HTTP:**
 - MITM lets OpenClaw use real `https://` URLs — standard SDK defaults work unchanged
