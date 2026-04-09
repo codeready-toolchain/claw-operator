@@ -191,4 +191,30 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 			}, timeout, interval).Should(BeTrue())
 		})
 	})
+
+	It("should fail to configure proxy deployment if the Secret does not exist", func() {
+		By("Creating OpenClaw instance")
+		instance := &openclawv1alpha1.OpenClaw{}
+		instance.Name = OpenClawInstanceName
+		instance.Namespace = namespace
+		instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+			Name: apiKeySecret,
+			Key:  apiKeySecretKey,
+		}
+		Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+
+		By("Reconciling the OpenClaw instance")
+		reconciler := &OpenClawResourceReconciler{
+			Client: k8sClient,
+			Scheme: k8sClient.Scheme(),
+		}
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{
+				Name:      OpenClawInstanceName,
+				Namespace: namespace,
+			},
+		})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("failed to stamp Secret version annotation: failed to get Secret test-gemini-secret-ref for version stamping"))
+	})
 })

@@ -485,10 +485,6 @@ func (r *OpenClawResourceReconciler) stampSecretVersionAnnotation(ctx context.Co
 	}
 
 	if err := r.Get(ctx, secretKey, secret); err != nil {
-		// If Secret doesn't exist, skip stamping - pods will fail to start with clear error
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
 		return fmt.Errorf("failed to get Secret %s for version stamping: %w", secretRef.Name, err)
 	}
 
