@@ -127,11 +127,30 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
+		BeforeEach(func() {
+			// Ensure cleanup before test starts (in case previous test didn't clean up)
+			instance := &openclawv1alpha1.OpenClaw{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance); err == nil {
+				_ = k8sClient.Delete(ctx, instance)
+				// Wait for deletion to complete
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
+					return err != nil
+				}, timeout, interval).Should(BeTrue())
+			}
+		})
+
 		AfterEach(func() {
 			// Cleanup resources
 			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance); err == nil {
+				_ = k8sClient.Delete(ctx, instance)
+				// Wait for deletion to complete
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
+					return err != nil
+				}, timeout, interval).Should(BeTrue())
+			}
 
 			secret := &corev1.Secret{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)

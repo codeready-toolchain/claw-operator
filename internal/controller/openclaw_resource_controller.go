@@ -710,6 +710,19 @@ func encodeFragmentValue(v string) string {
 	return url.QueryEscape(v)
 }
 
+// buildOpenClawURL constructs the OpenClaw status URL by appending the gateway token
+// as a URL fragment if both routeURL and token are provided.
+// Returns empty string if routeURL is empty.
+func buildOpenClawURL(routeURL, token string) string {
+	if routeURL == "" {
+		return ""
+	}
+	if token == "" {
+		return routeURL
+	}
+	return routeURL + "#token=" + encodeFragmentValue(token)
+}
+
 // updateStatus updates the OpenClaw status with current deployment conditions
 func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
 	// Check deployment readiness
@@ -723,20 +736,13 @@ func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance 
 
 	// Populate URL field only when both deployments are ready
 	if ready {
-		url, err := r.getRouteURL(ctx, instance)
+		routeURL, err := r.getRouteURL(ctx, instance)
 		if err != nil {
 			return fmt.Errorf("failed to get Route URL: %w", err)
 		}
 
-		// Append gateway token as URL fragment if available
-		if url != "" {
-			token := r.getGatewayToken(ctx, instance.Namespace)
-			if token != "" {
-				url = url + "#token=" + encodeFragmentValue(token)
-			}
-		}
-
-		instance.Status.URL = url
+		token := r.getGatewayToken(ctx, instance.Namespace)
+		instance.Status.URL = buildOpenClawURL(routeURL, token)
 	} else {
 		// Clear URL when deployments are not ready
 		instance.Status.URL = ""

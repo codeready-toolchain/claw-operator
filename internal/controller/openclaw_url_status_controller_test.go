@@ -283,16 +283,65 @@ var _ = Describe("OpenClaw URL Status Field", func() {
 	})
 
 	Context("When testing URL construction with token fragment", func() {
-		It("should append token fragment to URL when available", func() {
-			Skip("Route CRD not available in envtest - requires e2e test with OpenShift cluster to verify full URL construction with Route host")
-		})
+		type urlTestCase struct {
+			name     string
+			routeURL string
+			token    string
+			expected string
+		}
 
-		It("should construct URL without token fragment when gateway secret is missing", func() {
-			Skip("Route CRD not available in envtest - requires e2e test with OpenShift cluster to verify URL construction without token")
-		})
+		DescribeTable("URL construction scenarios",
+			func(tc urlTestCase) {
+				result := buildOpenClawURL(tc.routeURL, tc.token)
+				Expect(result).To(Equal(tc.expected))
+			},
+			Entry("should append token fragment when both route and token are provided",
+				urlTestCase{
+					name:     "with route and token",
+					routeURL: "https://openclaw-route.apps.example.com",
+					token:    "abc123def456",
+					expected: "https://openclaw-route.apps.example.com#token=abc123def456",
+				}),
+			Entry("should return route URL without fragment when token is empty",
+				urlTestCase{
+					name:     "with route but no token",
+					routeURL: "https://openclaw-route.apps.example.com",
+					token:    "",
+					expected: "https://openclaw-route.apps.example.com",
+				}),
+			Entry("should return empty string when route URL is empty",
+				urlTestCase{
+					name:     "no route URL",
+					routeURL: "",
+					token:    "abc123def456",
+					expected: "",
+				}),
+			Entry("should return empty string when both route and token are empty",
+				urlTestCase{
+					name:     "no route or token",
+					routeURL: "",
+					token:    "",
+					expected: "",
+				}),
+			Entry("should percent-encode special characters in token",
+				urlTestCase{
+					name:     "token with special characters",
+					routeURL: "https://openclaw-route.apps.example.com",
+					token:    "token+with=special&chars#fragment",
+					expected: "https://openclaw-route.apps.example.com#token=token%2Bwith%3Dspecial%26chars%23fragment",
+				}),
+		)
 
 		It("should follow format https://<route-host>#token=<gateway-token>", func() {
-			Skip("Route CRD not available in envtest - requires e2e test with OpenShift cluster to verify full URL format")
+			By("Constructing URL with typical OpenShift route and hex token")
+			routeURL := "https://openclaw-default.apps.cluster.example.com"
+			token := "64chartoken1234567890abcdef64chartoken1234567890abcdef123456"
+
+			result := buildOpenClawURL(routeURL, token)
+
+			Expect(result).To(Equal("https://openclaw-default.apps.cluster.example.com#token=64chartoken1234567890abcdef64chartoken1234567890abcdef123456"))
+			Expect(result).To(HavePrefix("https://"))
+			Expect(result).To(ContainSubstring("#token="))
 		})
 	})
 })
