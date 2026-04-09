@@ -678,6 +678,31 @@ func setAvailableCondition(instance *openclawv1alpha1.OpenClaw, ready bool, pend
 	})
 }
 
+// getGatewayToken fetches the gateway token from the openclaw-secrets Secret and Base64-decodes it.
+// Returns the token string, or empty string if the Secret cannot be read.
+func (r *OpenClawResourceReconciler) getGatewayToken(ctx context.Context, namespace string) string {
+	logger := log.FromContext(ctx)
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Namespace: namespace,
+		Name:      OpenClawGatewaySecretName,
+	}, secret); err != nil {
+		logger.Error(err, "Failed to get gateway secret for status URL", "secret", OpenClawGatewaySecretName)
+		return ""
+	}
+
+	tokenBytes, exists := secret.Data[GatewayTokenKeyName]
+	if !exists || len(tokenBytes) == 0 {
+		logger.Info("Gateway token not found in secret", "secret", OpenClawGatewaySecretName, "key", GatewayTokenKeyName)
+		return ""
+	}
+
+	// Secret data is already raw bytes (not Base64-encoded in the Data field)
+	// Kubernetes automatically handles Base64 decoding when accessing Secret.Data
+	return string(tokenBytes)
+}
+
 // updateStatus updates the OpenClaw status with current deployment conditions
 func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
 	// Check deployment readiness
@@ -695,6 +720,15 @@ func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance 
 		if err != nil {
 			return fmt.Errorf("failed to get Route URL: %w", err)
 		}
+
+		// Append gateway token as URL fragment if available
+		if url != "" {
+			token := r.getGatewayToken(ctx, instance.Namespace)
+			if token != "" {
+				url = url + "#token=" + token
+			}
+		}
+
 		instance.Status.URL = url
 	} else {
 		// Clear URL when deployments are not ready

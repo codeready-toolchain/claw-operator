@@ -181,4 +181,118 @@ var _ = Describe("OpenClaw URL Status Field", func() {
 			Skip("Route CRD not available in envtest - requires e2e test with OpenShift cluster")
 		})
 	})
+
+	Context("When testing gateway token retrieval", func() {
+		ctx := context.Background()
+
+		BeforeEach(func() {
+			// Ensure cleanup of any existing gateway secret before each test
+			gatewaySecret := &corev1.Secret{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret); err == nil {
+				_ = k8sClient.Delete(ctx, gatewaySecret)
+				// Wait for deletion to complete
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret)
+					return err != nil
+				}, timeout, interval).Should(BeTrue())
+			}
+		})
+
+		AfterEach(func() {
+			// Cleanup gateway secret
+			gatewaySecret := &corev1.Secret{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret)
+			_ = k8sClient.Delete(ctx, gatewaySecret)
+		})
+
+		It("should retrieve and decode gateway token from openclaw-secrets", func() {
+			By("Creating gateway secret with token")
+			gatewaySecret := &corev1.Secret{}
+			gatewaySecret.Name = OpenClawGatewaySecretName
+			gatewaySecret.Namespace = namespace
+			testToken := "test-gateway-token-123456"
+			gatewaySecret.Data = map[string][]byte{
+				GatewayTokenKeyName: []byte(testToken),
+			}
+			Expect(k8sClient.Create(ctx, gatewaySecret)).Should(Succeed())
+
+			By("Calling getGatewayToken method")
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+			token := reconciler.getGatewayToken(ctx, namespace)
+
+			By("Verifying token is correctly retrieved")
+			Expect(token).To(Equal(testToken))
+		})
+
+		It("should return empty string when gateway secret does not exist", func() {
+			By("Calling getGatewayToken without creating secret")
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+			token := reconciler.getGatewayToken(ctx, namespace)
+
+			By("Verifying empty string is returned")
+			Expect(token).To(BeEmpty())
+		})
+
+		It("should return empty string when token key is missing from secret", func() {
+			By("Creating gateway secret without token key")
+			gatewaySecret := &corev1.Secret{}
+			gatewaySecret.Name = OpenClawGatewaySecretName
+			gatewaySecret.Namespace = namespace
+			gatewaySecret.Data = map[string][]byte{
+				"other-key": []byte("other-value"),
+			}
+			Expect(k8sClient.Create(ctx, gatewaySecret)).Should(Succeed())
+
+			By("Calling getGatewayToken method")
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+			token := reconciler.getGatewayToken(ctx, namespace)
+
+			By("Verifying empty string is returned")
+			Expect(token).To(BeEmpty())
+		})
+
+		It("should return empty string when token value is empty", func() {
+			By("Creating gateway secret with empty token")
+			gatewaySecret := &corev1.Secret{}
+			gatewaySecret.Name = OpenClawGatewaySecretName
+			gatewaySecret.Namespace = namespace
+			gatewaySecret.Data = map[string][]byte{
+				GatewayTokenKeyName: []byte(""),
+			}
+			Expect(k8sClient.Create(ctx, gatewaySecret)).Should(Succeed())
+
+			By("Calling getGatewayToken method")
+			reconciler := &OpenClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+			token := reconciler.getGatewayToken(ctx, namespace)
+
+			By("Verifying empty string is returned")
+			Expect(token).To(BeEmpty())
+		})
+	})
+
+	Context("When testing URL construction with token fragment", func() {
+		It("should append token fragment to URL when available", func() {
+			Skip("Route CRD not available in envtest - requires e2e test with OpenShift cluster to verify full URL construction with Route host")
+		})
+
+		It("should construct URL without token fragment when gateway secret is missing", func() {
+			Skip("Route CRD not available in envtest - requires e2e test with OpenShift cluster to verify URL construction without token")
+		})
+
+		It("should follow format https://<route-host>#token=<gateway-token>", func() {
+			Skip("Route CRD not available in envtest - requires e2e test with OpenShift cluster to verify full URL format")
+		})
+	})
 })
