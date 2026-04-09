@@ -62,19 +62,19 @@ The operator generates a JSON config describing routes (domain → injector type
       "domain": ".googleapis.com",
       "injector": "api_key",
       "header": "x-goog-api-key",
-      "envVar": "GEMINI_API_KEY"
+      "envVar": "CRED_GEMINI"
     },
     {
       "domain": "api.anthropic.com",
       "injector": "api_key",
       "header": "x-api-key",
-      "envVar": "ANTHROPIC_API_KEY",
+      "envVar": "CRED_ANTHROPIC",
       "defaultHeaders": { "anthropic-version": "2023-06-01" }
     },
     {
       "domain": "api.github.com",
       "injector": "bearer",
-      "envVar": "GITHUB_TOKEN"
+      "envVar": "CRED_GITHUB"
     }
   ]
 }
@@ -230,16 +230,15 @@ The sketch identifies 7 work areas. Some have dependencies; others are independe
 - Init container security context
 - Ingress NetworkPolicy
 - ~~Route host injection into ConfigMap~~ — already implemented (`injectRouteHostIntoConfigMap`)
-- `gatewayTokenSecretRef` status field + replace `Available` condition with `Ready`/`CredentialsResolved`/`ProxyConfigured`
+- `gatewayTokenSecretRef` status field + rename `Available` → `Ready` (same semantics; `CredentialsResolved`/`ProxyConfigured` deferred to Phase 2)
 
 **Phase 2** (inline credentials + Go proxy + remove legacy):
-- Replace `spec.geminiAPIKey` with `spec.credentials[]` (clean break, Q5)
-- Define credential types (`CredentialSpec`, `CredentialType`, sub-config structs in `api/v1alpha1/`)
+- Define `spec.credentials[]` types and replace `spec.geminiAPIKey` (clean break, Q5)
 - Credential validation in controller (reads `instance.Spec.Credentials` directly)
 - Go proxy implementation (`apiKey`, `bearer`, `gcp`, `kubernetes` injectors)
 - Container image build pipeline (podman) + OLM bundle integration (Q4)
-- Replace nginx manifests
-- Remove `configureProxyDeployment` + `stampSecretVersionAnnotation`
+- Replace nginx manifests + remove `configureProxyDeployment`/`stampSecretVersionAnnotation`
+- Add `CredentialsResolved` and `ProxyConfigured` status conditions
 
 **Phase 3** (remaining types + cleanup):
 - Add `pathToken`, `oauth2`, `none` injectors to the Go proxy

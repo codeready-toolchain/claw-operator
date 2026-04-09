@@ -121,21 +121,21 @@ _Considered and rejected: Option B — restrict proxy egress by IP/CIDR (LLM API
 
 ## Q4: Operator RBAC
 
-The operator currently has a `ClusterRole` with broad permissions. This will need a review to ensure least-privilege (only permissions the controller actually uses), but it's not a design question — it's a housekeeping task to do once the new credential CRDs and proxy architecture are implemented, since those changes will alter the required permission set.
+The operator currently has a `ClusterRole` with broad permissions. This will need a review to ensure least-privilege (only permissions the controller actually uses), but it's not a design question — it's a housekeeping task to do once the inline credentials and proxy architecture are implemented, since those changes will alter the required permission set.
 
-**Decision:** Deferred. Review and trim operator RBAC after Q2 (credential CRDs) and Q7 (proxy architecture) are implemented.
+**Decision:** Deferred. Review and trim operator RBAC after Q2 (inline credentials) and Q7 (proxy architecture) are implemented.
 
 ---
 
 ## Q5: Which container/supply-chain hardening items should we prioritize?
 
-Several minor gaps exist: init container security context, image digest pinning, Route TLS settings, and the `OPENCLAW_ROUTE_HOST` placeholder.
+Several minor gaps exist: init container security context, image digest pinning, and Route TLS settings.
 
-**Decision:** Two quick wins:
+**Decision:** One remaining quick win:
 
 1. **Init container security context** — the busybox init container (`init-config`) has no explicit `securityContext`, relying on image defaults. The main container is fully hardened (non-root, read-only root FS, drop all caps, seccomp RuntimeDefault). The init container needs the same — required for Pod Security Admission restricted profile compliance.
 
-2. **Route host placeholder** — the ConfigMap has `"allowedOrigins": ["https://OPENCLAW_ROUTE_HOST"]` which is never substituted with the real hostname, breaking CORS protection. The operator creates the Route and knows the hostname — it should inject it into the ConfigMap during reconciliation.
+2. ~~**Route host placeholder**~~ — already implemented. The operator now injects the real Route hostname into the ConfigMap's `allowedOrigins` during reconciliation via `injectRouteHostIntoConfigMap()` (two-pass: apply Route → read status → patch ConfigMap).
 
 _Deferred: image digest pinning (good practice but needs CI automation first), Route TLS version/cipher config (OpenShift router enforces cluster-wide defaults)_
 

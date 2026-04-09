@@ -68,7 +68,7 @@ Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM) ──HTTPS──�
                       └─ Unknown/disallowed domains → 403
 ```
 
-Port paude-proxy's credential injection layer (~500 LOC, MIT-licensed) as a starting point. The proxy derives its routing configuration from the credential CRDs — the operator reads them and generates the proxy's config. Estimated ~800-1000 LOC for the full component.
+Port paude-proxy's credential injection layer (~500 LOC, MIT-licensed) as a starting point. The proxy derives its routing configuration from `spec.credentials` — the operator reads the credential entries and generates the proxy's config. Estimated ~800-1000 LOC for the full component.
 
 ### 4. Network Isolation (Q3)
 
@@ -84,7 +84,7 @@ Deferred: image digest pinning (needs CI automation), Route TLS config (cluster-
 
 ### 6. Operator RBAC (Q4)
 
-Deferred until credential CRDs and proxy changes are implemented, since those alter the required permission set. Review and trim to least-privilege at that point.
+Deferred until inline credentials and proxy changes are implemented, since those alter the required permission set. Review and trim to least-privilege at that point.
 
 ### 7. Application-Layer Security (Q6)
 

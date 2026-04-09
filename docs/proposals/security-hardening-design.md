@@ -135,19 +135,19 @@ Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inje
       "domain": ".googleapis.com",
       "injector": "api_key",
       "header": "x-goog-api-key",
-      "envVar": "GEMINI_API_KEY"
+      "envVar": "CRED_GEMINI"
     },
     {
       "domain": "api.anthropic.com",
       "injector": "api_key",
       "header": "x-api-key",
-      "envVar": "ANTHROPIC_API_KEY",
+      "envVar": "CRED_ANTHROPIC",
       "defaultHeaders": { "anthropic-version": "2023-06-01" }
     },
     {
       "domain": "api.github.com",
       "injector": "bearer",
-      "envVar": "GITHUB_TOKEN"
+      "envVar": "CRED_GITHUB"
     }
   ]
 }
@@ -347,20 +347,19 @@ The init container writes to `/home/node/.openclaw` (PVC-mounted), so `readOnlyR
 2. **Init container security context** — single manifest change
 3. ~~**Route host injection**~~ — already implemented (`injectRouteHostIntoConfigMap` with two-pass reconciliation via `applyRouteOnly` → `getRouteURL`)
 4. **Ingress NetworkPolicy** — new manifest in `internal/assets/manifests/`
-5. **Status fields** — add `gatewayTokenSecretRef`, replace `Available` condition with `Ready`/`CredentialsResolved`/`ProxyConfigured`
+5. **Status fields** — add `gatewayTokenSecretRef`, rename `Available` condition to `Ready` (same semantics for now; `CredentialsResolved` and `ProxyConfigured` added in Phase 2 when those subsystems exist)
 
 ### Phase 2: Inline credentials + Go proxy
 
-6. **Replace `spec.geminiAPIKey` with `spec.credentials[]`** — clean break, no deprecation (no production users yet)
-7. **Define credential types** — `CredentialSpec`, `CredentialType`, sub-config structs in `api/v1alpha1/openclaw_types.go` + CEL validation + `make manifests && make generate`
-8. **Credential validation** — controller reads `instance.Spec.Credentials` directly, validates Secrets exist
-9. **Proxy CA management** — `applyProxyCA()` generates/stores CA cert+key in Secret, mounts into proxy and gateway pods (Q12)
-10. **Proxy config generation** — operator builds proxy config JSON from `spec.credentials`
-11. **Build the Go proxy** — CONNECT + MITM handler, leaf cert generation, `apiKey`/`bearer`/`gcp`/`kubernetes` injectors; port paude-proxy injection layer, add health endpoint, config-driven routing
-12. **Gateway config generation** — operator generates `openclaw.json` from `spec.credentials` with real `https://` base URLs, placeholder API keys, and `request.proxy.mode: "env-proxy"`; sets `HTTP_PROXY`/`HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` env vars on gateway Deployment
-13. **Proxy container image** — Containerfile, CI pipeline (podman), OLM bundle with `relatedImages` + `PROXY_IMAGE` env var
-14. **Replace nginx manifests** — update `proxy-deployment.yaml`, `proxy-configmap.yaml`, remove nginx entrypoint
-15. **Remove `configureProxyDeployment`** — credentials now flow through `spec.credentials` → proxy config
+6. **Define `spec.credentials[]` types and replace `spec.geminiAPIKey`** — `CredentialSpec`, `CredentialType`, sub-config structs in `api/v1alpha1/` + CEL validation + `make manifests && make generate`; clean break, no deprecation (no production users)
+7. **Credential validation** — controller reads `instance.Spec.Credentials` directly, validates Secrets exist
+8. **Proxy CA management** — `applyProxyCA()` generates/stores CA cert+key in Secret, mounts into proxy and gateway pods (Q12)
+9. **Proxy config generation** — operator builds proxy config JSON from `spec.credentials`
+10. **Build the Go proxy** — CONNECT + MITM handler, leaf cert generation, `apiKey`/`bearer`/`gcp`/`kubernetes` injectors; port paude-proxy injection layer, add health endpoint, config-driven routing
+11. **Gateway config generation** — operator generates `openclaw.json` from `spec.credentials` with real `https://` base URLs, placeholder API keys, and `request.proxy.mode: "env-proxy"`; sets `HTTP_PROXY`/`HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` env vars on gateway Deployment
+12. **Proxy container image** — Containerfile, CI pipeline (podman), OLM bundle with `relatedImages` + `PROXY_IMAGE` env var
+13. **Replace nginx manifests** — update `proxy-deployment.yaml`, `proxy-configmap.yaml`, remove nginx entrypoint and `configureProxyDeployment()`/`stampSecretVersionAnnotation()` code
+14. **Status conditions** — add `CredentialsResolved` and `ProxyConfigured` conditions (subsystems now exist)
 
 ### Phase 3: Remaining types + cleanup
 
@@ -381,7 +380,7 @@ All implementation questions are resolved. See [security-hardening-impl-question
 | Q3 | Proxy config format | JSON ConfigMap + hybrid secrets (env vars + volume for GCP) |
 | Q4 | Proxy image build | `Containerfile.proxy`, podman, OLM bundle with `relatedImages` |
 | Q5 | `spec.geminiAPIKey` migration | Clean break — replaced by `spec.credentials[]` (no production users) |
-| Q6 | Status fields | `gatewayTokenSecretRef` + conditions (`Ready`, `CredentialsResolved`, `ProxyConfigured`) |
+| Q6 | Status fields | `gatewayTokenSecretRef` + `Ready` (Phase 1); `CredentialsResolved`, `ProxyConfigured` (Phase 2) |
 | Q7 | Ingress NP router labels | `policy-group.network.openshift.io/ingress` + conditional skip on non-OpenShift |
 | Q8 | Route hostname discovery | Two-pass reconciliation, `Ready=False` until resolved |
 | Q9 | Implementation phasing | Phase 1 (quick wins + CRD rename) → Phase 2 (inline credentials + Go proxy) → Phase 3 (remaining types + cleanup) |
