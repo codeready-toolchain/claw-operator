@@ -32,8 +32,10 @@ import (
 
 var _ = Describe("OpenClawConfigMap Controller", func() {
 	const (
-		namespace = "default"
-		apiKey    = "test-api-key"
+		namespace       = "default"
+		apiKey          = "test-api-key"
+		apiKeySecret    = "test-gemini-secret"
+		apiKeySecretKey = "api-key"
 	)
 
 	Context("When reconciling an OpenClaw named 'instance'", func() {
@@ -46,6 +48,11 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 			_ = k8sClient.Delete(ctx, instance)
 
+			// Cleanup API key Secret
+			secret := &corev1.Secret{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
+			_ = k8sClient.Delete(ctx, secret)
+
 			// Cleanup configmap
 			configMap := &corev1.ConfigMap{}
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace}, configMap)
@@ -57,7 +64,14 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			instance.Spec.APIKey = apiKey
+			// Create API key Secret
+			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: apiKeySecret,
+				Key:  apiKeySecretKey,
+			}
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
@@ -91,7 +105,14 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			instance.Spec.APIKey = apiKey
+			// Create API key Secret
+			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: apiKeySecret,
+				Key:  apiKeySecretKey,
+			}
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler
@@ -147,7 +168,14 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
-			instance.Spec.APIKey = apiKey
+			// Create API key Secret
+			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: apiKeySecret,
+				Key:  apiKeySecretKey,
+			}
 			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
 
 			// Setup reconciler

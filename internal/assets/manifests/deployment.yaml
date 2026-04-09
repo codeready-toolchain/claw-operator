@@ -18,6 +18,9 @@ spec:
     spec:
       automountServiceAccountToken: false
       securityContext:
+        runAsUser: 65532
+        runAsNonRoot: true
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       initContainers:

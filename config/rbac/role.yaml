@@ -67,6 +67,14 @@ rules:
   verbs:
   - update
 - apiGroups:
+  - openclaw.sandbox.redhat.com
+  resources:
+  - openclaws/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
   - route.openshift.io
   resources:
   - routes

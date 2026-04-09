@@ -24,6 +24,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -82,3 +84,47 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// createTestAPIKeySecret creates a test Secret containing an API key for use in tests
+// It ensures any existing Secret with the same name is deleted first to avoid conflicts
+func createTestAPIKeySecret(name, namespace, key, value string) *corev1.Secret { //nolint:unparam
+	// Delete any existing Secret with this name (ignore errors)
+	existing := &corev1.Secret{}
+	existing.Name = name
+	existing.Namespace = namespace
+	_ = k8sClient.Delete(context.Background(), existing)
+
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			key: []byte(value),
+		},
+	}
+}
+
+// createTestGatewaySecret creates a test Secret containing a gateway token for use in tests
+// It ensures any existing Secret with the same name is deleted first to avoid conflicts
+func createTestGatewaySecret(name, namespace string) *corev1.Secret { //nolint:unparam
+	// Delete any existing Secret with this name (ignore errors)
+	existing := &corev1.Secret{}
+	existing.Name = name
+	existing.Namespace = namespace
+	_ = k8sClient.Delete(context.Background(), existing)
+
+	token, err := generateGatewayToken()
+	Expect(err).NotTo(HaveOccurred())
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			GatewayTokenKeyName: []byte(token),
+		},
+	}
+}
