@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -703,6 +704,12 @@ func (r *OpenClawResourceReconciler) getGatewayToken(ctx context.Context, namesp
 	return string(tokenBytes)
 }
 
+// encodeFragmentValue percent-encodes a string for safe use in a URL fragment.
+// This ensures special characters don't break URL parsing.
+func encodeFragmentValue(v string) string {
+	return url.QueryEscape(v)
+}
+
 // updateStatus updates the OpenClaw status with current deployment conditions
 func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
 	// Check deployment readiness
@@ -725,7 +732,7 @@ func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance 
 		if url != "" {
 			token := r.getGatewayToken(ctx, instance.Namespace)
 			if token != "" {
-				url = url + "#token=" + token
+				url = url + "#token=" + encodeFragmentValue(token)
 			}
 		}
 
