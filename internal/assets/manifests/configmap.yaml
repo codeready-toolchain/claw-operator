@@ -16,7 +16,7 @@ data:
         },
         "controlUi": {
           "enabled": true,
-          "allowedOrigins": ["https://OPENCLAW_ROUTE_HOST"]
+          "allowedOrigins": ["OPENCLAW_ROUTE_HOST"]
         },
         "trustedProxies": ["10.0.0.0/8", "172.16.0.0/12"]
       },

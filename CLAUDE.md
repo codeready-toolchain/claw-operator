@@ -55,27 +55,30 @@ make docker-build IMG=<registry>/openclaw-operator:tag
 
 ### Unified Kustomize-based controller
 
-The operator uses a **single unified controller** that manages all resources atomically using Kustomize and server-side apply:
+The operator uses a **single unified controller** that manages all resources using Kustomize and server-side apply:
 
 **OpenClawResourceReconciler** (`internal/controller/openclaw_resource_controller.go`):
 - Reconciles `OpenClaw` CRs named exactly `"instance"` (skips all others)
 - Creates gateway Secret (`openclaw-secrets`) with randomly-generated authentication token
 - Validates user-provided Secret containing Gemini API key (referenced in CR's `geminiAPIKey` field)
 - Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (2), proxy Deployment/ConfigMap, and Route (OpenShift only)
-- All resources created atomically as a unit (no ordering dependencies or race conditions)
+- Uses **three-phase reconciliation** to dynamically inject Route host into ConfigMap for CORS configuration
 - Uses server-side apply for idempotent, conflict-free resource management
 - Automatically labels all resources with `app.kubernetes.io/name: openclaw`
 - Gracefully skips resources whose CRDs aren't registered (e.g., Route on vanilla Kubernetes)
 - Updates status conditions based on Deployment readiness after applying resources
 
 **Key benefits:**
-- Simplified codebase: 1 controller (~200 LOC) vs 3 separate controllers (~400 LOC)
-- Atomic updates: all-or-nothing resource creation prevents partial state
+- Simplified codebase: 1 controller managing all resources
+- Dynamic CORS configuration: Route host automatically injected into ConfigMap at deployment time
 - Field ownership: server-side apply tracks which controller owns which fields
 - Consistent labeling: queryable with `kubectl get all -l app.kubernetes.io/name=openclaw`
+- Graceful fallback: localhost CORS origin on vanilla Kubernetes (no Route CRD)
 - Future-proof: adding new resources only requires updating kustomization.yaml
 
 ### Reconciliation flow
+
+The controller uses a **three-phase reconciliation** approach to enable dynamic Route host injection into ConfigMap:
 
 ```
 Reconcile(ctx, req) called
@@ -84,6 +87,7 @@ Reconcile(ctx, req) called
   ↓
 2. Filter by name (only "instance")
   ↓
+PHASE 1: Gateway Secret
 3. applyGatewaySecret(ctx, instance)
    ├─ Check if openclaw-secrets Secret already exists
    ├─ If exists and has OPENCLAW_GATEWAY_TOKEN, preserve existing token
@@ -92,7 +96,22 @@ Reconcile(ctx, req) called
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply Secret (Patch with Apply)
   ↓
-4. applyKustomizedResources(ctx, instance)
+PHASE 2: Route Application and Host Resolution
+4. applyRouteOnly(ctx, instance)
+   ├─ Build Kustomize manifests
+   ├─ Filter for Route resources only
+   ├─ Set namespace and owner reference
+   └─ Server-side apply Route (skips with NoMatchError on vanilla Kubernetes)
+  ↓
+5. getRouteURL(ctx, instance)
+   ├─ Fetch Route resource
+   ├─ Extract .status.ingress[0].host (authoritative source populated by OpenShift router)
+   ├─ If status not yet populated: requeue with 5s backoff
+   ├─ If Route CRD not registered: continue with empty routeHost (localhost fallback)
+   └─ Return https://<route-host> or empty string
+  ↓
+PHASE 3: ConfigMap Injection and Remaining Resources
+6. buildKustomizedObjects(ctx, instance)
    ├─ Build Kustomize in-memory from embedded manifests
    ├─ Parse YAML into unstructured objects
    ├─ configureProxyDeployment(objects, instance)
@@ -106,31 +125,60 @@ Reconcile(ctx, req) called
    │  ├─ Find openclaw-proxy Deployment in parsed objects
    │  ├─ Add annotation to pod template: openclaw.sandbox.redhat.com/gemini-secret-version=<ResourceVersion>
    │  └─ This triggers pod restarts when Secret data changes (ResourceVersion updates), not just Secret reference changes
-   ├─ Set namespace = instance.Namespace on each resource
-   ├─ Set owner reference (for garbage collection)
-   └─ Server-side apply each resource (Patch with Apply)
+   └─ Return parsed objects
   ↓
-5. updateStatus(ctx, instance)
+7. injectRouteHostIntoConfigMap(objects, routeHost)
+   ├─ Find openclaw-config ConfigMap in objects
+   ├─ Extract data["openclaw.json"] string
+   ├─ Replace "OPENCLAW_ROUTE_HOST" placeholder with routeHost (https://...)
+   ├─ If routeHost is empty (vanilla Kubernetes): use "http://localhost:18789" fallback
+   └─ Set modified JSON back into ConfigMap
+  ↓
+8. Filter for remaining resources (kind != "Route")
+  ↓
+9. Set namespace and owner references on remaining objects
+  ↓
+10. applyResources(ctx, remainingObjects)
+   └─ Server-side apply each resource (ConfigMap, Deployments, Services, NetworkPolicies)
+  ↓
+11. updateStatus(ctx, instance)
    ├─ Fetch openclaw Deployment and check Available condition
    ├─ Fetch openclaw-proxy Deployment and check Available condition
    ├─ Set OpenClaw Available condition based on both deployment statuses
+   ├─ Populate instance.Status.URL with Route URL (if available)
    ├─ Update LastTransitionTime only if condition status changes
    └─ Update status via status subresource (client.Status().Update)
   ↓
-6. Return success
+12. Return success
 ```
 
+**Route Status Polling:**
+- If Route is applied but `.status.ingress[0].host` is not yet populated, reconciliation requeues with 5-second backoff
+- OpenShift router typically populates Route status within 5-10 seconds
+- Indefinite requeue: cluster-level Route issues should be diagnosed via `kubectl describe route openclaw`
+
+**Vanilla Kubernetes Fallback:**
+- On clusters without Route CRD (vanilla Kubernetes), Route application fails with `meta.IsNoMatchError`
+- Controller logs "Route CRD not registered, using localhost fallback for CORS"
+- ConfigMap receives `http://localhost:18789` as `allowedOrigins` value
+- Control UI accessible via port-forward: `kubectl port-forward svc/openclaw 18789:18789`
+
 **Key methods:**
-- `Reconcile()` — main entry point, orchestration logic
+- `Reconcile()` — main entry point, orchestrates three-phase reconciliation (gateway Secret → Route → ConfigMap injection + remaining resources)
 - `generateGatewayToken()` — generates cryptographically secure 64-char hex token using crypto/rand
 - `applyGatewaySecret()` — creates/updates openclaw-secrets Secret with gateway token (preserves existing token)
-- `applyKustomizedResources()` — builds and applies all manifests via Kustomize + SSA (calls configureProxyDeployment and stampSecretVersionAnnotation before applying)
+- `applyRouteOnly()` — applies only Route resource from Kustomize manifests (Phase 2)
+- `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
+- `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
+- `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in ConfigMap with Route host (or localhost fallback)
+- `applyKustomizedResources()` — builds and applies manifests via Kustomize + SSA with optional filter function
+- `applyResources()` — applies list of unstructured objects using server-side apply
 - `configureProxyDeployment()` — modifies openclaw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
 - `stampSecretVersionAnnotation()` — adds Secret ResourceVersion annotation to pod template BEFORE applying (ensures pod template changes trigger restarts when Secret data changes, not just reference)
 - `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition
 - `checkDeploymentsReady()` — checks if both openclaw and openclaw-proxy Deployments are ready
 - `setAvailableCondition()` — sets Available condition on OpenClaw based on deployment states
-- `updateStatus()` — updates OpenClaw status conditions via status subresource
+- `updateStatus()` — updates OpenClaw status conditions and URL field via status subresource
 - `parseYAMLToObjects()` — converts multi-doc YAML to unstructured objects
 - `readEmbeddedFile()` — reads files from embedded filesystem
 - `findOpenClawsReferencingSecret()` — maps Secret events to OpenClaw reconcile requests (for Secret watching)
