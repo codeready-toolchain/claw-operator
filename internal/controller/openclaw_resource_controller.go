@@ -126,13 +126,8 @@ func (r *OpenClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
 	logger := log.FromContext(ctx)
 
-	// Build manifests using Kustomize
-	kustomizer := krusty.MakeKustomizer(krusty.MakeDefaultOptions())
-
-	// Create an in-memory filesystem from embedded assets
-	fs := filesys.MakeFsInMemory()
-
 	// Write all manifest files (including kustomization.yaml) to in-memory filesystem
+	fs := filesys.MakeFsInMemory()
 	manifestFiles := map[string][]byte{
 		"manifests/kustomization.yaml":    readEmbeddedFile("manifests/kustomization.yaml"),
 		"manifests/configmap.yaml":        readEmbeddedFile("manifests/configmap.yaml"),
@@ -145,81 +140,61 @@ func (r *OpenClawResourceReconciler) applyKustomizedResources(ctx context.Contex
 		"manifests/proxy-service.yaml":    readEmbeddedFile("manifests/proxy-service.yaml"),
 		"manifests/networkpolicy.yaml":    readEmbeddedFile("manifests/networkpolicy.yaml"),
 	}
-
 	for path, content := range manifestFiles {
 		if err := fs.WriteFile(path, content); err != nil {
-			logger.Error(err, "Failed to write manifest to in-memory filesystem", "path", path)
-			return err
+			return fmt.Errorf("failed to write manifest to in-memory filesystem: %w", err)
 		}
 	}
 
-	// Run kustomize build
+	// Build manifests using Kustomize
+	kustomizer := krusty.MakeKustomizer(krusty.MakeDefaultOptions())
 	resMap, err := kustomizer.Run(fs, "manifests")
 	if err != nil {
-		logger.Error(err, "Failed to run kustomize build")
-		return err
+		return fmt.Errorf("failed to run kustomize build: %w", err)
 	}
-
 	// Convert resource map to unstructured objects
 	resources, err := resMap.AsYaml()
 	if err != nil {
-		logger.Error(err, "Failed to convert resource map to YAML")
-		return err
+		return fmt.Errorf("failed to convert resource map to YAML: %w", err)
 	}
-
-	logger.Info("Successfully built manifests with kustomize", "resourceCount", resMap.Size())
-
 	// Parse YAML into unstructured objects
 	objects, err := parseYAMLToObjects(resources)
 	if err != nil {
-		logger.Error(err, "Failed to parse YAML to objects")
-		return err
+		return fmt.Errorf("failed to parse YAML to objects: %w", err)
 	}
-
 	// Configure proxy deployment with user's Gemini API key Secret reference
 	if err := r.configureProxyDeployment(objects, instance); err != nil {
-		logger.Error(err, "Failed to configure proxy deployment")
-		return err
+		return fmt.Errorf("failed to configure proxy deployment: %w", err)
 	}
-
 	// Stamp Secret version annotation to trigger restarts on Secret value changes
 	if err := r.stampSecretVersionAnnotation(ctx, objects, instance); err != nil {
-		logger.Error(err, "Failed to stamp Secret version annotation")
-		return err
+		return fmt.Errorf("failed to stamp Secret version annotation: %w", err)
 	}
-
-	// Transform resources: set namespace and owner references
+	// set namespace and owner references
 	for _, obj := range objects {
 		// Set namespace to match instance
 		obj.SetNamespace(instance.Namespace)
-
 		// Set owner reference
 		if err := controllerutil.SetControllerReference(instance, obj, r.Scheme); err != nil {
-			logger.Error(err, "Failed to set controller reference", "resource", obj.GetName())
-			return err
+			return fmt.Errorf("failed to set controller reference: %w", err)
 		}
 	}
 
 	// Apply resources using server-side apply
 	for _, obj := range objects {
-		logger.Info("Applying resource", "kind", obj.GetKind(), "name", obj.GetName())
-
-		err := r.Patch(ctx, obj, client.Apply, &client.PatchOptions{
+		if err := r.Patch(ctx, obj, client.Apply, &client.PatchOptions{
 			FieldManager: "openclaw-operator",
 			Force:        &[]bool{true}[0],
-		})
-		if err != nil {
+		}); err != nil {
 			// Skip resources whose CRDs are not registered (e.g., Route on non-OpenShift clusters)
 			if meta.IsNoMatchError(err) {
 				logger.Info("Skipping resource - CRD not registered in cluster", "kind", obj.GetKind(), "name", obj.GetName())
 				continue
 			}
-			logger.Error(err, "Failed to apply resource", "kind", obj.GetKind(), "name", obj.GetName())
-			return err
+			return fmt.Errorf("failed to apply resource: %w", err)
 		}
 	}
-
-	logger.Info("Successfully applied all resources", "count", len(objects))
+	logger.Info("Successfully applied all resources", "namespace", instance.Namespace, "count", len(objects))
 	return nil
 }
 
@@ -243,37 +218,36 @@ func (r *OpenClawResourceReconciler) applyGatewaySecret(ctx context.Context, ins
 		Namespace: instance.Namespace,
 		Name:      OpenClawGatewaySecretName,
 	}
-	err := r.Get(ctx, secretKey, existingSecret)
-
-	var token string
-	if err == nil {
+	if err := r.Get(ctx, secretKey, existingSecret); err == nil {
 		// Secret exists - check if it has the token entry
 		if existingToken, exists := existingSecret.Data[GatewayTokenKeyName]; exists && len(existingToken) > 0 {
 			logger.Info("Gateway secret already exists with token, skipping generation", "name", OpenClawGatewaySecretName)
-			token = string(existingToken)
+			return nil
 		} else {
-			// Secret exists but missing token - generate new one
+			// Secret exists but missing or empty token - generate new one
 			logger.Info("Gateway secret exists but missing token, generating new one")
-			token, err = generateGatewayToken()
+			token, err := generateGatewayToken()
 			if err != nil {
-				logger.Error(err, "Failed to generate gateway token")
-				return err
+				return fmt.Errorf("failed to generate gateway token: %w", err)
 			}
+			return r.doCreateGatewaySecret(ctx, instance, token)
 		}
 	} else if apierrors.IsNotFound(err) {
 		// Secret doesn't exist - generate new token
 		logger.Info("Gateway secret does not exist, generating new token")
-		token, err = generateGatewayToken()
+		token, err := generateGatewayToken()
 		if err != nil {
-			logger.Error(err, "Failed to generate gateway token")
-			return err
+			return fmt.Errorf("failed to generate gateway token: %w", err)
 		}
+		return r.doCreateGatewaySecret(ctx, instance, token)
 	} else {
 		// Error fetching secret
-		logger.Error(err, "Failed to check for existing gateway secret")
-		return err
+		return fmt.Errorf("failed to check for existing gateway secret: %w", err)
 	}
+}
 
+func (r *OpenClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, instance *openclawv1alpha1.OpenClaw, token string) error {
+	logger := log.FromContext(ctx)
 	// Create the Secret object
 	secret := &corev1.Secret{}
 	secret.SetName(OpenClawGatewaySecretName)
@@ -285,19 +259,16 @@ func (r *OpenClawResourceReconciler) applyGatewaySecret(ctx context.Context, ins
 
 	// Set owner reference for garbage collection
 	if err := controllerutil.SetControllerReference(instance, secret, r.Scheme); err != nil {
-		logger.Error(err, "Failed to set controller reference on gateway secret")
-		return err
+		return fmt.Errorf("failed to set controller reference on gateway secret: %w", err)
 	}
 
 	// Apply the Secret using server-side apply
 	logger.Info("Applying gateway secret", "name", secret.Name)
-	err = r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
+	if err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
 		FieldManager: "openclaw-operator",
 		Force:        &[]bool{true}[0],
-	})
-	if err != nil {
-		logger.Error(err, "Failed to apply gateway secret")
-		return err
+	}); err != nil {
+		return fmt.Errorf("failed to apply gateway secret: %w", err)
 	}
 
 	logger.Info("Successfully applied gateway secret")
@@ -372,11 +343,9 @@ func (r *OpenClawResourceReconciler) configureProxyDeployment(objects []*unstruc
 					return nil
 				}
 			}
-
 			return fmt.Errorf("proxy container not found in openclaw-proxy deployment")
 		}
 	}
-
 	return fmt.Errorf("openclaw-proxy deployment not found in manifests")
 }
 
@@ -443,10 +412,8 @@ func readEmbeddedFile(path string) []byte {
 // parseYAMLToObjects parses multi-document YAML into unstructured objects
 func parseYAMLToObjects(yamlData []byte) ([]*unstructured.Unstructured, error) {
 	var objects []*unstructured.Unstructured
-
 	// Split YAML documents by separator
 	docs := bytes.Split(yamlData, []byte("\n---\n"))
-
 	for _, doc := range docs {
 		doc = bytes.TrimSpace(doc)
 		if len(doc) == 0 {
@@ -469,7 +436,6 @@ func parseYAMLToObjects(yamlData []byte) ([]*unstructured.Unstructured, error) {
 // getDeploymentAvailableStatus fetches a Deployment and returns whether its Available condition is True
 func (r *OpenClawResourceReconciler) getDeploymentAvailableStatus(ctx context.Context, namespace, name string) (bool, error) {
 	logger := log.FromContext(ctx)
-
 	deployment := &appsv1.Deployment{}
 	err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment)
 	if err != nil {
@@ -526,29 +492,24 @@ func (r *OpenClawResourceReconciler) getRouteURL(ctx context.Context, instance *
 		Kind:    "Route",
 	})
 
-	err := r.Get(ctx, client.ObjectKey{
+	if err := r.Get(ctx, client.ObjectKey{
 		Namespace: instance.Namespace,
 		Name:      "openclaw",
-	}, route)
-
-	if err != nil {
+	}, route); err != nil {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 			// Route not found (or CRD not registered on non-OpenShift clusters)
 			logger.Info("Route not found or CRD not registered", "name", "openclaw")
 			return "", nil
 		}
-		logger.Error(err, "Failed to get Route")
-		return "", err
+		return "", fmt.Errorf("failed to get Route: %w", err)
 	}
 
 	// Extract host from Route.Spec.Host
 	host, found, err := unstructured.NestedString(route.Object, "spec", "host")
 	if err != nil {
-		logger.Error(err, "Failed to extract host from Route")
-		return "", err
+		return "", fmt.Errorf("failed to extract host from Route: %w", err)
 	}
 	if !found || host == "" {
-		logger.Info("Route host not found or empty")
 		return "", nil
 	}
 
@@ -585,13 +546,10 @@ func setAvailableCondition(instance *openclawv1alpha1.OpenClaw, ready bool, pend
 
 // updateStatus updates the OpenClaw status with current deployment conditions
 func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance *openclawv1alpha1.OpenClaw) error {
-	logger := log.FromContext(ctx)
-
 	// Check deployment readiness
 	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace)
 	if err != nil {
-		logger.Error(err, "Failed to check deployment readiness")
-		return err
+		return fmt.Errorf("failed to check deployment readiness: %w", err)
 	}
 
 	// Set Available condition
@@ -601,8 +559,7 @@ func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance 
 	if ready {
 		url, err := r.getRouteURL(ctx, instance)
 		if err != nil {
-			logger.Error(err, "Failed to get Route URL")
-			return err
+			return fmt.Errorf("failed to get Route URL: %w", err)
 		}
 		instance.Status.URL = url
 	} else {
@@ -612,11 +569,8 @@ func (r *OpenClawResourceReconciler) updateStatus(ctx context.Context, instance 
 
 	// Update status subresource
 	if err := r.Status().Update(ctx, instance); err != nil {
-		logger.Error(err, "Failed to update OpenClaw status")
-		return err
+		return fmt.Errorf("failed to update OpenClaw status: %w", err)
 	}
-
-	logger.Info("Successfully updated OpenClaw status", "available", ready, "url", instance.Status.URL)
 	return nil
 }
 
