@@ -403,7 +403,7 @@ func (r *OpenClawResourceReconciler) stampSecretVersionAnnotation(ctx context.Co
 
 	// Find the openclaw-proxy Deployment
 	for _, obj := range objects {
-		if obj.GetKind() == "Deployment" && obj.GetName() == "openclaw-proxy" {
+		if obj.GetKind() == "Deployment" && obj.GetName() == OpenClawProxyDeploymentName {
 			// Get current pod template annotations
 			annotations, _, err := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
 			if err != nil {
