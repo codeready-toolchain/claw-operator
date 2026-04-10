@@ -144,7 +144,9 @@ func TestOpenClawConfigMapController(t *testing.T) {
 		t.Run("should skip ConfigMap creation for non-matching names", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
-				deleteAndWait(t, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+				if err := deleteAndWait(&openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
+					t.Fatalf("cleanup failed: %v", err)
+				}
 			})
 
 			// Create a new OpenClaw with name 'other-instance'
