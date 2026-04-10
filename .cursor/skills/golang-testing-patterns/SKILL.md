@@ -42,7 +42,7 @@ func TestFeature(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, got, tt.expected)
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }
