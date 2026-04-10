@@ -53,13 +53,13 @@ func TestMain(m *testing.M) {
 
 	// Build the manager(Operator) image
 	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(cmd)
+	_, err := utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to build the manager(Operator) image")
 
 	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
 	// built and available before running the tests. Also, remove the following block.
 	// Load the manager(Operator) image on Kind
-	err = utils.LoadImageToKindClusterWithName(projectImage)
+	err = utils.LoadImageToKindClusterWithName(t, projectImage)
 	require.NoError(t, err, "Failed to load the manager(Operator) image into Kind")
 
 	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
@@ -68,12 +68,12 @@ func TestMain(m *testing.M) {
 	// Setup CertManager before the suite if not skipped and if not already installed
 	if !skipCertManagerInstall {
 		// Check if cert manager is installed already
-		isCertManagerAlreadyInstalled = utils.IsCertManagerCRDsInstalled()
+		isCertManagerAlreadyInstalled = utils.IsCertManagerCRDsInstalled(t)
 		if !isCertManagerAlreadyInstalled {
-			fmt.Println("Installing CertManager...")
-			require.NoError(t, utils.InstallCertManager(), "Failed to install CertManager")
+			t.Log("Installing CertManager...")
+			require.NoError(t, utils.InstallCertManager(t), "Failed to install CertManager")
 		} else {
-			fmt.Println("WARNING: CertManager is already installed. Skipping installation...")
+			t.Log("WARNING: CertManager is already installed. Skipping installation...")
 		}
 	}
 
@@ -83,7 +83,7 @@ func TestMain(m *testing.M) {
 	// Cleanup: Teardown CertManager after the suite if not skipped and if it was not already installed
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
 		fmt.Println("Uninstalling CertManager...")
-		utils.UninstallCertManager()
+		require.NoError(t, utils.UninstallCertManager(t), "Failed to uninstall CertManager")
 	}
 
 	os.Exit(code)

@@ -61,42 +61,42 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 	// and deploying the controller.
 	t.Log("creating manager namespace")
 	cmd := exec.Command("kubectl", "create", "ns", operatorNamespace)
-	_, err := utils.Run(cmd)
+	_, err := utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to create namespace")
 
 	t.Log("labeling the namespace to enforce the restricted security policy")
 	cmd = exec.Command("kubectl", "label", "--overwrite", "ns", operatorNamespace,
 		"pod-security.kubernetes.io/enforce=restricted")
-	_, err = utils.Run(cmd)
+	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to label namespace with restricted policy")
 
 	t.Log("installing CRDs")
 	cmd = exec.Command("make", "install")
-	_, err = utils.Run(cmd)
+	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to install CRDs")
 
 	t.Log("deploying the controller-manager")
 	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
-	_, err = utils.Run(cmd)
+	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to deploy the controller-manager")
 
 	// Cleanup: undeploy the controller, uninstall CRDs, and delete the namespace.
 	t.Cleanup(func() {
 		t.Log("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", operatorNamespace)
-		_, _ = utils.Run(cmd)
+		_, _ = utils.Run(t, cmd)
 
 		t.Log("undeploying the controller-manager")
 		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
+		_, _ = utils.Run(t, cmd)
 
 		t.Log("uninstalling CRDs")
 		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
+		_, _ = utils.Run(t, cmd)
 
 		t.Log("removing manager namespace")
 		cmd = exec.Command("kubectl", "delete", "ns", operatorNamespace)
-		_, _ = utils.Run(cmd)
+		_, _ = utils.Run(t, cmd)
 	})
 
 	// Helper function to collect debug info on test failure
@@ -108,7 +108,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 		t.Log("Fetching controller manager pod logs")
 		cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", operatorNamespace)
-		controllerLogs, err := utils.Run(cmd)
+		controllerLogs, err := utils.Run(t, cmd)
 		if err == nil {
 			t.Logf("Controller logs:\n %s", controllerLogs)
 		} else {
@@ -117,7 +117,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 		t.Log("Fetching Kubernetes events")
 		cmd = exec.Command("kubectl", "get", "events", "-n", operatorNamespace, "--sort-by=.lastTimestamp")
-		eventsOutput, err := utils.Run(cmd)
+		eventsOutput, err := utils.Run(t, cmd)
 		if err == nil {
 			t.Logf("Kubernetes events:\n%s", eventsOutput)
 		} else {
@@ -126,7 +126,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 		t.Log("Fetching curl-metrics logs")
 		cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", operatorNamespace)
-		metricsOutput, err := utils.Run(cmd)
+		metricsOutput, err := utils.Run(t, cmd)
 		if err == nil {
 			t.Logf("Metrics logs:\n %s", metricsOutput)
 		} else {
@@ -135,7 +135,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 		t.Log("Fetching controller manager pod description")
 		cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", operatorNamespace)
-		podDescription, err := utils.Run(cmd)
+		podDescription, err := utils.Run(t, cmd)
 		if err == nil {
 			t.Logf("Pod description:\n %s", podDescription)
 		} else {
@@ -162,7 +162,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				)
 
 				var err error
-				podOutput, err = utils.Run(cmd)
+				podOutput, err = utils.Run(t, cmd)
 				if err == nil {
 					podNames := utils.GetNonEmptyLines(podOutput)
 					if len(podNames) == 1 {
@@ -173,7 +173,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 								"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
 								"-n", operatorNamespace,
 							)
-							output, err := utils.Run(cmd)
+							output, err := utils.Run(t, cmd)
 							if err == nil && output == "Running" {
 								return // Success
 							}
@@ -193,12 +193,12 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"--clusterrole=openclaw-operator-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", operatorNamespace, serviceAccountName),
 			)
-			_, err := utils.Run(cmd)
+			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create ClusterRoleBinding")
 
 			t.Log("validating that the metrics service is available")
 			cmd = exec.Command("kubectl", "get", "service", metricsServiceName, "-n", operatorNamespace)
-			_, err = utils.Run(cmd)
+			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Metrics service should exist")
 
 			t.Log("getting the service account token")
@@ -210,7 +210,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			deadline := time.Now().Add(defaultTimeout)
 			for time.Now().Before(deadline) {
 				cmd := exec.Command("kubectl", "get", "endpoints", metricsServiceName, "-n", operatorNamespace)
-				output, err := utils.Run(cmd)
+				output, err := utils.Run(t, cmd)
 				if err == nil && assert.Contains(t, output, "8443") {
 					break
 				}
@@ -221,7 +221,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			deadline = time.Now().Add(defaultTimeout)
 			for time.Now().Before(deadline) {
 				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", operatorNamespace)
-				output, err := utils.Run(cmd)
+				output, err := utils.Run(t, cmd)
 				if err == nil && assert.Contains(t, output, "controller-runtime.metrics\tServing metrics server") {
 					break
 				}
@@ -255,7 +255,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 						"serviceAccount": "%s"
 					}
 				}`, token, metricsServiceName, operatorNamespace, serviceAccountName))
-			_, err = utils.Run(cmd)
+			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create curl-metrics pod")
 
 			t.Log("waiting for the curl-metrics pod to complete")
@@ -264,7 +264,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				cmd := exec.Command("kubectl", "get", "pods", "curl-metrics",
 					"-o", "jsonpath={.status.phase}",
 					"-n", operatorNamespace)
-				output, err := utils.Run(cmd)
+				output, err := utils.Run(t, cmd)
 				if err == nil && output == "Succeeded" {
 					break
 				}
@@ -283,22 +283,22 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				collectDebugInfo(t)
 				// Cleanup resources
 				cmd := exec.Command("kubectl", "delete", "openclaw", "instance", "-n", userNamespace)
-				_, _ = utils.Run(cmd)
+				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
-				_, _ = utils.Run(cmd)
+				_, _ = utils.Run(t, cmd)
 			})
 
 			t.Log("creating the Gemini API key Secret")
 			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value",
 				"-n", userNamespace)
-			_, err := utils.Run(cmd)
+			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create Secret")
 
 			t.Log("applying the OpenClaw CR")
 			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_openclaw.yaml",
 				"-n", userNamespace)
-			_, err = utils.Run(cmd)
+			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply OpenClaw CR")
 
 			t.Log("verifying the OpenClaw instance becomes Available")
@@ -307,7 +307,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				cmd := exec.Command("kubectl", "get", "openclaw", "instance",
 					"-o", "jsonpath={.status.conditions[?(@.type=='Available')].status}",
 					"-n", userNamespace)
-				output, err := utils.Run(cmd)
+				output, err := utils.Run(t, cmd)
 				if err == nil && output == "True" {
 					break
 				}
@@ -320,7 +320,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
 				"-o", jsonPathSecretName,
 				"-n", userNamespace)
-			output, err := utils.Run(cmd)
+			output, err := utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Equal(t, "gemini-api-key", output, "Proxy deployment should reference user's Secret")
 
@@ -334,22 +334,22 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				collectDebugInfo(t)
 				// Cleanup resources
 				cmd := exec.Command("kubectl", "delete", "openclaw", "instance", "-n", userNamespace)
-				_, _ = utils.Run(cmd)
+				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
-				_, _ = utils.Run(cmd)
+				_, _ = utils.Run(t, cmd)
 			})
 
 			t.Log("creating the Gemini API key Secret")
 			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
 				"--from-literal=api-key=test-gemini-key-value",
 				"-n", userNamespace)
-			_, err := utils.Run(cmd)
+			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create Secret")
 
 			t.Log("applying the OpenClaw CR")
 			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_openclaw.yaml",
 				"-n", userNamespace)
-			_, err = utils.Run(cmd)
+			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply OpenClaw CR")
 
 			t.Log("waiting for openclaw-proxy deployment to be created")
@@ -357,7 +357,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			for time.Now().Before(deadline) {
 				cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
 					"-n", userNamespace)
-				_, err := utils.Run(cmd)
+				_, err := utils.Run(t, cmd)
 				if err == nil {
 					break
 				}
@@ -370,7 +370,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
 				"-o", jsonPathSecretName,
 				"-n", userNamespace)
-			output, err := utils.Run(cmd)
+			output, err := utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Equal(t, "gemini-api-key", output, "GEMINI_API_KEY should reference gemini-api-key Secret")
 
@@ -380,7 +380,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
 				"-o", jsonPathSecretKey,
 				"-n", userNamespace)
-			output, err = utils.Run(cmd)
+			output, err = utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Equal(t, "api-key", output, "GEMINI_API_KEY should reference 'api-key' key in Secret")
 
@@ -390,7 +390,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
 				"-o", jsonPathOptional,
 				"-n", userNamespace)
-			output, err = utils.Run(cmd)
+			output, err = utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Equal(t, "false", output, "GEMINI_API_KEY should be required (optional=false)")
 
@@ -398,7 +398,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
 				"-o", "jsonpath={.spec.template.spec.containers[0].name}",
 				"-n", userNamespace)
-			output, err = utils.Run(cmd)
+			output, err = utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Equal(t, "proxy", output, "First container should be named 'proxy'")
 
@@ -408,7 +408,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
 					"-o", "jsonpath={.items[*].status.phase}",
 					"-n", userNamespace)
-				output, err := utils.Run(cmd)
+				output, err := utils.Run(t, cmd)
 				if err == nil && assert.Contains(t, output, "Running") {
 					break
 				}
@@ -421,18 +421,18 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				collectDebugInfo(t)
 				// Cleanup resources
 				cmd := exec.Command("kubectl", "delete", "openclaw", "instance", "-n", userNamespace)
-				_, _ = utils.Run(cmd)
+				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-1", "-n", userNamespace)
-				_, _ = utils.Run(cmd)
+				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-2", "-n", userNamespace)
-				_, _ = utils.Run(cmd)
+				_, _ = utils.Run(t, cmd)
 			})
 
 			t.Log("creating the first Gemini API key Secret")
 			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key-1",
 				"--from-literal=api-key=first-api-key",
 				"-n", userNamespace)
-			_, err := utils.Run(cmd)
+			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create first Secret")
 
 			t.Log("creating a custom OpenClaw CR with first Secret")
@@ -450,7 +450,7 @@ spec:
 			require.NoError(t, err, "Failed to write CR file")
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
-			_, err = utils.Run(cmd)
+			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply OpenClaw CR")
 
 			t.Log("waiting for OpenClaw to become Available")
@@ -459,7 +459,7 @@ spec:
 				cmd := exec.Command("kubectl", "get", "openclaw", "instance",
 					"-o", "jsonpath={.status.conditions[?(@.type=='Available')].status}",
 					"-n", userNamespace)
-				output, err := utils.Run(cmd)
+				output, err := utils.Run(t, cmd)
 				if err == nil && output == "True" {
 					break
 				}
@@ -470,7 +470,7 @@ spec:
 			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
 				"-o", "jsonpath={.items[0].metadata.uid}",
 				"-n", userNamespace)
-			originalPodUID, err := utils.Run(cmd)
+			originalPodUID, err := utils.Run(t, cmd)
 			require.NoError(t, err)
 			require.NotEmpty(t, originalPodUID)
 
@@ -478,7 +478,7 @@ spec:
 			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key-2",
 				"--from-literal=api-key=second-api-key",
 				"-n", userNamespace)
-			_, err = utils.Run(cmd)
+			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create second Secret")
 
 			t.Log("updating OpenClaw CR to reference the second Secret")
@@ -495,7 +495,7 @@ spec:
 			require.NoError(t, err, "Failed to write updated CR file")
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
-			_, err = utils.Run(cmd)
+			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to update OpenClaw CR")
 
 			t.Log("verifying the deployment references the new Secret")
@@ -506,7 +506,7 @@ spec:
 				cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
 					"-o", jsonPathSecretName,
 					"-n", userNamespace)
-				output, err := utils.Run(cmd)
+				output, err := utils.Run(t, cmd)
 				if err == nil && output == "gemini-api-key-2" {
 					break
 				}
@@ -520,7 +520,7 @@ spec:
 				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
 					"-o", "jsonpath={.items[0].metadata.uid}",
 					"-n", userNamespace)
-				newPodUID, err = utils.Run(cmd)
+				newPodUID, err = utils.Run(t, cmd)
 				if err == nil && newPodUID != "" && newPodUID != originalPodUID {
 					break
 				}
@@ -534,7 +534,7 @@ spec:
 				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
 					"-o", "jsonpath={.items[0].status.phase}",
 					"-n", userNamespace)
-				output, err := utils.Run(cmd)
+				output, err := utils.Run(t, cmd)
 				if err == nil && output == "Running" {
 					return
 				}
@@ -592,7 +592,7 @@ func getMetricsOutput(t *testing.T) string {
 	t.Helper()
 	t.Log("getting the curl-metrics logs")
 	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", operatorNamespace)
-	metricsOutput, err := utils.Run(cmd)
+	metricsOutput, err := utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to retrieve logs from curl pod")
 	require.Contains(t, metricsOutput, "< HTTP/1.1 200 OK")
 	return metricsOutput

@@ -23,7 +23,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -90,9 +89,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			}
 
 			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost)
-			if err != nil {
-				t.Fatalf("injectRouteHostIntoConfigMap failed: %v", err)
-			}
+			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
 			openclawJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "openclaw.json")
 			// Count occurrences of Route host
@@ -119,9 +116,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			}
 
 			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost)
-			if err != nil {
-				t.Fatalf("injectRouteHostIntoConfigMap failed: %v", err)
-			}
+			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
 			openclawJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "openclaw.json")
 			assert.Contains(t, openclawJSON, "http://localhost:18789")
@@ -146,9 +141,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			}
 
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Create a new OpenClaw instance
@@ -207,11 +200,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 
 		t.Run("should still configure proxy deployment and stamp secret version", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Create a new OpenClaw instance
@@ -219,12 +208,12 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 

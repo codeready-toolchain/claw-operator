@@ -23,8 +23,11 @@ import (
 	"testing"
 	"time"
 
+	routev1 "github.com/openshift/api/route/v1"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	netv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -38,11 +41,15 @@ import (
 )
 
 var (
-	cfg       *rest.Config
-	k8sClient client.Client
-	testEnv   *envtest.Environment
-	ctx       context.Context
-	cancel    context.CancelFunc
+	cfg                *rest.Config
+	k8sClient          client.Client
+	testEnv            *envtest.Environment
+	ctx                context.Context
+	cancel             context.CancelFunc
+	namespace          = "default"
+	aiModelSecret      = "test-gemini-secret"
+	aiModelSecretKey   = "api-key"
+	aiModelSecretValue = "test-api-key"
 )
 
 const (
@@ -61,7 +68,7 @@ func waitFor(t *testing.T, timeout, interval time.Duration, condition func() boo
 		}
 		time.Sleep(interval)
 	}
-	t.Fatalf("timeout waiting for condition: %s", message)
+	t.Errorf("timeout waiting for condition: %s", message)
 }
 
 func TestMain(m *testing.M) {
@@ -88,6 +95,10 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	err = routev1.AddToScheme(scheme.Scheme)
+	if err != nil {
+		panic(err)
+	}
 
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	if err != nil {
@@ -109,38 +120,60 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func deleteAndWaitAllResources(t *testing.T, namespace string) {
+	deleteAndWait(t, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: OpenClawInstanceName, Namespace: namespace})
+	deleteAndWait(t, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
+	deleteAndWait(t, &netv1.NetworkPolicy{}, client.ObjectKey{Name: OpenClawNetworkPolicyName, Namespace: namespace})
+	deleteAndWait(t, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
+	deleteAndWait(t, &corev1.Secret{}, client.ObjectKey{Name: aiModelSecret, Namespace: namespace})
+	deleteAndWait(t, &corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: OpenClawPVCName, Namespace: namespace})
+	// deleteAndWait(t, &routev1.Route{}, client.ObjectKey{Name: OpenClawRouteName, Namespace: namespace})
+	deleteAndWait(t, &corev1.Service{}, client.ObjectKey{Name: OpenClawServiceName, Namespace: namespace})
+	deleteAndWait(t, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
+	deleteAndWait(t, &corev1.Service{}, client.ObjectKey{Name: OpenClawProxyServiceName, Namespace: namespace})
+	deleteAndWait(t, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+}
+
 // deleteAndWait deletes an object and waits until the API server confirms it's gone.
 // Retries the entire get-strip-delete cycle to handle conflicts from stale ResourceVersions.
 // Strips finalizers since envtest doesn't run controllers to process them (e.g. PVC protection).
-func deleteAndWait(ctx context.Context, obj client.Object, key client.ObjectKey) {
+func deleteAndWait(t *testing.T, obj client.Object, key client.ObjectKey) {
+	ctx := context.Background()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		fresh := obj.DeepCopyObject().(client.Object)
 		if err := k8sClient.Get(ctx, key, fresh); err != nil {
 			if apierrors.IsNotFound(err) {
+				t.Logf("skipping - object not found: %T in %s", obj, key.String())
 				return
 			}
+			t.Logf("error getting object: %s", err)
 			time.Sleep(interval)
 			continue
 		}
+		t.Logf("object found: %s", key.String())
 		if len(fresh.GetFinalizers()) > 0 {
 			fresh.SetFinalizers(nil)
 			if err := k8sClient.Update(ctx, fresh); err != nil {
+				t.Logf("error while removing finalizers from object: %s", err)
 				time.Sleep(interval)
 				continue
 			}
 		}
 		if err := k8sClient.Delete(ctx, fresh); err != nil && !apierrors.IsNotFound(err) {
+			t.Logf("error while deleting object: %s", err)
 			time.Sleep(interval)
 			continue
 		}
 		err := k8sClient.Get(ctx, key, obj.DeepCopyObject().(client.Object))
 		if apierrors.IsNotFound(err) {
+			t.Logf("object not found: %s", key.String())
 			return
 		}
+		t.Logf("object still exists: %s", key.String())
 		time.Sleep(interval)
 	}
-	panic("timeout waiting for object deletion: " + key.String())
+	t.Errorf("timeout waiting for object deletion: %s", key.String())
 }
 
 // createTestAPIKeySecret creates a test Secret containing an API key for use in tests
@@ -167,7 +200,6 @@ func createTestAPIKeySecret(name, namespace, key, value string) *corev1.Secret {
 // createTestGatewaySecret creates a test Secret containing a gateway token for use in tests
 // It ensures any existing Secret with the same name is deleted first to avoid conflicts
 func createTestGatewaySecret(t *testing.T, name, namespace string) *corev1.Secret { //nolint:unparam
-	t.Helper()
 	// Delete any existing Secret with this name (ignore errors)
 	existing := &corev1.Secret{}
 	existing.Name = name

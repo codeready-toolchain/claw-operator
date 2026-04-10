@@ -31,12 +31,6 @@ import (
 )
 
 func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
-	const (
-		namespace       = "default"
-		apiKey          = "test-api-key"
-		apiKeySecret    = "test-gemini-secret"
-		apiKeySecretKey = "api-key"
-	)
 
 	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
 		const resourceName = OpenClawInstanceName
@@ -44,9 +38,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 
 		t.Run("should create PVC for OpenClaw named 'instance'", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: OpenClawPVCName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Create a new OpenClaw named 'instance'
@@ -54,12 +46,12 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
@@ -91,9 +83,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 
 		t.Run("should set correct owner reference on PVC", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: OpenClawPVCName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Create a new OpenClaw named 'instance'
@@ -101,12 +91,12 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
@@ -175,8 +165,8 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			}
 
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
+				deleteAndWait(t, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
 			})
 
 			// Create a new OpenClaw with name 'other-instance'
@@ -184,12 +174,12 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
@@ -206,9 +196,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 					Namespace: namespace,
 				},
 			})
-			if err != nil {
-				t.Fatalf("reconcile failed: %v", err)
-			}
+			require.NoError(t, err, "reconcile failed")
 
 			// Verify PVC was NOT created
 			// Sleep to give reconciler time to (incorrectly) create resources

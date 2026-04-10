@@ -33,12 +33,6 @@ import (
 )
 
 func TestOpenClawURLStatusField(t *testing.T) {
-	const (
-		namespace       = "default"
-		apiKey          = "test-api-key"
-		apiKeySecret    = "test-gemini-secret"
-		apiKeySecretKey = "api-key"
-	)
 
 	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
 		const resourceName = OpenClawInstanceName
@@ -50,10 +44,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 
 		t.Run("should leave URL field empty when deployments are not ready", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			t.Log("Creating a new OpenClaw named 'instance'")
@@ -61,12 +52,12 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -93,10 +84,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 
 		t.Run("should leave URL field empty when Route does not exist", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			t.Log("Creating a new OpenClaw named 'instance'")
@@ -104,12 +92,12 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -164,9 +152,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 					Namespace: namespace,
 				},
 			})
-			if err != nil {
-				t.Fatalf("reconcile failed: %v", err)
-			}
+			require.NoError(t, err, "reconcile failed")
 
 			t.Log("Checking URL field is empty when Route not found")
 			updatedInstance := &openclawv1alpha1.OpenClaw{}
@@ -201,7 +187,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 	t.Run("should retrieve and decode gateway token from openclaw-secrets", func(t *testing.T) {
 		setupGatewaySecretTest(t)
 		t.Cleanup(func() {
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
+			deleteAndWaitAllResources(t, namespace)
 		})
 
 		t.Log("Creating gateway secret with token")
@@ -228,7 +214,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 	t.Run("should return empty string when gateway secret does not exist", func(t *testing.T) {
 		setupGatewaySecretTest(t)
 		t.Cleanup(func() {
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
+			deleteAndWaitAllResources(t, namespace)
 		})
 
 		t.Log("Calling getGatewayToken without creating secret")
@@ -245,7 +231,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 	t.Run("should return empty string when token key is missing from secret", func(t *testing.T) {
 		setupGatewaySecretTest(t)
 		t.Cleanup(func() {
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
+			deleteAndWaitAllResources(t, namespace)
 		})
 
 		t.Log("Creating gateway secret without token key")
@@ -271,7 +257,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 	t.Run("should return empty string when token value is empty", func(t *testing.T) {
 		setupGatewaySecretTest(t)
 		t.Cleanup(func() {
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
+			deleteAndWaitAllResources(t, namespace)
 		})
 
 		t.Log("Creating gateway secret with empty token")

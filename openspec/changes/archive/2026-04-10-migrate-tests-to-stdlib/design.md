@@ -158,7 +158,7 @@ func TestReconciler(t *testing.T) {
 2. Convert `suite_test.go` to use `TestMain` for envtest setup
 3. Migrate each test file:
    - Replace `Describe`/`It` with `Test*` functions and `t.Run` subtests
-   - Replace `Expect().To()` with `if/t.Errorf` assertions
+   - Replace `Expect().To()` with `assert` and `require` assertions
    - Replace `Eventually()` with `waitFor()` helper
    - Replace `AfterEach` with `t.Cleanup()`
 4. Remove Ginkgo/Gomega imports from all test files

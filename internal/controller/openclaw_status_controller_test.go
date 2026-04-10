@@ -39,23 +39,13 @@ import (
 )
 
 func TestOpenClawStatusConditions(t *testing.T) {
-	const (
-		namespace       = "default"
-		apiKey          = "test-api-key"
-		apiKeySecret    = "test-gemini-secret"
-		apiKeySecretKey = "api-key"
-	)
-
 	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
 		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
 		t.Run("should set Available condition to False after initial resource creation", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Creating a new OpenClaw named 'instance'
@@ -63,12 +53,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -101,10 +91,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 		t.Run("should keep Available condition False when only openclaw Deployment is ready", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Creating a new OpenClaw named 'instance'
@@ -112,12 +99,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -171,10 +158,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 		t.Run("should keep Available condition False when only openclaw-proxy Deployment is ready", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Creating a new OpenClaw named 'instance'
@@ -182,12 +166,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -241,10 +225,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 		t.Run("should set Available condition to True when both Deployments are ready", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Creating a new OpenClaw named 'instance'
@@ -252,12 +233,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -325,10 +306,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 		t.Run("should update LastTransitionTime only on status change", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Creating a new OpenClaw named 'instance'
@@ -336,12 +314,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -436,10 +414,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 		t.Run("should preserve LastTransitionTime when status unchanged", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Creating a new OpenClaw named 'instance'
@@ -447,12 +422,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -507,10 +482,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 		t.Run("should handle missing Deployments gracefully", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Creating a new OpenClaw named 'instance'
@@ -518,12 +490,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -557,10 +529,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 		t.Run("should set ObservedGeneration correctly in conditions", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+				deleteAndWaitAllResources(t, namespace)
 			})
 
 			// Creating a new OpenClaw named 'instance'
@@ -568,12 +537,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -610,11 +579,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			t.Run("should initialize status.url as empty", func(t *testing.T) {
 				t.Cleanup(func() {
-					deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+					deleteAndWaitAllResources(t, namespace)
 				})
 
 				// Creating a new OpenClaw named 'instance'
@@ -622,12 +587,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
-				secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-					Name: apiKeySecret,
-					Key:  apiKeySecretKey,
+					Name: aiModelSecret,
+					Key:  aiModelSecretKey,
 				}
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -654,11 +619,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			t.Run("should keep status.url empty when only openclaw deployment is ready", func(t *testing.T) {
 				t.Cleanup(func() {
-					deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+					deleteAndWaitAllResources(t, namespace)
 				})
 
 				// Creating a new OpenClaw named 'instance'
@@ -666,12 +627,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
-				secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-					Name: apiKeySecret,
-					Key:  apiKeySecretKey,
+					Name: aiModelSecret,
+					Key:  aiModelSecretKey,
 				}
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -722,11 +683,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			t.Run("should keep status.url empty when only proxy deployment is ready", func(t *testing.T) {
 				t.Cleanup(func() {
-					deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+					deleteAndWaitAllResources(t, namespace)
 				})
 
 				// Creating a new OpenClaw named 'instance'
@@ -734,12 +691,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
-				secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-					Name: apiKeySecret,
-					Key:  apiKeySecretKey,
+					Name: aiModelSecret,
+					Key:  aiModelSecretKey,
 				}
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -790,11 +747,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			t.Run("should clear status.url when deployments transition from ready to not ready", func(t *testing.T) {
 				t.Cleanup(func() {
-					deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+					deleteAndWaitAllResources(t, namespace)
 				})
 
 				// Creating a new OpenClaw named 'instance'
@@ -802,12 +755,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
-				secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-					Name: apiKeySecret,
-					Key:  apiKeySecretKey,
+					Name: aiModelSecret,
+					Key:  aiModelSecretKey,
 				}
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -897,11 +850,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			t.Run("should not set status.url when Route does not exist (vanilla Kubernetes)", func(t *testing.T) {
 				t.Cleanup(func() {
-					deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+					deleteAndWaitAllResources(t, namespace)
 				})
 
 				// Creating a new OpenClaw named 'instance'
@@ -909,12 +858,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
-				secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-					Name: apiKeySecret,
-					Key:  apiKeySecretKey,
+					Name: aiModelSecret,
+					Key:  aiModelSecretKey,
 				}
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
@@ -981,11 +930,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				t.Skip("This test requires Route CRD to be installed - should be run in e2e tests with OpenShift cluster. Installing CRD dynamically in envtest interferes with other tests that expect it not to be present.")
 
 				t.Cleanup(func() {
-					deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-					deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-					deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
+					deleteAndWaitAllResources(t, namespace)
 				})
 
 				// Creating a new OpenClaw named 'instance'
@@ -993,12 +938,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
-				secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
+				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-					Name: apiKeySecret,
-					Key:  apiKeySecretKey,
+					Name: aiModelSecret,
+					Key:  aiModelSecretKey,
 				}
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
