@@ -37,21 +37,12 @@ func TestFeature(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ProcessString(tt.input)
-			
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
+				require.Error(t, err)
 				return
 			}
-			
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			
-			if got != tt.expected {
-				t.Errorf("got %d, want %d", got, tt.expected)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, got, tt.expected)
 		})
 	}
 }
@@ -155,17 +146,16 @@ func TestDatabaseOperation(t *testing.T) {
 ## Error Testing Patterns
 
 **Check error occurrence:**
+
+Use the `github.com/stretchr/testify/require` package
+
 ```go
 if tt.wantErr {
-	if err == nil {
-		t.Errorf("expected error, got nil")
-	}
+	require.Error(t, err)
 	return
 }
 
-if err != nil {
-	t.Fatalf("unexpected error: %v", err)
-}
+require.NoError(t, err)
 ```
 
 **Check specific error:**

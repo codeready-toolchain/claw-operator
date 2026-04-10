@@ -18,10 +18,10 @@ package controller
 
 import (
 	"context"
+	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -31,7 +31,7 @@ import (
 	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
 )
 
-var _ = Describe("OpenClawDeployment Controller", func() {
+func TestOpenClawDeploymentController(t *testing.T) {
 	const (
 		namespace       = "default"
 		apiKey          = "test-api-key"
@@ -42,31 +42,31 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 	// NOTE: The unified controller creates all resources atomically via server-side apply,
 	// so ConfigMap dependency tests are no longer relevant. All resources are created together.
 
-	Context("When reconciling an OpenClaw named 'instance'", func() {
+	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
 		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
-		AfterEach(func() {
-			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
-			deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-		})
+		t.Run("should create Deployment for OpenClaw named 'instance'", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+				deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
+				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
+			})
 
-		It("should create Deployment for OpenClaw named 'instance'", func() {
-			By("Creating a new OpenClaw named 'instance'")
+			// Create a new OpenClaw named 'instance'
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
 			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
-			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
 				Name: apiKeySecret,
 				Key:  apiKeySecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -74,40 +74,47 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource")
+			// Reconcile the created resource
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Checking if Deployment was created")
+			// Check if Deployment was created
 			deployment := &appsv1.Deployment{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      "openclaw",
 					Namespace: namespace,
 				}, deployment)
 				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			}, "Deployment should be created")
 		})
 
-		It("should set correct owner reference on Deployment", func() {
-			By("Creating a new OpenClaw named 'instance'")
+		t.Run("should set correct owner reference on Deployment", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+				deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
+				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
+			})
+
+			// Create a new OpenClaw named 'instance'
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
 			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
-			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
 				Name: apiKeySecret,
 				Key:  apiKeySecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -115,27 +122,27 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource")
+			// Reconcile the created resource
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Checking if Deployment was created")
+			// Check if Deployment was created
 			deployment := &appsv1.Deployment{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawDeploymentName,
 					Namespace: namespace,
 				}, deployment)
 				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			}, "Deployment should be created")
 
-			By("Checking Deployment has correct owner reference")
-			Eventually(func() bool {
+			// Check Deployment has correct owner reference
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawDeploymentName,
 					Namespace: namespace,
@@ -151,34 +158,34 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
-			}, timeout, interval).Should(BeTrue())
+			}, "Deployment should have correct owner reference")
 		})
 	})
 
-	Context("When reconciling an OpenClaw with different name", func() {
+	t.Run("When reconciling an OpenClaw with different name", func(t *testing.T) {
 		const resourceName = "other-instance"
 		ctx := context.Background()
 
-		AfterEach(func() {
-			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
-		})
+		t.Run("should skip Deployment creation for non-matching names", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+				deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
+			})
 
-		It("should skip Deployment creation for non-matching names", func() {
-			By("Creating a new OpenClaw with name 'other-instance'")
+			// Create a new OpenClaw with name 'other-instance'
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
 			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
-			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
 				Name: apiKeySecret,
 				Key:  apiKeySecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -186,24 +193,25 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource")
+			// Reconcile the created resource
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Verifying Deployment was NOT created")
+			// Verify Deployment was NOT created
+			// Sleep to give reconciler time to (incorrectly) create resources
+			time.Sleep(2 * time.Second)
+
 			deployment := &appsv1.Deployment{}
-			Consistently(func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawDeploymentName,
-					Namespace: namespace,
-				}, deployment)
-				return err != nil
-			}, time.Second*2, interval).Should(BeTrue())
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Name:      OpenClawDeploymentName,
+				Namespace: namespace,
+			}, deployment)
+			require.Error(t, err, "Deployment should not have been created for non-instance OpenClaw")
 		})
 	})
-})
+}

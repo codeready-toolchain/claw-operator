@@ -240,12 +240,94 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 
 ## Testing
 
-- **Framework:** Ginkgo v2 + Gomega with `envtest` (real API server, no full cluster needed)
-- **Shared setup:** `internal/controller/suite_test.go` boots envtest once per suite
-- **Pattern:** Describe/Context/It blocks with `AfterEach` cleanup; uses `Eventually()` for async assertions (10s timeout, 250ms poll)
+- **Framework:** Go standard library `testing` package with testify/require and testify/assert, using `envtest` (real API server, no full cluster needed)
+- **Shared setup:** `internal/controller/suite_test.go` boots envtest via `TestMain(m *testing.M)`
+- **Assertions:** Use `require.NoError(t, err)` for setup/fatal errors, `assert.Equal(t, expected, actual)` for value comparisons
+- **Pattern:** `Test*` functions with `t.Run()` subtests; uses `t.Cleanup()` for cleanup; uses `waitFor()` helper for async assertions (10s timeout, 250ms poll)
+- **Polling helper:** `waitFor(t, timeout, interval, condition, message)` — custom helper for async checks (replaces Gomega's `Eventually()`)
+- **Table-driven tests:** Use standard Go pattern with struct slices and `t.Run(tt.name, ...)` for parameterized tests
 - **Test CRs:** All test OpenClaw instances must include the required `geminiAPIKey` field (e.g., `instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}`)
 - **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secretref_controller_test.go`, `openclaw_status_controller_test.go`, etc.)
-- **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment
+- **E2E:** `test/e2e/` — runs against a Kind cluster using Ginkgo (not migrated), validates metrics and full deployment
+
+### Testing Patterns
+
+**TestMain setup:**
+```go
+func TestMain(m *testing.M) {
+    // Setup envtest
+    testEnv = &envtest.Environment{...}
+    cfg, err = testEnv.Start()
+    // ... setup client, scheme
+    
+    code := m.Run()
+    
+    // Cleanup
+    testEnv.Stop()
+    os.Exit(code)
+}
+```
+
+**Error handling with testify/require:**
+```go
+// Setup failures (fatal - can't continue)
+require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
+
+// Unexpected errors in happy path
+_, err := reconciler.Reconcile(ctx, req)
+require.NoError(t, err, "reconcile failed")
+
+// Expected errors
+require.Error(t, err, "should fail validation")
+require.Contains(t, err.Error(), "missing required field")
+```
+
+**Value assertions with testify/assert:**
+```go
+// Equality checks (expected first in testify)
+assert.Equal(t, "expected", actual)
+assert.NotEqual(t, unwanted, actual)
+
+// Emptiness checks
+assert.Empty(t, str)
+assert.NotEmpty(t, str)
+
+// Container checks
+assert.Contains(t, haystack, needle)
+assert.True(t, strings.HasPrefix(url, "https://"))
+```
+
+**Async polling:**
+```go
+waitFor(t, timeout, interval, func() bool {
+    err := k8sClient.Get(ctx, key, obj)
+    return err == nil
+}, "object should be created")
+```
+
+**Table-driven tests:**
+```go
+tests := []struct {
+    name  string
+    input X
+    want  Y
+}{
+    {name: "scenario1", input: ..., want: ...},
+}
+for _, tt := range tests {
+    t.Run(tt.name, func(t *testing.T) {
+        // test logic
+        assert.Equal(t, tt.want, got)
+    })
+}
+```
+
+**Cleanup:**
+```go
+t.Cleanup(func() {
+    deleteAndWait(ctx, &Type{}, key)
+})
+```
 
 ## Conventions
 
