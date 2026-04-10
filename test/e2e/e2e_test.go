@@ -308,17 +308,18 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("verifying the Claw instance becomes Ready")
-			deadline := time.Now().Add(3 * time.Minute)
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "claw", "instance",
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
-					"-n", userNamespace)
-				output, err := utils.Run(t, cmd)
-				if err == nil && output == "True" {
-					break
-				}
-				time.Sleep(pollInterval)
-			}
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == "True", nil
+				})
+			require.NoError(t, err,
+				"Claw instance in namespace %s did not become Ready within %v",
+				userNamespace, extendedTimeout)
 
 			t.Log("verifying the openclaw-proxy deployment references the user's Secret")
 			jsonPathSecretName := "jsonpath={.spec.template.spec.containers[0]" +
@@ -491,17 +492,18 @@ spec:
 			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("waiting for Claw to become Ready")
-			deadline := time.Now().Add(3 * time.Minute)
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "claw", "instance",
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
-					"-n", userNamespace)
-				output, err := utils.Run(t, cmd)
-				if err == nil && output == "True" {
-					break
-				}
-				time.Sleep(pollInterval)
-			}
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == "True", nil
+				})
+			require.NoError(t, err,
+				"Claw instance in namespace %s did not become Ready within %v",
+				userNamespace, extendedTimeout)
 
 			t.Log("capturing original pod UID")
 			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
@@ -538,48 +540,47 @@ spec:
 			require.NoError(t, err, "Failed to update Claw CR")
 
 			t.Log("verifying the deployment references the new Secret")
-			deadline = time.Now().Add(1 * time.Minute)
-			for time.Now().Before(deadline) {
-				jsonPathSecretName := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
-					".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
-				cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-					"-o", jsonPathSecretName,
-					"-n", userNamespace)
-				output, err := utils.Run(t, cmd)
-				if err == nil && output == "gemini-api-key-2" {
-					break
-				}
-				time.Sleep(pollInterval)
-			}
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+						".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
+					cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+						"-o", jp, "-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == "gemini-api-key-2", nil
+				})
+			require.NoError(t, err, "deployment did not reference new Secret")
 
 			t.Log("verifying pod was restarted (different UID)")
-			deadline = time.Now().Add(2 * time.Minute)
 			var newPodUID string
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
-					"-o", "jsonpath={.items[0].metadata.uid}",
-					"-n", userNamespace)
-				newPodUID, err = utils.Run(t, cmd)
-				if err == nil && newPodUID != "" && newPodUID != originalPodUID {
-					break
-				}
-				time.Sleep(pollInterval)
-			}
-			require.NotEqual(t, originalPodUID, newPodUID, "Pod should have been recreated with new UID")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=openclaw-proxy",
+						"-o", "jsonpath={.items[0].metadata.uid}",
+						"-n", userNamespace)
+					uid, err := utils.Run(t, cmd)
+					if err == nil && uid != "" && uid != originalPodUID {
+						newPodUID = uid
+						return true, nil
+					}
+					return false, nil
+				})
+			require.NoError(t, err, "pod was not recreated with new UID")
+			require.NotEqual(t, originalPodUID, newPodUID,
+				"Pod should have been recreated with new UID")
 
 			t.Log("verifying new pod is running")
-			deadline = time.Now().Add(2 * time.Minute)
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
-					"-o", "jsonpath={.items[0].status.phase}",
-					"-n", userNamespace)
-				output, err := utils.Run(t, cmd)
-				if err == nil && output == "Running" {
-					return
-				}
-				time.Sleep(pollInterval)
-			}
-			require.Fail(t, "timeout waiting for new pod to be running")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=openclaw-proxy",
+						"-o", "jsonpath={.items[0].status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == "Running", nil
+				})
+			require.NoError(t, err, "new pod did not reach Running phase")
 		})
 	})
 }

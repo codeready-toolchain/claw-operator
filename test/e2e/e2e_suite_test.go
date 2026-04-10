@@ -74,7 +74,8 @@ func TestMain(m *testing.M) {
 	// we check for its presence before execution.
 	// Setup CertManager before the suite if not skipped and if not already installed
 	if !skipCertManagerInstall {
-		t := &testing.T{}
+		// Zero-value testing.T: TestMain has no real *testing.T; any t.Logf calls inside utils are silently discarded.
+		t := &testing.T{} //nolint:govet // intentional zero-value T in TestMain context
 		isCertManagerAlreadyInstalled = utils.IsCertManagerCRDsInstalled(t)
 		if !isCertManagerAlreadyInstalled {
 			fmt.Println("Installing CertManager...")
@@ -92,7 +93,7 @@ func TestMain(m *testing.M) {
 	// Cleanup: Teardown CertManager after the suite if not skipped and if it was not already installed
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
 		fmt.Println("Uninstalling CertManager...")
-		t := &testing.T{}
+		t := &testing.T{} //nolint:govet // intentional zero-value T in TestMain context
 		_ = utils.UninstallCertManager(t)
 	}
 
