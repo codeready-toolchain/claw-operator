@@ -1,4 +1,11 @@
-# Writing Tests for the OpenClaw Operator
+---
+name: create-tests
+description: Write tests for recent code changes following project conventions
+---
+
+# Writing Tests for Recent Changes
+
+Analyze the recent code changes (staged, unstaged, or described by the user) and write tests that cover the new or modified behavior. Follow the guidelines below.
 
 ## Running Tests
 
