@@ -255,7 +255,7 @@ Reconcile(ctx, req)
  ├─ Read Route status.ingress[0].host
  ├─ If hostname available and changed, patch ConfigMap allowedOrigins
  ├─ If hostname not yet available, requeue (Ready=False)
- └─ On non-OpenShift (no Route CRD), skip
+ └─ Route CRD is always present (OpenShift-only)
  ↓
 10. updateStatus(ctx, instance)                 ← EXISTS (extend with gatewayTokenSecretRef + new conditions)
   ├─ Set gatewayTokenSecretRef
@@ -309,7 +309,7 @@ spec:
           protocol: TCP
 ```
 
-**Router label ([Q7](security-hardening-impl-questions.md)):** `policy-group.network.openshift.io/ingress: ""` is the official OpenShift convention (documented 4.17–4.21). On vanilla Kubernetes, the operator skips this NetworkPolicy based on whether the Route CRD is registered (same pattern used for Route resources).
+**Router label ([Q7](security-hardening-impl-questions.md)):** `policy-group.network.openshift.io/ingress: ""` is the official OpenShift convention (documented 4.17–4.21). The operator targets OpenShift exclusively; Route and router-specific NetworkPolicy resources are always applied.
 
 This manifest is added to `internal/assets/manifests/` and included in `kustomization.yaml`.
 
@@ -333,7 +333,7 @@ The init container writes to `/home/node/.openclaw` (PVC-mounted), so `readOnlyR
 
 **Route host injection** — already implemented. The operator reads the Route hostname and substitutes `OPENCLAW_ROUTE_HOST` in the ConfigMap's `allowedOrigins` before applying, using `injectRouteHostIntoConfigMap()`.
 
-**Route hostname discovery ([Q8](security-hardening-impl-questions.md)):** Two-pass reconciliation is already implemented. First pass applies the Route via `applyRouteOnly()`. Then `getRouteURL()` reads `status.ingress[0].host` (requeueing after 5s if not yet available). Finally `injectRouteHostIntoConfigMap()` patches the ConfigMap. On vanilla Kubernetes (no Route CRD), the operator falls back to `http://localhost:18789`. The condition remains `False` until the hostname is resolved — consumers never see a ready instance with a broken CORS `allowedOrigins`.
+**Route hostname discovery ([Q8](security-hardening-impl-questions.md)):** Two-pass reconciliation is already implemented. First pass applies the Route via `applyRouteOnly()`. Then `getRouteURL()` reads `status.ingress[0].host` (requeueing after 5 s if not yet available). Finally `injectRouteHostIntoConfigMap()` patches the ConfigMap. The `Ready` condition remains `False` until the hostname is resolved and the ConfigMap is patched — consumers never see a ready instance with a broken CORS `allowedOrigins`. (The operator targets OpenShift; Route CRD is always present.)
 
 ---
 
@@ -381,7 +381,7 @@ All implementation questions are resolved. See [security-hardening-impl-question
 | Q4 | Proxy image build | `Containerfile.proxy`, podman, OLM bundle with `relatedImages` |
 | Q5 | `spec.geminiAPIKey` migration | Clean break — replaced by `spec.credentials[]` (no production users) |
 | Q6 | Status fields | `gatewayTokenSecretRef` + `Ready` (Phase 1); `CredentialsResolved`, `ProxyConfigured` (Phase 2) |
-| Q7 | Ingress NP router labels | `policy-group.network.openshift.io/ingress` + conditional skip on non-OpenShift |
+| Q7 | Ingress NP router labels | `policy-group.network.openshift.io/ingress` (OpenShift-only, always applied) |
 | Q8 | Route hostname discovery | Two-pass reconciliation, `Ready=False` until resolved |
 | Q9 | Implementation phasing | Phase 1 (quick wins + CRD rename) → Phase 2 (inline credentials + Go proxy) → Phase 3 (remaining types + cleanup) |
 | Q10 | Credential validation | CEL validation rules on `spec.credentials[]` items + controller defense-in-depth |

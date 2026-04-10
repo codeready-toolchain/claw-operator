@@ -185,7 +185,7 @@ _Considered and rejected: Option A — just `gatewayTokenSecretRef` (no visibili
 
 The ingress NetworkPolicy needs a `namespaceSelector` that matches the namespace where the OpenShift router runs.
 
-**Decision:** Option A + C — use `policy-group.network.openshift.io/ingress: ""` as the namespace selector, with conditional skip on non-OpenShift clusters.
+**Decision:** Option A + C — use `policy-group.network.openshift.io/ingress: ""` as the namespace selector. The operator targets OpenShift exclusively, so Route and router-specific resources are always applied.
 
 ```yaml
 namespaceSelector:
@@ -195,7 +195,7 @@ namespaceSelector:
 
 This is the official, documented approach in OpenShift 4.17+ through 4.21. The label is Operator-managed and automatically applied to the `openshift-ingress` namespace — it survives namespace name changes and works across all OpenShift 4.x versions. **Important:** do not apply `network.openshift.io/policy-group: ingress` to custom namespaces — it is reserved for OpenShift networking functions and can cause connectivity issues.
 
-On vanilla Kubernetes, the operator skips this NetworkPolicy based on whether the Route CRD is registered (same pattern already used for Route resources). If there's no Route CRD, there's no OpenShift router to allow ingress from.
+The operator targets OpenShift, so the Route CRD and OpenShift router are always available.
 
 _Considered and rejected: Option B — `kubernetes.io/metadata.name: openshift-ingress` (hardcodes namespace name, breaks if router is in a different namespace)_
 
@@ -211,7 +211,7 @@ The ConfigMap has `"allowedOrigins": ["https://OPENCLAW_ROUTE_HOST"]`. The opera
 2. Read back the Route to get `status.ingress[0].host`
 3. Patch the ConfigMap with the real hostname
 
-Auto-generated hostnames are the norm on Dev Sandbox. The two-pass approach is simple: apply resources, read Route status, patch ConfigMap if the hostname changed. If the Route isn't available yet (non-OpenShift), the ConfigMap keeps the placeholder, which is the current behavior.
+Auto-generated hostnames are the norm on Dev Sandbox. The two-pass approach is simple: apply resources, read Route status, patch ConfigMap if the hostname changed. The operator targets OpenShift exclusively, so the Route CRD is always present.
 
 **Ready condition gate:** The `Ready` condition (from Q6) must remain `False` until the Route hostname has been resolved and the ConfigMap has been patched with the real value. On first creation, the Route takes a few seconds to be admitted — the reconciler re-queues until `status.ingress[0].host` is populated. Only after the ConfigMap contains the real hostname (and all other resources are applied) does the operator set `Ready=True`. This ensures consumers (UI, health checks) never see a ready instance with a broken CORS `allowedOrigins`.
 

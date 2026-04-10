@@ -81,8 +81,8 @@ Supported types: `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `kubernetes`,
 - **Pro:** Single resource to manage — `kubectl get claw instance -o yaml` shows everything
 - **Pro:** No label-based discovery, no additional `Watches()`, no separate CRD RBAC
 - **Pro:** Atomic updates — changing credentials and config is one API call
-- **Pro:** Adding a new shape is a new type constant + optional config struct — no schema change
-- **Pro:** `type: none` reads naturally (proxy allowlist entry)
+- **Pro:** Adding a new shape is a new type constant + optional config struct — lower cost than a new CRD, though it still requires a CRD schema update (`make manifests`) and versioning considerations
+- **Pro:** `type: none` is semantically clear as a proxy allowlist entry (still subject to schema/versioning like any other type)
 - **Con:** CRD schema validation is looser — optional sub-structs mean invalid combos are possible (CEL catches these)
 - **Con:** Go types need nil checks on optional config blocks
 
