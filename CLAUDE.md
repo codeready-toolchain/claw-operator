@@ -38,9 +38,7 @@ make install            # Install CRDs to cluster
 make run                # Run controller locally against cluster
 
 # Single test
-go test ./internal/controller -run TestControllerSuite -v
-# or with Ginkgo focus:
-go test ./internal/controller -ginkgo.focus "ConfigMap" -v
+go test ./internal/controller -run TestOpenClawConfigMap -v
 
 # E2E (requires Kind)
 make setup-test-e2e     # Create Kind cluster
@@ -248,7 +246,7 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 - **Table-driven tests:** Use standard Go pattern with struct slices and `t.Run(tt.name, ...)` for parameterized tests
 - **Test CRs:** All test OpenClaw instances must include the required `geminiAPIKey` field (e.g., `instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}`)
 - **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secretref_controller_test.go`, `openclaw_status_controller_test.go`, etc.)
-- **E2E:** `test/e2e/` — runs against a Kind cluster using Ginkgo (not migrated), validates metrics and full deployment
+- **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment 
 
 ### Testing Patterns
 
@@ -333,5 +331,5 @@ t.Cleanup(func() {
 
 - Owner references are set on all created resources via `controllerutil.SetControllerReference`
 - Pod security: non-root (uid 65532), restricted seccomp, all capabilities dropped
-- Linting config in `.golangci.yml` — notable: `lll`, `dupl`, `ginkgolinter` enabled
+- Linting config in `.golangci.yml` — notable: `lll`, `dupl` enabled
 - License header required (template in `hack/boilerplate.go.txt`)
