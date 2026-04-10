@@ -53,7 +53,7 @@ const (
 	extendedTimeout = 5 * time.Minute
 )
 
-func TestManager(t *testing.T) {
+func TestManager(t *testing.T) { //nolint:gocyclo
 	var controllerPodName string
 
 	// Setup: create the environment by creating the namespace,

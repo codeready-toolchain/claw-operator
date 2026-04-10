@@ -52,7 +52,7 @@ const (
 
 // waitFor polls a condition function until it returns true or timeout is exceeded.
 // This helper replaces Gomega's Eventually for standard library tests.
-func waitFor(t *testing.T, timeout, interval time.Duration, condition func() bool, message string) {
+func waitFor(t *testing.T, timeout, interval time.Duration, condition func() bool, message string) { //nolint:unparam
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
