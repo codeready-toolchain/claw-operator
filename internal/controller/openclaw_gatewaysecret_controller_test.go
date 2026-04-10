@@ -43,20 +43,9 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 		ctx := context.Background()
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
-
-			// Cleanup API key Secret
-			apiSecret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, apiSecret)
-			_ = k8sClient.Delete(ctx, apiSecret)
-
-			// Cleanup gateway secret
-			secret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, secret)
-			_ = k8sClient.Delete(ctx, secret)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
 		})
 
 		It("should create gateway Secret when OpenClaw instance is reconciled", func() {

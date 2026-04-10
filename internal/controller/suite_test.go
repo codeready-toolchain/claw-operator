@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -84,6 +85,29 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// deleteAndWait deletes an object and waits until the API server confirms it's gone.
+// Retries the entire get-strip-delete cycle to handle conflicts from stale ResourceVersions.
+// Strips finalizers since envtest doesn't run controllers to process them (e.g. PVC protection).
+func deleteAndWait(ctx context.Context, obj client.Object, key client.ObjectKey) {
+	Eventually(func() bool {
+		fresh := obj.DeepCopyObject().(client.Object)
+		if err := k8sClient.Get(ctx, key, fresh); err != nil {
+			return apierrors.IsNotFound(err)
+		}
+		if len(fresh.GetFinalizers()) > 0 {
+			fresh.SetFinalizers(nil)
+			if err := k8sClient.Update(ctx, fresh); err != nil {
+				return false
+			}
+		}
+		if err := k8sClient.Delete(ctx, fresh); err != nil && !apierrors.IsNotFound(err) {
+			return false
+		}
+		err := k8sClient.Get(ctx, key, obj.DeepCopyObject().(client.Object))
+		return apierrors.IsNotFound(err)
+	}, timeout, interval).Should(BeTrue())
+}
 
 // createTestAPIKeySecret creates a test Secret containing an API key for use in tests
 // It ensures any existing Secret with the same name is deleted first to avoid conflicts

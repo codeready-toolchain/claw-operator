@@ -47,24 +47,10 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 		ctx := context.Background()
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
-
-			// Cleanup API key Secret
-			secret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
-			_ = k8sClient.Delete(ctx, secret)
-
-			// Cleanup all managed resources
-			configMap := &corev1.ConfigMap{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace}, configMap)
-			_ = k8sClient.Delete(ctx, configMap)
-
-			deployment := &appsv1.Deployment{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
-			_ = k8sClient.Delete(ctx, deployment)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
+			deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
 		})
 
 		It("should create Deployment for OpenClaw named 'instance'", func() {
@@ -174,15 +160,9 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 		ctx := context.Background()
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
-
-			// Cleanup configmap if it was created
-			configMap := &corev1.ConfigMap{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace}, configMap)
-			_ = k8sClient.Delete(ctx, configMap)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
 		})
 
 		It("should skip Deployment creation for non-matching names", func() {

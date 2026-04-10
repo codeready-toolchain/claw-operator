@@ -43,24 +43,10 @@ var _ = Describe("OpenClaw URL Status Field", func() {
 		ctx := context.Background()
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
-
-			// Cleanup API key Secret
-			apiSecret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, apiSecret)
-			_ = k8sClient.Delete(ctx, apiSecret)
-
-			// Cleanup deployments
-			openclawDeployment := &appsv1.Deployment{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, openclawDeployment)
-			_ = k8sClient.Delete(ctx, openclawDeployment)
-
-			proxyDeployment := &appsv1.Deployment{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw-proxy", Namespace: namespace}, proxyDeployment)
-			_ = k8sClient.Delete(ctx, proxyDeployment)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+			deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
+			deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: "openclaw-proxy", Namespace: namespace})
 		})
 
 		It("should populate URL field when both deployments are ready and Route exists", func() {
@@ -199,10 +185,7 @@ var _ = Describe("OpenClaw URL Status Field", func() {
 		})
 
 		AfterEach(func() {
-			// Cleanup gateway secret
-			gatewaySecret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret)
-			_ = k8sClient.Delete(ctx, gatewaySecret)
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
 		})
 
 		It("should retrieve and decode gateway token from openclaw-secrets", func() {
