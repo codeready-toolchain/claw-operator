@@ -53,7 +53,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
 				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
 				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: "openclaw-proxy", Namespace: namespace})
+				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
 			})
 
 			t.Log("Creating a new OpenClaw named 'instance'")
@@ -96,7 +96,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
 				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
 				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace})
-				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: "openclaw-proxy", Namespace: namespace})
+				deleteAndWait(ctx, &appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace})
 			})
 
 			t.Log("Creating a new OpenClaw named 'instance'")
@@ -145,7 +145,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw-proxy", Namespace: namespace}, proxyDeployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 				return err == nil
 			}, "openclaw-proxy deployment to be created")
 
