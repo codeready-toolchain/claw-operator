@@ -51,7 +51,8 @@
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -cover)",
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.34.1-darwin-arm64\" go test -p 1 ./internal/controller -v)",
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -run TestOpenClaw)",
-      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -v)"
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -v)",
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -run TestOpenClawPersistentVolumeClaim -v)"
     ]
   }
 }

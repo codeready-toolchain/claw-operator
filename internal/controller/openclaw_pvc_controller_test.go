@@ -19,10 +19,10 @@ package controller
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -201,15 +201,11 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			require.NoError(t, err, "reconcile failed")
 
 			// Verify PVC was NOT created
-			// Sleep to give reconciler time to (incorrectly) create resources
-			time.Sleep(2 * time.Second)
-
 			pvc = &corev1.PersistentVolumeClaim{}
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      OpenClawPVCName,
-				Namespace: namespace,
-			}, pvc)
-			require.Error(t, err, "PVC should not have been created for non-instance OpenClaw")
+			waitFor(t, timeout, interval, func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawPVCName, Namespace: namespace}, pvc)
+				return apierrors.IsNotFound(err)
+			}, "PVC should not have been created for non-instance OpenClaw")
 		})
 	})
 }
