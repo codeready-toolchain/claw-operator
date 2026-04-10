@@ -176,6 +176,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 
 			t.Cleanup(func() {
 				deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+				deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
 			})
 
 			// Create a new OpenClaw with name 'other-instance'
