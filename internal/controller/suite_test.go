@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -92,7 +93,7 @@ func deleteAndWait(ctx context.Context, obj client.Object, key client.ObjectKey)
 	Eventually(func() bool {
 		fresh := obj.DeepCopyObject().(client.Object)
 		if err := k8sClient.Get(ctx, key, fresh); err != nil {
-			return true
+			return apierrors.IsNotFound(err)
 		}
 		if len(fresh.GetFinalizers()) > 0 {
 			fresh.SetFinalizers(nil)
@@ -100,8 +101,11 @@ func deleteAndWait(ctx context.Context, obj client.Object, key client.ObjectKey)
 				return false
 			}
 		}
-		_ = k8sClient.Delete(ctx, fresh)
-		return k8sClient.Get(ctx, key, fresh) != nil
+		if err := k8sClient.Delete(ctx, fresh); err != nil && !apierrors.IsNotFound(err) {
+			return false
+		}
+		err := k8sClient.Get(ctx, key, obj.DeepCopyObject().(client.Object))
+		return apierrors.IsNotFound(err)
 	}, timeout, interval).Should(BeTrue())
 }
 

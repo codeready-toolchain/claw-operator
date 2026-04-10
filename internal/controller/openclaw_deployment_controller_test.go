@@ -161,6 +161,7 @@ var _ = Describe("OpenClawDeployment Controller", func() {
 
 		AfterEach(func() {
 			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
 			deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
 		})
 
