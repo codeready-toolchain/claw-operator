@@ -42,15 +42,8 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 		ctx := context.Background()
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
-
-			// Cleanup API key Secret
-			apiSecret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, apiSecret)
-			_ = k8sClient.Delete(ctx, apiSecret)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
 		})
 
 		It("should configure proxy deployment to reference the user's Secret", func() {
@@ -193,6 +186,10 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 	})
 
 	It("should fail to configure proxy deployment if the Secret does not exist", func() {
+		DeferCleanup(func() {
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: OpenClawInstanceName, Namespace: namespace})
+		})
+
 		By("Creating OpenClaw instance")
 		instance := &openclawv1alpha1.OpenClaw{}
 		instance.Name = OpenClawInstanceName

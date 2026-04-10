@@ -43,20 +43,9 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 		ctx := context.Background()
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
-
-			// Cleanup API key Secret
-			secret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
-			_ = k8sClient.Delete(ctx, secret)
-
-			// Cleanup configmap
-			configMap := &corev1.ConfigMap{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace}, configMap)
-			_ = k8sClient.Delete(ctx, configMap)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
 		})
 
 		It("should create ConfigMap for OpenClaw named 'instance'", func() {
@@ -157,10 +146,7 @@ var _ = Describe("OpenClawConfigMap Controller", func() {
 		ctx := context.Background()
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
 		})
 
 		It("should skip ConfigMap creation for non-matching names", func() {

@@ -141,24 +141,9 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 		})
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			if err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance); err == nil {
-				_ = k8sClient.Delete(ctx, instance)
-				// Wait for deletion to complete
-				Eventually(func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-					return err != nil
-				}, timeout, interval).Should(BeTrue())
-			}
-
-			secret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
-			_ = k8sClient.Delete(ctx, secret)
-
-			configMap := &corev1.ConfigMap{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace}, configMap)
-			_ = k8sClient.Delete(ctx, configMap)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
 		})
 
 		It("should create ConfigMap with localhost fallback when Route CRD not available", func() {
@@ -217,13 +202,8 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 		ctx := context.Background()
 
 		AfterEach(func() {
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
-
-			secret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
-			_ = k8sClient.Delete(ctx, secret)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
 		})
 
 		It("should still configure proxy deployment and stamp secret version", func() {

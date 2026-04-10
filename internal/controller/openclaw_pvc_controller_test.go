@@ -43,20 +43,9 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 		ctx := context.Background()
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
-
-			// Cleanup API key Secret
-			secret := &corev1.Secret{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
-			_ = k8sClient.Delete(ctx, secret)
-
-			// Cleanup PVC
-			pvc := &corev1.PersistentVolumeClaim{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawPVCName, Namespace: namespace}, pvc)
-			_ = k8sClient.Delete(ctx, pvc)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
+			deleteAndWait(ctx, &corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: OpenClawPVCName, Namespace: namespace})
 		})
 
 		It("should create PVC for OpenClaw named 'instance'", func() {
@@ -181,10 +170,7 @@ var _ = Describe("OpenClawPersistentVolumeClaim Controller", func() {
 		})
 
 		AfterEach(func() {
-			// Cleanup resources
-			instance := &openclawv1alpha1.OpenClaw{}
-			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
-			_ = k8sClient.Delete(ctx, instance)
+			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
 		})
 
 		It("should skip PVC creation for non-matching names", func() {

@@ -85,6 +85,26 @@ var _ = AfterSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 })
 
+// deleteAndWait deletes an object and waits until the API server confirms it's gone.
+// Retries the entire get-strip-delete cycle to handle conflicts from stale ResourceVersions.
+// Strips finalizers since envtest doesn't run controllers to process them (e.g. PVC protection).
+func deleteAndWait(ctx context.Context, obj client.Object, key client.ObjectKey) {
+	Eventually(func() bool {
+		fresh := obj.DeepCopyObject().(client.Object)
+		if err := k8sClient.Get(ctx, key, fresh); err != nil {
+			return true
+		}
+		if len(fresh.GetFinalizers()) > 0 {
+			fresh.SetFinalizers(nil)
+			if err := k8sClient.Update(ctx, fresh); err != nil {
+				return false
+			}
+		}
+		_ = k8sClient.Delete(ctx, fresh)
+		return k8sClient.Get(ctx, key, fresh) != nil
+	}, timeout, interval).Should(BeTrue())
+}
+
 // createTestAPIKeySecret creates a test Secret containing an API key for use in tests
 // It ensures any existing Secret with the same name is deleted first to avoid conflicts
 func createTestAPIKeySecret(name, namespace, key, value string) *corev1.Secret { //nolint:unparam
