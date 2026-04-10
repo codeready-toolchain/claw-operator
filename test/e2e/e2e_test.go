@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,7 +168,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 					podNames := utils.GetNonEmptyLines(podOutput)
 					if len(podNames) == 1 {
 						controllerPodName = podNames[0]
-						if assert.Contains(t, controllerPodName, "controller-manager") {
+						if strings.Contains(controllerPodName, "controller-manager") {
 							// Validate the pod's status
 							cmd = exec.Command("kubectl", "get",
 								"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
@@ -211,7 +212,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			for time.Now().Before(deadline) {
 				cmd := exec.Command("kubectl", "get", "endpoints", metricsServiceName, "-n", operatorNamespace)
 				output, err := utils.Run(t, cmd)
-				if err == nil && assert.Contains(t, output, "8443") {
+				if err == nil && strings.Contains(output, "8443") {
 					break
 				}
 				time.Sleep(pollInterval)
@@ -222,7 +223,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			for time.Now().Before(deadline) {
 				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", operatorNamespace)
 				output, err := utils.Run(t, cmd)
-				if err == nil && assert.Contains(t, output, "controller-runtime.metrics\tServing metrics server") {
+				if err == nil && strings.Contains(output, "controller-runtime.metrics\tServing metrics server") {
 					break
 				}
 				time.Sleep(pollInterval)
@@ -409,7 +410,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 					"-o", "jsonpath={.items[*].status.phase}",
 					"-n", userNamespace)
 				output, err := utils.Run(t, cmd)
-				if err == nil && assert.Contains(t, output, "Running") {
+				if err == nil && strings.Contains(output, "Running") {
 					break
 				}
 				time.Sleep(pollInterval)
