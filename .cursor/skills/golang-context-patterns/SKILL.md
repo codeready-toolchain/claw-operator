@@ -53,8 +53,10 @@ func (s *Server) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 ```go
 func (s *SessionService) CreateSession(ctx context.Context, req CreateSessionRequest) (*ent.AlertSession, error) {
-	// Use background context with timeout for database write
-	writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	writeCtx, cancel := context.WithTimeoutCause(
+		context.Background(), 5*time.Second,
+		fmt.Errorf("create session %s: db write timed out", req.SessionID),
+	)
 	defer cancel()
 	
 	tx, err := s.client.Tx(writeCtx)
@@ -63,7 +65,6 @@ func (s *SessionService) CreateSession(ctx context.Context, req CreateSessionReq
 	}
 	defer func() { _ = tx.Rollback() }()
 	
-	// Use writeCtx for all database operations
 	session, err := tx.AlertSession.Create().
 		SetID(req.SessionID).
 		Save(writeCtx)
@@ -86,11 +87,12 @@ func (s *SessionService) CreateSession(ctx context.Context, req CreateSessionReq
 
 ## Context Timeout Patterns
 
-**WithTimeout for operations with deadline:**
+**WithTimeoutCause for operations with deadline:**
 ```go
 func FetchData(ctx context.Context, url string) ([]byte, error) {
-	// Operation must complete in 10 seconds
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeoutCause(ctx, 10*time.Second,
+		fmt.Errorf("fetch %s timed out", url),
+	)
 	defer cancel()
 	
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -104,29 +106,29 @@ func FetchData(ctx context.Context, url string) ([]byte, error) {
 }
 ```
 
-**WithDeadline for specific time:**
+**WithDeadlineCause for specific time:**
 ```go
 func ProcessByDeadline(ctx context.Context, deadline time.Time) error {
-	ctx, cancel := context.WithDeadline(ctx, deadline)
+	ctx, cancel := context.WithDeadlineCause(ctx, deadline,
+		fmt.Errorf("processing missed deadline %s", deadline),
+	)
 	defer cancel()
 	
-	// Work must complete by deadline
 	return doWork(ctx)
 }
 ```
 
 ## Context Cancellation
 
-**WithCancel for manual cancellation:**
+**WithCancelCause for manual cancellation:**
 ```go
 func ProcessWithCancel(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	
-	// Start background goroutine
 	go func() {
 		if err := backgroundWork(ctx); err != nil {
-			cancel()  // Cancel if background work fails
+			cancel(fmt.Errorf("background work failed: %w", err))
 		}
 	}()
 	
@@ -137,15 +139,13 @@ func ProcessWithCancel(ctx context.Context) error {
 **Checking for cancellation:**
 ```go
 func LongOperation(ctx context.Context) error {
-	for i := 0; i < 1000; i++ {
-		// Check if cancelled
+	for i := range 1000 {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()  // Returns context.Canceled or context.DeadlineExceeded
+			return context.Cause(ctx) // Returns the cause error, or ctx.Err() if no cause was set
 		default:
 		}
 		
-		// Do work
 		processItem(i)
 	}
 	return nil
@@ -172,7 +172,9 @@ func (s *SessionService) GetSession(ctx context.Context, id string) (*ent.AlertS
 **Query with timeout:**
 ```go
 func (s *SessionService) ListSessions(ctx context.Context, limit int) ([]*ent.AlertSession, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	queryCtx, cancel := context.WithTimeoutCause(ctx, 3*time.Second,
+		fmt.Errorf("list sessions query timed out"),
+	)
 	defer cancel()
 	
 	sessions, err := s.client.AlertSession.
@@ -194,9 +196,8 @@ func ProcessConcurrently(ctx context.Context, items []string) error {
 	errChan := make(chan error, len(items))
 	
 	for _, item := range items {
-		item := item
 		go func() {
-			errChan <- processItem(ctx, item)  // Pass context
+			errChan <- processItem(ctx, item)
 		}()
 	}
 	
@@ -212,17 +213,16 @@ func ProcessConcurrently(ctx context.Context, items []string) error {
 **Cancelling goroutines on error:**
 ```go
 func ProcessWithEarlyExit(ctx context.Context, items []string) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	
 	errChan := make(chan error, len(items))
 	
 	for _, item := range items {
-		item := item
 		go func() {
 			err := processItem(ctx, item)
 			if err != nil {
-				cancel()  // Cancel all other goroutines
+				cancel(err)
 			}
 			errChan <- err
 		}()
@@ -237,12 +237,27 @@ func ProcessWithEarlyExit(ctx context.Context, items []string) error {
 }
 ```
 
+## Context AfterFunc
+
+**Run cleanup when context is cancelled:**
+```go
+func WatchResource(ctx context.Context, res *Resource) {
+	stop := context.AfterFunc(ctx, func() {
+		res.Release()
+	})
+	defer stop() // Prevent AfterFunc from firing if we return normally
+	
+	// ... use resource ...
+}
+```
+
 ## Context Best Practices
 
 **DO:**
 - Always pass context as first parameter
 - Use `context.Background()` as root context
-- Use `context.WithTimeout()` for operations with time limits
+- Use `WithTimeoutCause`/`WithCancelCause`/`WithDeadlineCause` — always attach a cause
+- Use `context.Cause(ctx)` to retrieve the cause on cancellation
 - Use background context with timeout for database writes that should complete
 - Check `ctx.Done()` in long-running loops
 - Propagate context through call chains
@@ -270,11 +285,12 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 // Service Layer
 func (s *SessionService) CreateSession(httpCtx context.Context, req CreateSessionRequest) (*ent.AlertSession, error) {
-	// Create background context with timeout for database write
-	writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	writeCtx, cancel := context.WithTimeoutCause(
+		context.Background(), 5*time.Second,
+		fmt.Errorf("create session: db write timed out"),
+	)
 	defer cancel()
 	
-	// Use writeCtx for database operations
 	tx, err := s.client.Tx(writeCtx)
 	// ...
 }
@@ -283,8 +299,10 @@ func (s *SessionService) CreateSession(httpCtx context.Context, req CreateSessio
 **Background job context:**
 ```go
 func (s *SessionService) CleanupOldSessions(ctx context.Context) error {
-	// Background jobs typically use context.Background() with timeout
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	cleanupCtx, cancel := context.WithTimeoutCause(
+		context.Background(), 30*time.Second,
+		fmt.Errorf("session cleanup timed out"),
+	)
 	defer cancel()
 	
 	count, err := s.SoftDeleteOldSessions(cleanupCtx, 90)
@@ -303,8 +321,11 @@ func (s *SessionService) CleanupOldSessions(ctx context.Context) error {
 
 ```go
 func (s *Service) WriteOperation(httpCtx context.Context, data Data) error {
-	// 1. Create background context with timeout for reliability
-	writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 1. Create background context with timeout+cause for reliability and diagnostics
+	writeCtx, cancel := context.WithTimeoutCause(
+		context.Background(), 5*time.Second,
+		fmt.Errorf("write operation: db timed out"),
+	)
 	defer cancel()
 	
 	// 2. Begin transaction with write context
@@ -335,17 +356,18 @@ func (s *Service) WriteOperation(httpCtx context.Context, data Data) error {
 
 **Context creation:**
 ```go
-context.Background()              // Root context
-context.TODO()                    // When unsure which to use
-context.WithCancel(parent)        // Manual cancellation
-context.WithTimeout(parent, 5*time.Second)   // Timeout
-context.WithDeadline(parent, deadline)       // Specific deadline
+context.Background()                       // Root context
+context.TODO()                             // When unsure which to use
+context.WithCancelCause(parent)            // Manual cancellation with reason
+context.WithTimeoutCause(parent, d, err)   // Timeout with reason
+context.WithDeadlineCause(parent, t, err)  // Deadline with reason
+context.AfterFunc(ctx, fn)                 // Run fn when ctx is cancelled
 ```
 
 **Context checking:**
 ```go
 <-ctx.Done()                      // Wait for cancellation
-ctx.Err()                         // Get cancellation reason
+context.Cause(ctx)                // Get the cause error, or ctx.Err() if no cause was set
 errors.Is(err, context.Canceled)  // Check if cancelled
 errors.Is(err, context.DeadlineExceeded)  // Check if timed out
 ```

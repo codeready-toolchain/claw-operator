@@ -248,7 +248,7 @@ func (s *Service) Transaction(ctx context.Context) error {
 
 ## Multiple Error Handling
 
-**Using errors.Join() (Go 1.20+):**
+**Using errors.Join():**
 ```go
 func ValidateRequest(req Request) error {
 	var errs []error

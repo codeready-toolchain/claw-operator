@@ -1,5 +1,5 @@
 ---
-name: karpathy-guidelines
+name: karpathy-modified-guidelines
 description: Behavioral guidelines to reduce common LLM coding mistakes by emphasizing thinking before coding, simplicity, surgical changes, and goal-driven execution. Use when implementing features, fixing bugs, refactoring code, or performing any coding task.
 ---
 
@@ -37,21 +37,22 @@ Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, sim
 **Touch only what you must. Clean up only your own mess.**
 
 When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
+- Don't go on unrelated cleanup sprees, but fix obvious issues (bugs, stale comments) adjacent to your changes.
 - Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
+- Use modern language idioms — follow project skills over legacy patterns in the file.
+- Match existing code style (naming, formatting) unless it conflicts with best practices.
 
 When your changes create orphans:
 - Remove imports/variables/functions that your changes made unused.
 
-The test: Every changed line should trace directly to the user's request.
+The test: Every changed line should trace directly to the user's request, or to using a modern idiom the project's skills require.
 
 ## 4. Goal-Driven Execution
 
 **Define success criteria. Loop until verified.**
 
 Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Add validation" → "Implement checks, verify existing tests still pass"
 - "Fix the bug" → "Write a test that reproduces it, then make it pass"
 - "Refactor X" → "Ensure tests pass before and after"
 
@@ -70,7 +71,7 @@ When working on a task:
 
 1. **Before starting**: State assumptions and ask clarifying questions
 2. **While coding**: Keep it minimal - resist over-engineering
-3. **During changes**: Make surgical edits, match existing style
+3. **During changes**: Make surgical edits, use modern idioms in new/changed code
 4. **Throughout**: Define success criteria and verify against them
 
 These guidelines help prevent common pitfalls:
