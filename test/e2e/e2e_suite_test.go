@@ -103,7 +103,10 @@ func TestMain(m *testing.M) {
 // console so that long-running setup steps (Docker build, image load) produce
 // visible progress output instead of appearing to hang.
 func runStreaming(name string, args ...string) error {
-	dir, _ := utils.GetProjectDir()
+	dir, err := utils.GetProjectDir()
+	if err != nil {
+		return fmt.Errorf("failed to get project directory: %w", err)
+	}
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout

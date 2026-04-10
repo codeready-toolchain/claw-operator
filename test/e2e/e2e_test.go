@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/codeready-toolchain/openclaw-operator/test/utils"
 )
@@ -678,17 +680,14 @@ func fetchFreshMetrics(t *testing.T, podName string) string {
 	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to create metrics pod")
 
-	deadline := time.Now().Add(defaultTimeout)
-	for time.Now().Before(deadline) {
+	err = wait.PollUntilContextTimeout(context.Background(), pollInterval, defaultTimeout, true, func(ctx context.Context) (bool, error) {
 		cmd := exec.Command("kubectl", "get", "pods", podName,
 			"-o", "jsonpath={.status.phase}",
 			"-n", operatorNamespace)
 		output, err := utils.Run(t, cmd)
-		if err == nil && output == "Succeeded" {
-			break
-		}
-		time.Sleep(pollInterval)
-	}
+		return err == nil && output == "Succeeded", nil
+	})
+	require.NoError(t, err, "pod %s did not reach Succeeded phase within %v", podName, defaultTimeout)
 
 	cmd = exec.Command("kubectl", "logs", podName, "-n", operatorNamespace)
 	metricsOutput, err := utils.Run(t, cmd)

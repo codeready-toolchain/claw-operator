@@ -78,7 +78,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			assert.Equal(t, ClawGatewaySecretName, updatedInstance.Status.GatewayTokenSecretRef)
 		})
 
-		t.Run("should set Available condition to False after initial resource creation", func(t *testing.T) {
+		t.Run("should set Ready condition to False after initial resource creation", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -112,7 +112,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			// Checking if Available condition is set to False
+			// Checking if Ready condition is set to False
 			waitFor(t, timeout, interval, func() bool {
 				updatedInstance := &openclawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
@@ -121,10 +121,10 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				}
 				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 				return condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "Provisioning"
-			}, "Available condition should be False with Provisioning reason")
+			}, "Ready condition should be False with Provisioning reason")
 		})
 
-		t.Run("should keep Available condition False when only openclaw Deployment is ready", func(t *testing.T) {
+		t.Run("should keep Ready condition False when only openclaw Deployment is ready", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -182,16 +182,16 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			// Checking Available condition remains False
+			// Checking Ready condition remains False
 			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
-			require.NotNil(t, condition, "Available condition should not be nil")
-			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Available condition status")
-			assert.Equal(t, "Provisioning", condition.Reason, "Available condition reason")
+			require.NotNil(t, condition, "Ready condition should not be nil")
+			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Ready condition status")
+			assert.Equal(t, "Provisioning", condition.Reason, "Ready condition reason")
 		})
 
-		t.Run("should keep Available condition False when only openclaw-proxy Deployment is ready", func(t *testing.T) {
+		t.Run("should keep Ready condition False when only openclaw-proxy Deployment is ready", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -249,16 +249,16 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			// Checking Available condition remains False
+			// Checking Ready condition remains False
 			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
-			require.NotNil(t, condition, "Available condition should not be nil")
-			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Available condition status")
-			assert.Equal(t, "Provisioning", condition.Reason, "Available condition reason")
+			require.NotNil(t, condition, "Ready condition should not be nil")
+			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Ready condition status")
+			assert.Equal(t, "Provisioning", condition.Reason, "Ready condition reason")
 		})
 
-		t.Run("should set Available condition to True when both Deployments are ready", func(t *testing.T) {
+		t.Run("should set Ready condition to True when both Deployments are ready", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -330,13 +330,13 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			// Checking Available condition is True
+			// Checking Ready condition is True
 			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
-			require.NotNil(t, condition, "Available condition should not be nil")
-			assert.Equal(t, metav1.ConditionTrue, condition.Status, "Available condition status")
-			assert.Equal(t, "Ready", condition.Reason, "Available condition reason")
+			require.NotNil(t, condition, "Ready condition should not be nil")
+			assert.Equal(t, metav1.ConditionTrue, condition.Status, "Ready condition status")
+			assert.Equal(t, "Ready", condition.Reason, "Ready condition reason")
 		})
 
 		t.Run("should update LastTransitionTime only on status change", func(t *testing.T) {
@@ -387,7 +387,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					return true
 				}
 				return false
-			}, "initial Available condition should be set")
+			}, "initial Ready condition should be set")
 
 			// Updating both Deployments to Available=True
 			deployment := &appsv1.Deployment{}
@@ -441,7 +441,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					return true
 				}
 				return false
-			}, "Available condition should transition to True")
+			}, "Ready condition should transition to True")
 
 			// In fast test environments, timestamps might be the same, but should not go backwards
 			assert.False(t, secondTransitionTime.Time.Before(initialTransitionTime.Time), "LastTransitionTime should not go backwards")
@@ -495,7 +495,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					return true
 				}
 				return false
-			}, "initial Available condition should be False")
+			}, "initial Ready condition should be False")
 
 			// Second reconciliation - status remains False
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
@@ -510,8 +510,8 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
-			require.NotNil(t, condition, "Available condition should not be nil")
-			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Available condition status")
+			require.NotNil(t, condition, "Ready condition should not be nil")
+			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Ready condition status")
 			assert.Equal(t, initialTransitionTime, condition.LastTransitionTime, "LastTransitionTime should not have changed")
 		})
 
@@ -550,7 +550,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			// Should not error even if deployments don't exist yet
 			require.NoError(t, err, "reconcile should not error even if deployments don't exist")
 
-			// Checking Available condition is set to False
+			// Checking Ready condition is set to False
 			waitFor(t, timeout, interval, func() bool {
 				updatedInstance := &openclawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
@@ -559,7 +559,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				}
 				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 				return condition != nil && condition.Status == metav1.ConditionFalse
-			}, "Available condition should be set to False when deployments are missing")
+			}, "Ready condition should be set to False when deployments are missing")
 		})
 
 		t.Run("should set ObservedGeneration correctly in conditions", func(t *testing.T) {
