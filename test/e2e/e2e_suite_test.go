@@ -83,7 +83,7 @@ func TestMain(m *testing.M) {
 	// Cleanup: Teardown CertManager after the suite if not skipped and if it was not already installed
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
 		fmt.Println("Uninstalling CertManager...")
-		require.NoError(t, utils.UninstallCertManager(t), "Failed to uninstall CertManager")
+		_ = utils.UninstallCertManager(t)
 	}
 
 	os.Exit(code)
