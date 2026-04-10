@@ -680,13 +680,15 @@ func fetchFreshMetrics(t *testing.T, podName string) string {
 	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to create metrics pod")
 
-	err = wait.PollUntilContextTimeout(context.Background(), pollInterval, defaultTimeout, true, func(ctx context.Context) (bool, error) {
-		cmd := exec.Command("kubectl", "get", "pods", podName,
-			"-o", "jsonpath={.status.phase}",
-			"-n", operatorNamespace)
-		output, err := utils.Run(t, cmd)
-		return err == nil && output == "Succeeded", nil
-	})
+	ctx := context.Background()
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "pods", podName,
+				"-o", "jsonpath={.status.phase}",
+				"-n", operatorNamespace)
+			output, err := utils.Run(t, cmd)
+			return err == nil && output == "Succeeded", nil
+		})
 	require.NoError(t, err, "pod %s did not reach Succeeded phase within %v", podName, defaultTimeout)
 
 	cmd = exec.Command("kubectl", "logs", podName, "-n", operatorNamespace)
