@@ -18,50 +18,43 @@ package controller
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
 )
 
-var _ = Describe("OpenClaw Secret Reference Tests", func() {
-	const (
-		namespace       = "default"
-		apiKey          = "test-api-key"
-		apiKeySecret    = "test-gemini-secret-ref"
-		apiKeySecretKey = "api-key"
-	)
+func TestOpenClawSecretReference(t *testing.T) {
 
-	Context("When reconciling OpenClaw with Secret references", func() {
+	t.Run("When reconciling OpenClaw with Secret references", func(t *testing.T) {
 		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
-		AfterEach(func() {
-			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-		})
+		t.Run("should configure proxy deployment to reference the user's Secret", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
 
-		It("should configure proxy deployment to reference the user's Secret", func() {
-			By("Creating the referenced Secret")
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
-			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+			t.Log("Creating the referenced Secret")
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, secret), "Failed to create Secret")
 
-			By("Creating OpenClaw instance")
+			t.Log("Creating OpenClaw instance")
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "Failed to create OpenClaw instance")
 
-			By("Reconciling the OpenClaw instance")
+			t.Log("Reconciling the OpenClaw instance")
 			reconciler := &OpenClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
@@ -72,11 +65,11 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "Reconcile failed")
 
-			By("Verifying proxy deployment references the user's Secret")
+			t.Log("Verifying proxy deployment references the user's Secret")
 			deployment := &appsv1.Deployment{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      "openclaw-proxy",
 					Namespace: namespace,
@@ -89,32 +82,36 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 					if container.Name == OpenClawProxyDeploymentContainerName {
 						for _, env := range container.Env {
 							if env.Name == OpenClawProxyDeploymentGeminiAPiKeyEnvKey && env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
-								return env.ValueFrom.SecretKeyRef.Name == apiKeySecret &&
-									env.ValueFrom.SecretKeyRef.Key == apiKeySecretKey
+								return env.ValueFrom.SecretKeyRef.Name == aiModelSecret &&
+									env.ValueFrom.SecretKeyRef.Key == aiModelSecretKey
 							}
 						}
 					}
 				}
 				return false
-			}, timeout, interval).Should(BeTrue())
+			}, "proxy deployment to reference user's Secret")
 		})
 
-		It("should stamp Secret ResourceVersion annotation on pod template", func() {
-			By("Creating the referenced Secret")
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
-			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+		t.Run("should stamp Secret ResourceVersion annotation on pod template", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
 
-			By("Creating OpenClaw instance")
+			t.Log("Creating the referenced Secret")
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, secret), "Failed to create Secret")
+
+			t.Log("Creating OpenClaw instance")
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "Failed to create OpenClaw instance")
 
-			By("Reconciling the OpenClaw instance")
+			t.Log("Reconciling the OpenClaw instance")
 			reconciler := &OpenClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
@@ -125,11 +122,11 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "Reconcile failed")
 
-			By("Verifying pod template has Secret version annotation")
+			t.Log("Verifying pod template has Secret version annotation")
 			deployment := &appsv1.Deployment{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      "openclaw-proxy",
 					Namespace: namespace,
@@ -143,31 +140,29 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 				}
 				version, exists := annotations["openclaw.sandbox.redhat.com/gemini-secret-version"]
 				return exists && version == secret.ResourceVersion
-			}, timeout, interval).Should(BeTrue())
+			}, "pod template to have Secret version annotation")
 
-			By("Updating the Secret data")
-			err = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
-			Expect(err).NotTo(HaveOccurred())
+			t.Log("Updating the Secret data")
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: aiModelSecret, Namespace: namespace}, secret), "Failed to get Secret")
 			originalVersion := secret.ResourceVersion
-			secret.Data[apiKeySecretKey] = []byte("updated-api-key")
-			Expect(k8sClient.Update(ctx, secret)).Should(Succeed())
+			secret.Data[aiModelSecretKey] = []byte("updated-api-key")
+			require.NoError(t, k8sClient.Update(ctx, secret), "Failed to update Secret")
 
-			By("Fetching updated Secret to get new ResourceVersion")
-			err = k8sClient.Get(ctx, client.ObjectKey{Name: apiKeySecret, Namespace: namespace}, secret)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(secret.ResourceVersion).NotTo(Equal(originalVersion), "Secret ResourceVersion should change")
+			t.Log("Fetching updated Secret to get new ResourceVersion")
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: aiModelSecret, Namespace: namespace}, secret), "Failed to get updated Secret")
+			assert.NotEqual(t, originalVersion, secret.ResourceVersion, "Secret ResourceVersion should change")
 
-			By("Reconciling again after Secret update")
+			t.Log("Reconciling again after Secret update")
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "Reconcile failed after Secret update")
 
-			By("Verifying pod template annotation updated with new Secret version")
-			Eventually(func() bool {
+			t.Log("Verifying pod template annotation updated with new Secret version")
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      "openclaw-proxy",
 					Namespace: namespace,
@@ -181,26 +176,27 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 				}
 				version, exists := annotations["openclaw.sandbox.redhat.com/gemini-secret-version"]
 				return exists && version == secret.ResourceVersion && version != originalVersion
-			}, timeout, interval).Should(BeTrue())
+			}, "pod template annotation to update with new Secret version")
 		})
 	})
 
-	It("should fail to configure proxy deployment if the Secret does not exist", func() {
-		DeferCleanup(func() {
-			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: OpenClawInstanceName, Namespace: namespace})
+	t.Run("should fail to configure proxy deployment if the Secret does not exist", func(t *testing.T) {
+		ctx := context.Background()
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
 		})
 
-		By("Creating OpenClaw instance")
+		t.Log("Creating OpenClaw instance")
 		instance := &openclawv1alpha1.OpenClaw{}
 		instance.Name = OpenClawInstanceName
 		instance.Namespace = namespace
 		instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-			Name: apiKeySecret,
-			Key:  apiKeySecretKey,
+			Name: aiModelSecret,
+			Key:  aiModelSecretKey,
 		}
-		Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+		require.NoError(t, k8sClient.Create(ctx, instance), "Failed to create OpenClaw instance")
 
-		By("Reconciling the OpenClaw instance")
+		t.Log("Reconciling the OpenClaw instance")
 		reconciler := &OpenClawResourceReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
@@ -211,7 +207,7 @@ var _ = Describe("OpenClaw Secret Reference Tests", func() {
 				Namespace: namespace,
 			},
 		})
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("failed to stamp Secret version annotation: failed to get Secret test-gemini-secret-ref for version stamping"))
+		require.Error(t, err, "expected error when Secret does not exist")
+		assert.Contains(t, err.Error(), "failed to stamp Secret version annotation: failed to get Secret test-gemini-secret for version stamping")
 	})
-})
+}

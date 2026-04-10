@@ -23,8 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-
-	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
+	"testing"
 )
 
 const (
@@ -36,22 +35,18 @@ const (
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
 )
 
-func warnError(err error) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
-}
-
 // Run executes the provided command within this context
-func Run(cmd *exec.Cmd) (string, error) {
+func Run(t *testing.T, cmd *exec.Cmd) (string, error) {
 	dir, _ := GetProjectDir()
 	cmd.Dir = dir
 
 	if err := os.Chdir(cmd.Dir); err != nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "chdir dir: %q\n", err)
+		t.Logf("chdir dir: %q\n", err)
 	}
 
 	cmd.Env = append(os.Environ(), "GO111MODULE=on")
 	command := strings.Join(cmd.Args, " ")
-	_, _ = fmt.Fprintf(GinkgoWriter, "running: %q\n", command)
+	t.Logf("running: %q\n", command)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(output), fmt.Errorf("%q failed with error %q: %w", command, string(output), err)
@@ -61,25 +56,24 @@ func Run(cmd *exec.Cmd) (string, error) {
 }
 
 // InstallPrometheusOperator installs the prometheus Operator to be used to export the enabled metrics.
-func InstallPrometheusOperator() error {
+func InstallPrometheusOperator(t *testing.T) error {
 	url := fmt.Sprintf(prometheusOperatorURL, prometheusOperatorVersion)
 	cmd := exec.Command("kubectl", "create", "-f", url)
-	_, err := Run(cmd)
+	_, err := Run(t, cmd)
 	return err
 }
 
 // UninstallPrometheusOperator uninstalls the prometheus
-func UninstallPrometheusOperator() {
+func UninstallPrometheusOperator(t *testing.T) error {
 	url := fmt.Sprintf(prometheusOperatorURL, prometheusOperatorVersion)
 	cmd := exec.Command("kubectl", "delete", "-f", url)
-	if _, err := Run(cmd); err != nil {
-		warnError(err)
-	}
+	_, err := Run(t, cmd)
+	return err
 }
 
 // IsPrometheusCRDsInstalled checks if any Prometheus CRDs are installed
 // by verifying the existence of key CRDs related to Prometheus.
-func IsPrometheusCRDsInstalled() bool {
+func IsPrometheusCRDsInstalled(t *testing.T) bool {
 	// List of common Prometheus CRDs
 	prometheusCRDs := []string{
 		"prometheuses.monitoring.coreos.com",
@@ -88,7 +82,7 @@ func IsPrometheusCRDsInstalled() bool {
 	}
 
 	cmd := exec.Command("kubectl", "get", "crds", "-o", "custom-columns=NAME:.metadata.name")
-	output, err := Run(cmd)
+	output, err := Run(t, cmd)
 	if err != nil {
 		return false
 	}
@@ -105,19 +99,18 @@ func IsPrometheusCRDsInstalled() bool {
 }
 
 // UninstallCertManager uninstalls the cert manager
-func UninstallCertManager() {
+func UninstallCertManager(t *testing.T) error {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
 	cmd := exec.Command("kubectl", "delete", "-f", url)
-	if _, err := Run(cmd); err != nil {
-		warnError(err)
-	}
+	_, err := Run(t, cmd)
+	return err
 }
 
 // InstallCertManager installs the cert manager bundle.
-func InstallCertManager() error {
+func InstallCertManager(t *testing.T) error {
 	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
 	cmd := exec.Command("kubectl", "apply", "-f", url)
-	if _, err := Run(cmd); err != nil {
+	if _, err := Run(t, cmd); err != nil {
 		return err
 	}
 	// Wait for cert-manager-webhook to be ready, which can take time if cert-manager
@@ -128,13 +121,13 @@ func InstallCertManager() error {
 		"--timeout", "5m",
 	)
 
-	_, err := Run(cmd)
+	_, err := Run(t, cmd)
 	return err
 }
 
 // IsCertManagerCRDsInstalled checks if any Cert Manager CRDs are installed
 // by verifying the existence of key CRDs related to Cert Manager.
-func IsCertManagerCRDsInstalled() bool {
+func IsCertManagerCRDsInstalled(t *testing.T) bool {
 	// List of common Cert Manager CRDs
 	certManagerCRDs := []string{
 		"certificates.cert-manager.io",
@@ -147,7 +140,7 @@ func IsCertManagerCRDsInstalled() bool {
 
 	// Execute the kubectl command to get all CRDs
 	cmd := exec.Command("kubectl", "get", "crds")
-	output, err := Run(cmd)
+	output, err := Run(t, cmd)
 	if err != nil {
 		return false
 	}
@@ -166,14 +159,14 @@ func IsCertManagerCRDsInstalled() bool {
 }
 
 // LoadImageToKindClusterWithName loads a local docker image to the kind cluster
-func LoadImageToKindClusterWithName(name string) error {
+func LoadImageToKindClusterWithName(t *testing.T, name string) error {
 	cluster := "kind"
 	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
 		cluster = v
 	}
 	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
 	cmd := exec.Command("kind", kindOptions...)
-	_, err := Run(cmd)
+	_, err := Run(t, cmd)
 	return err
 }
 

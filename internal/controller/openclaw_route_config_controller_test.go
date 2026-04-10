@@ -19,9 +19,10 @@ package controller
 import (
 	"context"
 	"strings"
+	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -31,7 +32,7 @@ import (
 	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
 )
 
-var _ = Describe("OpenClaw Route Configuration", func() {
+func TestOpenClawRouteConfiguration(t *testing.T) {
 	const (
 		namespace       = "default"
 		apiKey          = "test-api-key"
@@ -39,8 +40,8 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 		apiKeySecretKey = "api-key"
 	)
 
-	Context("ConfigMap injection logic", func() {
-		It("should replace OPENCLAW_ROUTE_HOST placeholder with Route host", func() {
+	t.Run("ConfigMap injection logic", func(t *testing.T) {
+		t.Run("should replace OPENCLAW_ROUTE_HOST placeholder with Route host", func(t *testing.T) {
 			// Create a mock ConfigMap object with placeholder
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
@@ -60,17 +61,17 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 
 			// Inject Route host
 			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost)
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
 			// Verify replacement
 			openclawJSON, found, err := unstructured.NestedString(configMap.Object, "data", "openclaw.json")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeTrue())
-			Expect(openclawJSON).To(ContainSubstring(routeHost))
-			Expect(openclawJSON).NotTo(ContainSubstring("OPENCLAW_ROUTE_HOST"))
+			require.NoError(t, err, "failed to get openclaw.json")
+			assert.True(t, found, "openclaw.json not found in ConfigMap data")
+			assert.Contains(t, openclawJSON, routeHost)
+			assert.NotContains(t, openclawJSON, "OPENCLAW_ROUTE_HOST")
 		})
 
-		It("should replace all occurrences of OPENCLAW_ROUTE_HOST placeholder", func() {
+		t.Run("should replace all occurrences of OPENCLAW_ROUTE_HOST placeholder", func(t *testing.T) {
 			// Create a mock ConfigMap object with multiple placeholders
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
@@ -88,17 +89,17 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 			}
 
 			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost)
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
 			openclawJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "openclaw.json")
 			// Count occurrences of Route host
 			hostCount := strings.Count(openclawJSON, routeHost)
-			Expect(hostCount).To(Equal(2))
+			assert.Equal(t, 2, hostCount, "expected 2 occurrences of routeHost")
 			// Ensure no placeholder remains
-			Expect(openclawJSON).NotTo(ContainSubstring("OPENCLAW_ROUTE_HOST"))
+			assert.NotContains(t, openclawJSON, "OPENCLAW_ROUTE_HOST")
 		})
 
-		It("should use localhost fallback when routeHost is empty", func() {
+		t.Run("should use localhost fallback when routeHost is empty", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
 			configMap.SetName(OpenClawConfigMapName)
@@ -115,52 +116,48 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 			}
 
 			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost)
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
 			openclawJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "openclaw.json")
-			Expect(openclawJSON).To(ContainSubstring("http://localhost:18789"))
-			Expect(openclawJSON).NotTo(ContainSubstring("OPENCLAW_ROUTE_HOST"))
+			assert.Contains(t, openclawJSON, "http://localhost:18789")
+			assert.NotContains(t, openclawJSON, "OPENCLAW_ROUTE_HOST")
 		})
 	})
 
-	Context("When reconciling with Route CRD not registered", func() {
+	t.Run("When reconciling with Route CRD not registered", func(t *testing.T) {
 		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
-		BeforeEach(func() {
-			// Ensure cleanup before test starts (in case previous test didn't clean up)
+		t.Run("should create ConfigMap with localhost fallback when Route CRD not available", func(t *testing.T) {
+			// Cleanup before test starts (in case previous test didn't clean up)
 			instance := &openclawv1alpha1.OpenClaw{}
 			if err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance); err == nil {
 				_ = k8sClient.Delete(ctx, instance)
 				// Wait for deletion to complete
-				Eventually(func() bool {
+				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 					return err != nil
-				}, timeout, interval).Should(BeTrue())
+				}, "OpenClaw should be deleted")
 			}
-		})
 
-		AfterEach(func() {
-			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace})
-		})
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
 
-		It("should create ConfigMap with localhost fallback when Route CRD not available", func() {
-			By("Creating a new OpenClaw instance")
-			instance := &openclawv1alpha1.OpenClaw{}
+			// Create a new OpenClaw instance
+			instance = &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 
 			// Create API key Secret
 			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
-			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
 				Name: apiKeySecret,
 				Key:  apiKeySecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -168,18 +165,18 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource (Route CRD not available in envtest)")
+			// Reconcile the created resource (Route CRD not available in envtest)
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Checking if ConfigMap contains localhost fallback")
+			// Check if ConfigMap contains localhost fallback
 			configMap := &corev1.ConfigMap{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawConfigMapName,
 					Namespace: namespace,
@@ -193,51 +190,50 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 				}
 				// Should contain localhost fallback since Route CRD is not registered
 				return strings.Contains(openclawJSON, "http://localhost:18789")
-			}, timeout, interval).Should(BeTrue())
+			}, "ConfigMap should contain localhost fallback")
 		})
 	})
 
-	Context("Proxy deployment configuration", func() {
+	t.Run("Proxy deployment configuration", func(t *testing.T) {
 		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
-		AfterEach(func() {
-			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-		})
+		t.Run("should still configure proxy deployment and stamp secret version", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
 
-		It("should still configure proxy deployment and stamp secret version", func() {
-			By("Creating a new OpenClaw instance")
+			// Create a new OpenClaw instance
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 
-			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
-			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			reconciler := &OpenClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource")
+			// Reconcile the created resource
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Verifying buildKustomizedObjects still calls configureProxyDeployment and stampSecretVersionAnnotation")
+			// Verify buildKustomizedObjects still calls configureProxyDeployment and stampSecretVersionAnnotation
 			objects, err := reconciler.buildKustomizedObjects(ctx, instance)
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "buildKustomizedObjects failed")
 
 			// Find proxy deployment
 			var proxyDeployment *unstructured.Unstructured
@@ -247,19 +243,19 @@ var _ = Describe("OpenClaw Route Configuration", func() {
 					break
 				}
 			}
-			Expect(proxyDeployment).NotTo(BeNil())
+			require.NotNil(t, proxyDeployment, "proxy deployment not found in kustomized objects")
 
 			// Verify Secret reference is configured
 			containers, found, err := unstructured.NestedSlice(proxyDeployment.Object, "spec", "template", "spec", "containers")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeTrue())
-			Expect(containers).ToNot(BeEmpty())
+			require.NoError(t, err, "failed to get containers")
+			assert.True(t, found, "containers not found in proxy deployment")
+			assert.NotEmpty(t, containers, "expected at least one container in proxy deployment")
 
 			// Verify Secret version annotation is stamped
 			annotations, found, err := unstructured.NestedStringMap(proxyDeployment.Object, "spec", "template", "metadata", "annotations")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeTrue())
-			Expect(annotations).To(HaveKey("openclaw.sandbox.redhat.com/gemini-secret-version"))
+			require.NoError(t, err, "failed to get annotations")
+			assert.True(t, found, "annotations not found in proxy deployment pod template")
+			assert.Contains(t, annotations, "openclaw.sandbox.redhat.com/gemini-secret-version")
 		})
 	})
-})
+}

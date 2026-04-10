@@ -52,13 +52,20 @@ import (
 )
 
 const (
-	OpenClawResourceKind                      = "OpenClaw"
-	OpenClawInstanceName                      = "instance"
+	OpenClawResourceKind = "OpenClaw"
+	OpenClawInstanceName = "instance"
+
+	// Core resources
 	OpenClawConfigMapName                     = "openclaw-config"
 	OpenClawPVCName                           = "openclaw-home-pvc"
+	OpenClawNetworkPolicyName                 = "openclaw-egress"
+	OpenClawRouteName                         = "openclaw"
+	OpenClawServiceName                       = "openclaw"
 	OpenClawDeploymentName                    = "openclaw"
 	OpenClawGatewaySecretName                 = "openclaw-secrets"
 	GatewayTokenKeyName                       = "OPENCLAW_GATEWAY_TOKEN"
+	OpenClawProxyServiceName                  = "openclaw-proxy"
+	OpenClawProxyConfigMapName                = "openclaw-proxy-config"
 	OpenClawProxyDeploymentName               = "openclaw-proxy"
 	OpenClawProxyDeploymentContainerName      = "proxy"
 	OpenClawProxyDeploymentGeminiAPiKeyEnvKey = "GEMINI_API_KEY"

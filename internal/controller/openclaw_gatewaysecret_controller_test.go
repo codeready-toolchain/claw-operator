@@ -19,9 +19,10 @@ package controller
 import (
 	"context"
 	"regexp"
+	"testing"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -30,38 +31,30 @@ import (
 	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
 )
 
-var _ = Describe("OpenClawGatewaySecret Controller", func() {
-	const (
-		namespace       = "default"
-		testAPIKey      = "test-api-key-12345"
-		apiKeySecret    = "test-gemini-secret"
-		apiKeySecretKey = "api-key"
-	)
+func TestOpenClawGatewaySecretController(t *testing.T) {
 
-	Context("When reconciling an OpenClaw named 'instance'", func() {
+	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
 		const resourceName = OpenClawInstanceName
 		ctx := context.Background()
 
-		AfterEach(func() {
-			deleteAndWait(ctx, &openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: apiKeySecret, Namespace: namespace})
-			deleteAndWait(ctx, &corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace})
-		})
+		t.Run("should create gateway Secret when OpenClaw instance is reconciled", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
 
-		It("should create gateway Secret when OpenClaw instance is reconciled", func() {
-			By("Creating a new OpenClaw named 'instance' with APIKey")
+			// Create a new OpenClaw named 'instance' with APIKey
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
-			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
-			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
+			apiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, apiSecret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -69,43 +62,47 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource")
+			// Reconcile the created resource
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Checking if gateway Secret was created")
+			// Check if gateway Secret was created
 			secret := &corev1.Secret{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			}, "gateway Secret should be created")
 
-			By("Verifying Secret has OPENCLAW_GATEWAY_TOKEN data entry")
-			Expect(secret.Data).To(HaveKey(GatewayTokenKeyName))
+			// Verify Secret has OPENCLAW_GATEWAY_TOKEN data entry
+			assert.Contains(t, secret.Data, GatewayTokenKeyName)
 		})
 
-		It("should create token with exactly 64 hex characters", func() {
-			By("Creating a new OpenClaw named 'instance'")
+		t.Run("should create token with exactly 64 hex characters", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			// Create a new OpenClaw named 'instance'
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
-			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
-			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
+			apiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, apiSecret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -113,18 +110,18 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling to create Secret")
+			// Reconcile to create Secret
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Verifying token format and length")
+			// Verify token format and length
 			secret := &corev1.Secret{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawGatewaySecretName,
 					Namespace: namespace,
@@ -139,23 +136,27 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 				// Token should be exactly 64 hex characters
 				hexPattern := regexp.MustCompile("^[0-9a-f]{64}$")
 				return hexPattern.Match(token)
-			}, timeout, interval).Should(BeTrue())
+			}, "token should be exactly 64 hex characters")
 		})
 
-		It("should not regenerate token when secret already exists", func() {
-			By("Creating a new OpenClaw named 'instance'")
+		t.Run("should not regenerate token when secret already exists", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			// Create a new OpenClaw named 'instance'
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
-			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
-			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
+			apiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, apiSecret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -163,63 +164,68 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling to create Secret with initial token")
+			// Reconcile to create Secret with initial token
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Getting the initial token value")
+			// Get the initial token value
 			secret := &corev1.Secret{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				return err == nil && len(secret.Data[GatewayTokenKeyName]) > 0
-			}, timeout, interval).Should(BeTrue())
+			}, "initial token should be created")
 			initialToken := string(secret.Data[GatewayTokenKeyName])
 
-			By("Reconciling again")
+			// Reconcile again
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Verifying token was not regenerated")
+			// Verify token was not regenerated
 			secret = &corev1.Secret{}
-			Eventually(func() string {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
-					return ""
+					return false
 				}
-				return string(secret.Data[GatewayTokenKeyName])
-			}, timeout, interval).Should(Equal(initialToken))
+				currentToken := string(secret.Data[GatewayTokenKeyName])
+				return currentToken == initialToken
+			}, "token should not be regenerated")
 		})
 
-		It("should generate unique tokens for different reconciliations when secret is deleted", func() {
-			By("Creating a new OpenClaw named 'instance'")
+		t.Run("should generate unique tokens for different reconciliations when secret is deleted", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			// Create a new OpenClaw named 'instance'
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
-			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
-			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
+			apiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, apiSecret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -227,41 +233,41 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling to create Secret with first token")
+			// Reconcile to create Secret with first token
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Getting the first token value")
+			// Get the first token value
 			secret := &corev1.Secret{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				return err == nil && len(secret.Data[GatewayTokenKeyName]) > 0
-			}, timeout, interval).Should(BeTrue())
+			}, "first token should be created")
 			firstToken := string(secret.Data[GatewayTokenKeyName])
 
-			By("Deleting the Secret")
-			Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
+			// Delete the Secret
+			require.NoError(t, k8sClient.Delete(ctx, secret), "failed to delete Secret")
 
-			By("Reconciling again to generate a new token")
+			// Reconcile again to generate a new token
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Verifying a new unique token was generated")
+			// Verify a new unique token was generated
 			newSecret := &corev1.Secret{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawGatewaySecretName,
 					Namespace: namespace,
@@ -272,22 +278,26 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 				secondToken := string(newSecret.Data[GatewayTokenKeyName])
 				// Tokens should be different
 				return len(secondToken) > 0 && secondToken != firstToken
-			}, timeout, interval).Should(BeTrue())
+			}, "new unique token should be generated")
 		})
 
-		It("should set correct owner reference on gateway Secret during initial creation", func() {
-			By("Creating a new OpenClaw named 'instance'")
+		t.Run("should set correct owner reference on gateway Secret during initial creation", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			// Create a new OpenClaw named 'instance'
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
-			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
-			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
+			apiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, apiSecret), "failed to create Secret")
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -295,18 +305,18 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource")
+			// Reconcile the created resource
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Checking gateway Secret has correct owner reference")
+			// Check gateway Secret has correct owner reference
 			secret := &corev1.Secret{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawGatewaySecretName,
 					Namespace: namespace,
@@ -322,44 +332,48 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
-			}, timeout, interval).Should(BeTrue())
+			}, "gateway Secret should have correct owner reference")
 		})
 
-		It("should set correct owner reference on gateway Secret when it already existed", func() {
-			By("Creating a new OpenClaw named 'instance'")
+		t.Run("should set correct owner reference on gateway Secret when it already existed", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			// Create a new OpenClaw named 'instance'
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
-			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
-			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
+			apiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, apiSecret), "failed to create Secret")
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 			// Create gateway secret
-			gatewaySecret := createTestGatewaySecret(OpenClawGatewaySecretName, namespace)
-			Expect(k8sClient.Create(ctx, gatewaySecret)).Should(Succeed())
-			Expect(gatewaySecret.OwnerReferences).To(BeEmpty())
+			gatewaySecret := createTestGatewaySecret(t, OpenClawGatewaySecretName, namespace)
+			require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway Secret")
+			assert.Empty(t, gatewaySecret.OwnerReferences, "gateway Secret should not have owner references initially")
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling the created resource")
+			// Reconcile the created resource
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Checking gateway Secret has correct owner reference")
+			// Check gateway Secret has correct owner reference
 			secret := &corev1.Secret{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawGatewaySecretName,
 					Namespace: namespace,
@@ -375,23 +389,27 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
-			}, timeout, interval).Should(BeTrue())
+			}, "gateway Secret should have correct owner reference after reconciliation")
 		})
 
-		It("should have owner reference that enables garbage collection", func() {
-			By("Creating a new OpenClaw named 'instance'")
+		t.Run("should have owner reference that enables garbage collection", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			// Create a new OpenClaw named 'instance'
 			instance := &openclawv1alpha1.OpenClaw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
-			apiSecret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, testAPIKey)
-			Expect(k8sClient.Create(ctx, apiSecret)).Should(Succeed())
+			apiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, apiSecret), "failed to create Secret")
 
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: apiKeySecret,
-				Key:  apiKeySecretKey,
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
 			}
-			Expect(k8sClient.Create(ctx, instance)).Should(Succeed())
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
 			reconciler := &OpenClawResourceReconciler{
@@ -399,18 +417,18 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 				Scheme: scheme.Scheme,
 			}
 
-			By("Reconciling to create gateway Secret")
+			// Reconcile to create gateway Secret
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
 			})
-			Expect(err).NotTo(HaveOccurred())
+			require.NoError(t, err, "reconcile failed")
 
-			By("Verifying gateway Secret has owner reference for garbage collection")
+			// Verify gateway Secret has owner reference for garbage collection
 			secret := &corev1.Secret{}
-			Eventually(func() bool {
+			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      OpenClawGatewaySecretName,
 					Namespace: namespace,
@@ -427,7 +445,7 @@ var _ = Describe("OpenClawGatewaySecret Controller", func() {
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
-			}, timeout, interval).Should(BeTrue())
+			}, "gateway Secret should have owner reference for garbage collection")
 		})
 	})
-})
+}
