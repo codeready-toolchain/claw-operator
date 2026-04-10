@@ -34,7 +34,7 @@ import (
 func TestOpenClawGatewaySecretController(t *testing.T) {
 
 	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
-		const resourceName = OpenClawInstanceName
+		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
 		t.Run("should create gateway Secret when OpenClaw instance is reconciled", func(t *testing.T) {
@@ -43,7 +43,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance' with APIKey
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
@@ -57,7 +57,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -75,7 +75,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawGatewaySecretName,
+					Name:      ClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				return err == nil
@@ -91,7 +91,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
@@ -105,7 +105,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -123,7 +123,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawGatewaySecretName,
+					Name:      ClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -145,7 +145,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
@@ -159,7 +159,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -177,7 +177,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawGatewaySecretName,
+					Name:      ClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				return err == nil && len(secret.Data[GatewayTokenKeyName]) > 0
@@ -197,7 +197,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret = &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawGatewaySecretName,
+					Name:      ClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -214,7 +214,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
@@ -228,7 +228,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -246,7 +246,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawGatewaySecretName,
+					Name:      ClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				return err == nil && len(secret.Data[GatewayTokenKeyName]) > 0
@@ -269,7 +269,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			newSecret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawGatewaySecretName,
+					Name:      ClawGatewaySecretName,
 					Namespace: namespace,
 				}, newSecret)
 				if err != nil {
@@ -287,7 +287,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
@@ -300,7 +300,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -318,7 +318,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawGatewaySecretName,
+					Name:      ClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -328,7 +328,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 					return false
 				}
 				ownerRef := secret.OwnerReferences[0]
-				return ownerRef.Kind == OpenClawResourceKind &&
+				return ownerRef.Kind == ClawResourceKind &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
@@ -341,7 +341,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
@@ -353,11 +353,11 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 			// Create gateway secret
-			gatewaySecret := createTestGatewaySecret(t, OpenClawGatewaySecretName, namespace)
+			gatewaySecret := createTestGatewaySecret(t, ClawGatewaySecretName, namespace)
 			require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway Secret")
 			assert.Empty(t, gatewaySecret.OwnerReferences, "gateway Secret should not have owner references initially")
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -375,7 +375,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawGatewaySecretName,
+					Name:      ClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -385,7 +385,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 					return false
 				}
 				ownerRef := secret.OwnerReferences[0]
-				return ownerRef.Kind == OpenClawResourceKind &&
+				return ownerRef.Kind == ClawResourceKind &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
@@ -398,7 +398,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create required API key Secret
@@ -412,7 +412,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -430,7 +430,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawGatewaySecretName,
+					Name:      ClawGatewaySecretName,
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -441,7 +441,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				}
 				// Verify owner reference has BlockOwnerDeletion set
 				ownerRef := secret.OwnerReferences[0]
-				return ownerRef.Kind == OpenClawResourceKind &&
+				return ownerRef.Kind == ClawResourceKind &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true

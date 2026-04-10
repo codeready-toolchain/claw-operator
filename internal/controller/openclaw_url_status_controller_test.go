@@ -35,7 +35,7 @@ import (
 func TestOpenClawURLStatusField(t *testing.T) {
 
 	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
-		const resourceName = OpenClawInstanceName
+		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
 		t.Run("should populate URL field when both deployments are ready and Route exists", func(t *testing.T) {
@@ -48,7 +48,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			})
 
 			t.Log("Creating a new OpenClaw named 'instance'")
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -62,7 +62,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -77,7 +77,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			require.NoError(t, err, "reconcile failed")
 
 			t.Log("Checking URL field is empty when deployments not ready")
-			updatedInstance := &openclawv1alpha1.OpenClaw{}
+			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated OpenClaw instance")
 			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL")
 		})
@@ -88,7 +88,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			})
 
 			t.Log("Creating a new OpenClaw named 'instance'")
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -102,7 +102,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -119,7 +119,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			t.Log("Updating both Deployments to Available=True")
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 				return err == nil
 			}, "openclaw deployment to be created")
 
@@ -133,7 +133,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 				return err == nil
 			}, "openclaw-proxy deployment to be created")
 
@@ -155,7 +155,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			require.NoError(t, err, "reconcile failed")
 
 			t.Log("Checking URL field is empty when Route not found")
-			updatedInstance := &openclawv1alpha1.OpenClaw{}
+			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated OpenClaw instance")
 			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL")
 		})
@@ -174,11 +174,11 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		t.Helper()
 		// Ensure cleanup of any existing gateway secret before each test
 		gatewaySecret := &corev1.Secret{}
-		if err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret); err == nil {
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}, gatewaySecret); err == nil {
 			_ = k8sClient.Delete(ctx, gatewaySecret)
 			// Wait for deletion to complete
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}, gatewaySecret)
 				return err != nil
 			}, "gateway secret to be deleted")
 		}
@@ -192,7 +192,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 
 		t.Log("Creating gateway secret with token")
 		gatewaySecret := &corev1.Secret{}
-		gatewaySecret.Name = OpenClawGatewaySecretName
+		gatewaySecret.Name = ClawGatewaySecretName
 		gatewaySecret.Namespace = namespace
 		testToken := "test-gateway-token-123456"
 		gatewaySecret.Data = map[string][]byte{
@@ -201,7 +201,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway secret")
 
 		t.Log("Calling getGatewayToken method")
-		reconciler := &OpenClawResourceReconciler{
+		reconciler := &ClawResourceReconciler{
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
@@ -218,7 +218,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		})
 
 		t.Log("Calling getGatewayToken without creating secret")
-		reconciler := &OpenClawResourceReconciler{
+		reconciler := &ClawResourceReconciler{
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
@@ -236,7 +236,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 
 		t.Log("Creating gateway secret without token key")
 		gatewaySecret := &corev1.Secret{}
-		gatewaySecret.Name = OpenClawGatewaySecretName
+		gatewaySecret.Name = ClawGatewaySecretName
 		gatewaySecret.Namespace = namespace
 		gatewaySecret.Data = map[string][]byte{
 			"other-key": []byte("other-value"),
@@ -244,7 +244,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway secret")
 
 		t.Log("Calling getGatewayToken method")
-		reconciler := &OpenClawResourceReconciler{
+		reconciler := &ClawResourceReconciler{
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
@@ -262,7 +262,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 
 		t.Log("Creating gateway secret with empty token")
 		gatewaySecret := &corev1.Secret{}
-		gatewaySecret.Name = OpenClawGatewaySecretName
+		gatewaySecret.Name = ClawGatewaySecretName
 		gatewaySecret.Namespace = namespace
 		gatewaySecret.Data = map[string][]byte{
 			GatewayTokenKeyName: []byte(""),
@@ -270,7 +270,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway secret")
 
 		t.Log("Calling getGatewayToken method")
-		reconciler := &OpenClawResourceReconciler{
+		reconciler := &ClawResourceReconciler{
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
@@ -322,7 +322,7 @@ func TestURLConstructionWithTokenFragment(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := buildOpenClawURL(tt.routeURL, tt.token)
+				result := buildClawURL(tt.routeURL, tt.token)
 				assert.Equal(t, tt.expected, result, "URL construction result")
 			})
 		}
@@ -333,7 +333,7 @@ func TestURLConstructionWithTokenFragment(t *testing.T) {
 		routeURL := "https://openclaw-default.apps.cluster.example.com"
 		token := "64chartoken1234567890abcdef64chartoken1234567890abcdef123456"
 
-		result := buildOpenClawURL(routeURL, token)
+		result := buildClawURL(routeURL, token)
 
 		expected := "https://openclaw-default.apps.cluster.example.com#token=64chartoken1234567890abcdef64chartoken1234567890abcdef123456"
 		assert.Equal(t, expected, result, "URL construction result")

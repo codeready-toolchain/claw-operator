@@ -45,7 +45,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			// Create a mock ConfigMap object with placeholder
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(OpenClawConfigMapName)
+			configMap.SetName(ClawConfigMapName)
 			configMap.Object["data"] = map[string]any{
 				"openclaw.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
 			}
@@ -54,7 +54,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			routeHost := "https://example-openclaw.apps.cluster.com"
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -75,7 +75,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			// Create a mock ConfigMap object with multiple placeholders
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(OpenClawConfigMapName)
+			configMap.SetName(ClawConfigMapName)
 			configMap.Object["data"] = map[string]any{
 				"openclaw.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST","OPENCLAW_ROUTE_HOST"]}}}`,
 			}
@@ -83,7 +83,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			objects := []*unstructured.Unstructured{configMap}
 			routeHost := "https://example.com"
 
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -102,7 +102,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		t.Run("should use localhost fallback when routeHost is empty", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(OpenClawConfigMapName)
+			configMap.SetName(ClawConfigMapName)
 			configMap.Object["data"] = map[string]any{
 				"openclaw.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
 			}
@@ -110,7 +110,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			objects := []*unstructured.Unstructured{configMap}
 			routeHost := "" // Empty = vanilla Kubernetes
 
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -125,12 +125,12 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	})
 
 	t.Run("When reconciling with Route CRD not registered", func(t *testing.T) {
-		const resourceName = OpenClawInstanceName
+		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
 		t.Run("should create ConfigMap with localhost fallback when Route CRD not available", func(t *testing.T) {
 			// Cleanup before test starts (in case previous test didn't clean up)
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			if err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance); err == nil {
 				_ = k8sClient.Delete(ctx, instance)
 				// Wait for deletion to complete
@@ -145,7 +145,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			})
 
 			// Create a new OpenClaw instance
-			instance = &openclawv1alpha1.OpenClaw{}
+			instance = &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 
@@ -160,7 +160,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -178,7 +178,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawConfigMapName,
+					Name:      ClawConfigMapName,
 					Namespace: namespace,
 				}, configMap)
 				if err != nil {
@@ -195,7 +195,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	})
 
 	t.Run("Proxy deployment configuration", func(t *testing.T) {
-		const resourceName = OpenClawInstanceName
+		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
 		t.Run("should still configure proxy deployment and stamp secret version", func(t *testing.T) {
@@ -204,7 +204,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			})
 
 			// Create a new OpenClaw instance
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 
@@ -217,7 +217,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			}
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -238,7 +238,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			// Find proxy deployment
 			var proxyDeployment *unstructured.Unstructured
 			for _, obj := range objects {
-				if obj.GetKind() == DeploymentKind && obj.GetName() == OpenClawProxyDeploymentName {
+				if obj.GetKind() == DeploymentKind && obj.GetName() == ClawProxyDeploymentName {
 					proxyDeployment = obj
 					break
 				}

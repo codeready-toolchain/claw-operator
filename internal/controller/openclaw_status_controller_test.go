@@ -40,8 +40,43 @@ import (
 
 func TestOpenClawStatusConditions(t *testing.T) {
 	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
-		const resourceName = OpenClawInstanceName
+		const resourceName = ClawInstanceName
 		ctx := context.Background()
+
+		t.Run("should set GatewayTokenSecretRef in status after reconciliation", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			instance := &openclawv1alpha1.Claw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
+
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
+			}
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+
+			reconciler := &ClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			require.NoError(t, err, "reconcile failed")
+
+			updatedInstance := &openclawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+			assert.Equal(t, ClawGatewaySecretName, updatedInstance.Status.GatewayTokenSecretRef)
+		})
 
 		t.Run("should set Available condition to False after initial resource creation", func(t *testing.T) {
 			t.Cleanup(func() {
@@ -49,7 +84,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			// Creating a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -63,7 +98,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -79,12 +114,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			// Checking if Available condition is set to False
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 				return condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "Provisioning"
 			}, "Available condition should be False with Provisioning reason")
 		})
@@ -95,7 +130,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			// Creating a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -109,7 +144,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -126,7 +161,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			// Updating openclaw Deployment to Available=True
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 				return err == nil
 			}, "openclaw Deployment should be created")
 
@@ -148,9 +183,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, err, "reconcile failed")
 
 			// Checking Available condition remains False
-			updatedInstance := &openclawv1alpha1.OpenClaw{}
+			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 			require.NotNil(t, condition, "Available condition should not be nil")
 			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Available condition status")
 			assert.Equal(t, "Provisioning", condition.Reason, "Available condition reason")
@@ -162,7 +197,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			// Creating a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -176,7 +211,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -193,7 +228,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			// Updating openclaw-proxy Deployment to Available=True
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 				return err == nil
 			}, "openclaw-proxy Deployment should be created")
 
@@ -215,9 +250,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, err, "reconcile failed")
 
 			// Checking Available condition remains False
-			updatedInstance := &openclawv1alpha1.OpenClaw{}
+			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 			require.NotNil(t, condition, "Available condition should not be nil")
 			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Available condition status")
 			assert.Equal(t, "Provisioning", condition.Reason, "Available condition reason")
@@ -229,7 +264,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			// Creating a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -243,7 +278,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -260,7 +295,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			// Updating both Deployments to Available=True
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 				return err == nil
 			}, "openclaw Deployment should be created")
 
@@ -274,7 +309,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 				return err == nil
 			}, "openclaw-proxy Deployment should be created")
 
@@ -296,9 +331,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, err, "reconcile failed")
 
 			// Checking Available condition is True
-			updatedInstance := &openclawv1alpha1.OpenClaw{}
+			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 			require.NotNil(t, condition, "Available condition should not be nil")
 			assert.Equal(t, metav1.ConditionTrue, condition.Status, "Available condition status")
 			assert.Equal(t, "Ready", condition.Reason, "Available condition reason")
@@ -310,7 +345,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			// Creating a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -324,7 +359,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -341,12 +376,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			// Getting initial LastTransitionTime
 			var initialTransitionTime metav1.Time
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 				if condition != nil {
 					initialTransitionTime = condition.LastTransitionTime
 					return true
@@ -357,7 +392,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			// Updating both Deployments to Available=True
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 				return err == nil
 			}, "openclaw Deployment should be created")
 
@@ -371,7 +406,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 				return err == nil
 			}, "openclaw-proxy Deployment should be created")
 
@@ -395,12 +430,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			// Verifying LastTransitionTime was updated
 			var secondTransitionTime metav1.Time
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 				if condition != nil && condition.Status == metav1.ConditionTrue {
 					secondTransitionTime = condition.LastTransitionTime
 					return true
@@ -418,7 +453,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			// Creating a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -432,7 +467,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -449,12 +484,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			// Getting initial LastTransitionTime
 			var initialTransitionTime metav1.Time
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 				if condition != nil && condition.Status == metav1.ConditionFalse {
 					initialTransitionTime = condition.LastTransitionTime
 					return true
@@ -472,9 +507,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, err, "reconcile failed")
 
 			// Verifying LastTransitionTime was NOT updated
-			updatedInstance := &openclawv1alpha1.OpenClaw{}
+			updatedInstance := &openclawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 			require.NotNil(t, condition, "Available condition should not be nil")
 			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Available condition status")
 			assert.Equal(t, initialTransitionTime, condition.LastTransitionTime, "LastTransitionTime should not have changed")
@@ -486,7 +521,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			// Creating a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -500,7 +535,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -517,12 +552,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			// Checking Available condition is set to False
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 				return condition != nil && condition.Status == metav1.ConditionFalse
 			}, "Available condition should be set to False when deployments are missing")
 		})
@@ -533,7 +568,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			// Creating a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -547,7 +582,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -563,18 +598,18 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			// Checking ObservedGeneration matches instance generation
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Available")
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, "Ready")
 				return condition != nil && condition.ObservedGeneration == updatedInstance.Generation
 			}, "ObservedGeneration should match instance generation")
 		})
 
 		t.Run("When verifying status.url field", func(t *testing.T) {
-			const resourceName = OpenClawInstanceName
+			const resourceName = ClawInstanceName
 			ctx := context.Background()
 
 			t.Run("should initialize status.url as empty", func(t *testing.T) {
@@ -583,7 +618,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 
 				// Creating a new OpenClaw named 'instance'
-				instance := &openclawv1alpha1.OpenClaw{}
+				instance := &openclawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
@@ -597,7 +632,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 				// Setup reconciler
-				reconciler := &OpenClawResourceReconciler{
+				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
 					Scheme: scheme.Scheme,
 				}
@@ -612,7 +647,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, err, "reconcile failed")
 
 				// Checking status.url is empty
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -623,7 +658,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 
 				// Creating a new OpenClaw named 'instance'
-				instance := &openclawv1alpha1.OpenClaw{}
+				instance := &openclawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
@@ -637,7 +672,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 				// Setup reconciler
-				reconciler := &OpenClawResourceReconciler{
+				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
 					Scheme: scheme.Scheme,
 				}
@@ -654,7 +689,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				// Updating openclaw Deployment to Available=True
 				deployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 					return err == nil
 				}, "openclaw Deployment should be created")
 
@@ -676,7 +711,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, err, "reconcile failed")
 
 				// Checking status.url remains empty
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -687,7 +722,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 
 				// Creating a new OpenClaw named 'instance'
-				instance := &openclawv1alpha1.OpenClaw{}
+				instance := &openclawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
@@ -701,7 +736,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 				// Setup reconciler
-				reconciler := &OpenClawResourceReconciler{
+				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
 					Scheme: scheme.Scheme,
 				}
@@ -718,7 +753,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				// Updating openclaw-proxy Deployment to Available=True
 				proxyDeployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 					return err == nil
 				}, "openclaw-proxy Deployment should be created")
 
@@ -740,7 +775,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, err, "reconcile failed")
 
 				// Checking status.url remains empty
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -751,7 +786,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 
 				// Creating a new OpenClaw named 'instance'
-				instance := &openclawv1alpha1.OpenClaw{}
+				instance := &openclawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
@@ -765,7 +800,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 				// Setup reconciler
-				reconciler := &OpenClawResourceReconciler{
+				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
 					Scheme: scheme.Scheme,
 				}
@@ -782,7 +817,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				// Updating both Deployments to Available=True
 				deployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 					return err == nil
 				}, "openclaw Deployment should be created")
 
@@ -796,7 +831,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				proxyDeployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 					return err == nil
 				}, "openclaw-proxy Deployment should be created")
 
@@ -819,7 +854,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				// Updating openclaw Deployment to Available=False
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 					if err != nil {
 						return false
 					}
@@ -843,7 +878,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, err, "reconcile failed")
 
 				// Checking status.url is cleared
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -854,7 +889,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 
 				// Creating a new OpenClaw named 'instance'
-				instance := &openclawv1alpha1.OpenClaw{}
+				instance := &openclawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
@@ -868,7 +903,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 				// Setup reconciler
-				reconciler := &OpenClawResourceReconciler{
+				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
 					Scheme: scheme.Scheme,
 				}
@@ -885,7 +920,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				// Updating both Deployments to Available=True
 				deployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 					return err == nil
 				}, "openclaw Deployment should be created")
 
@@ -899,7 +934,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				proxyDeployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 					return err == nil
 				}, "openclaw-proxy Deployment should be created")
 
@@ -921,7 +956,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, err, "reconcile failed")
 
 				// Checking status.url remains empty (Route doesn't exist)
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -934,7 +969,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 
 				// Creating a new OpenClaw named 'instance'
-				instance := &openclawv1alpha1.OpenClaw{}
+				instance := &openclawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				// Create API key Secret
@@ -948,7 +983,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
 
 				// Setup reconciler
-				reconciler := &OpenClawResourceReconciler{
+				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
 					Scheme: scheme.Scheme,
 				}
@@ -1086,7 +1121,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				// Updating both Deployments to Available=True
 				deployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 					return err == nil
 				}, "openclaw Deployment should be created")
 
@@ -1100,7 +1135,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				proxyDeployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 					return err == nil
 				}, "openclaw-proxy Deployment should be created")
 
@@ -1122,7 +1157,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, err, "reconcile failed")
 
 				// Checking status.url is set with Route host and token fragment
-				updatedInstance := &openclawv1alpha1.OpenClaw{}
+				updatedInstance := &openclawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 
 				// URL should be in format: https://<route-host>#token=<gateway-token>
@@ -1139,7 +1174,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				// Verify we can retrieve the same token from the gateway secret
 				gatewaySecret := &corev1.Secret{}
-				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}, gatewaySecret), "failed to get gateway secret")
+				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}, gatewaySecret), "failed to get gateway secret")
 				expectedToken := string(gatewaySecret.Data[GatewayTokenKeyName])
 				assert.NotEmpty(t, expectedToken, "expected non-empty gateway token")
 

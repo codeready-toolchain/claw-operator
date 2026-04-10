@@ -32,7 +32,7 @@ import (
 func TestOpenClawSecretReference(t *testing.T) {
 
 	t.Run("When reconciling OpenClaw with Secret references", func(t *testing.T) {
-		const resourceName = OpenClawInstanceName
+		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
 		t.Run("should configure proxy deployment to reference the user's Secret", func(t *testing.T) {
@@ -45,7 +45,7 @@ func TestOpenClawSecretReference(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, secret), "Failed to create Secret")
 
 			t.Log("Creating OpenClaw instance")
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
@@ -55,7 +55,7 @@ func TestOpenClawSecretReference(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "Failed to create OpenClaw instance")
 
 			t.Log("Reconciling the OpenClaw instance")
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
@@ -79,9 +79,9 @@ func TestOpenClawSecretReference(t *testing.T) {
 				}
 				// Find the proxy container and check GEMINI_API_KEY env var
 				for _, container := range deployment.Spec.Template.Spec.Containers {
-					if container.Name == OpenClawProxyDeploymentContainerName {
+					if container.Name == ClawProxyDeploymentContainerName {
 						for _, env := range container.Env {
-							if env.Name == OpenClawProxyDeploymentGeminiAPiKeyEnvKey && env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+							if env.Name == ClawProxyDeploymentGeminiAPiKeyEnvKey && env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
 								return env.ValueFrom.SecretKeyRef.Name == aiModelSecret &&
 									env.ValueFrom.SecretKeyRef.Key == aiModelSecretKey
 							}
@@ -102,7 +102,7 @@ func TestOpenClawSecretReference(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, secret), "Failed to create Secret")
 
 			t.Log("Creating OpenClaw instance")
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
@@ -112,7 +112,7 @@ func TestOpenClawSecretReference(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "Failed to create OpenClaw instance")
 
 			t.Log("Reconciling the OpenClaw instance")
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
@@ -187,8 +187,8 @@ func TestOpenClawSecretReference(t *testing.T) {
 		})
 
 		t.Log("Creating OpenClaw instance")
-		instance := &openclawv1alpha1.OpenClaw{}
-		instance.Name = OpenClawInstanceName
+		instance := &openclawv1alpha1.Claw{}
+		instance.Name = ClawInstanceName
 		instance.Namespace = namespace
 		instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
 			Name: aiModelSecret,
@@ -197,13 +197,13 @@ func TestOpenClawSecretReference(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance), "Failed to create OpenClaw instance")
 
 		t.Log("Reconciling the OpenClaw instance")
-		reconciler := &OpenClawResourceReconciler{
+		reconciler := &ClawResourceReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
 		}
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{
 			NamespacedName: client.ObjectKey{
-				Name:      OpenClawInstanceName,
+				Name:      ClawInstanceName,
 				Namespace: namespace,
 			},
 		})

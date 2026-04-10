@@ -55,7 +55,7 @@ rules:
 - apiGroups:
   - openclaw.sandbox.redhat.com
   resources:
-  - openclaws
+  - claws
   verbs:
   - get
   - list
@@ -63,13 +63,13 @@ rules:
 - apiGroups:
   - openclaw.sandbox.redhat.com
   resources:
-  - openclaws/finalizers
+  - claws/finalizers
   verbs:
   - update
 - apiGroups:
   - openclaw.sandbox.redhat.com
   resources:
-  - openclaws/status
+  - claws/status
   verbs:
   - get
   - patch
