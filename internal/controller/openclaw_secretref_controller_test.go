@@ -40,32 +40,9 @@ func TestOpenClawSecretReference(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			t.Log("Creating the referenced Secret")
-			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-			require.NoError(t, k8sClient.Create(ctx, secret), "Failed to create Secret")
-
-			t.Log("Creating OpenClaw instance")
-			instance := &openclawv1alpha1.Claw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: aiModelSecret,
-				Key:  aiModelSecretKey,
-			}
-			require.NoError(t, k8sClient.Create(ctx, instance), "Failed to create OpenClaw instance")
-
-			t.Log("Reconciling the OpenClaw instance")
-			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			require.NoError(t, err, "Reconcile failed")
+			createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
 			t.Log("Verifying proxy deployment references the user's Secret")
 			deployment := &appsv1.Deployment{}
@@ -112,17 +89,8 @@ func TestOpenClawSecretReference(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "Failed to create OpenClaw instance")
 
 			t.Log("Reconciling the OpenClaw instance")
-			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			require.NoError(t, err, "Reconcile failed")
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
 			t.Log("Verifying pod template has Secret version annotation")
 			deployment := &appsv1.Deployment{}
@@ -153,13 +121,7 @@ func TestOpenClawSecretReference(t *testing.T) {
 			assert.NotEqual(t, originalVersion, secret.ResourceVersion, "Secret ResourceVersion should change")
 
 			t.Log("Reconciling again after Secret update")
-			_, err = reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			require.NoError(t, err, "Reconcile failed after Secret update")
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
 			t.Log("Verifying pod template annotation updated with new Secret version")
 			waitFor(t, timeout, interval, func() bool {
@@ -197,10 +159,7 @@ func TestOpenClawSecretReference(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance), "Failed to create OpenClaw instance")
 
 		t.Log("Reconciling the OpenClaw instance")
-		reconciler := &ClawResourceReconciler{
-			Client: k8sClient,
-			Scheme: k8sClient.Scheme(),
-		}
+		reconciler := createClawReconciler()
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{
 			NamespacedName: client.ObjectKey{
 				Name:      ClawInstanceName,

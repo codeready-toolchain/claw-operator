@@ -23,8 +23,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes/scheme"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
@@ -41,34 +39,9 @@ func TestOpenClawConfigMapController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.Claw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			// Create API key Secret
-			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
-
-			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: aiModelSecret,
-				Key:  aiModelSecretKey,
-			}
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
-
-			// Setup reconciler
-			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
-			}
-
-			// Reconcile the created resource
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			require.NoError(t, err, "reconcile failed")
+			createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
 			// Check if ConfigMap was created
 			configMap := &corev1.ConfigMap{}
@@ -86,34 +59,9 @@ func TestOpenClawConfigMapController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.Claw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			// Create API key Secret
-			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
-
-			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: aiModelSecret,
-				Key:  aiModelSecretKey,
-			}
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
-
-			// Setup reconciler
-			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
-			}
-
-			// Reconcile the created resource
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			require.NoError(t, err, "reconcile failed")
+			createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
 			// Check ConfigMap has correct owner reference
 			configMap := &corev1.ConfigMap{}
@@ -149,41 +97,16 @@ func TestOpenClawConfigMapController(t *testing.T) {
 				}
 			})
 
-			// Create a new OpenClaw with name 'other-instance'
-			instance := &openclawv1alpha1.Claw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			// Create API key Secret
-			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
-
-			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-				Name: aiModelSecret,
-				Key:  aiModelSecretKey,
-			}
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
-
-			// Setup reconciler
-			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
-			}
-
-			// Reconcile the created resource
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			require.NoError(t, err, "reconcile failed")
+			createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
 			// Verify ConfigMap was NOT created
 			// Sleep to give reconciler time to (incorrectly) create resources
 			time.Sleep(2 * time.Second)
 
 			configMap := &corev1.ConfigMap{}
-			err = k8sClient.Get(ctx, client.ObjectKey{
+			err := k8sClient.Get(ctx, client.ObjectKey{
 				Name:      ClawConfigMapName,
 				Namespace: namespace,
 			}, configMap)
