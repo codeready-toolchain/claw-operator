@@ -343,7 +343,7 @@ func generateGatewayToken() (string, error) {
 func (r *ClawResourceReconciler) applyGatewaySecret(ctx context.Context, instance *openclawv1alpha1.Claw) error {
 	logger := log.FromContext(ctx)
 
-	// Check if the secret already exists
+	// check if the secret already exists
 	existingSecret := &corev1.Secret{}
 	secretKey := client.ObjectKey{
 		Namespace: instance.Namespace,
@@ -574,7 +574,7 @@ func (r *ClawResourceReconciler) getDeploymentAvailableStatus(ctx context.Contex
 		return false, err
 	}
 
-	// Check for Available condition
+	// check for Available condition
 	for _, condition := range deployment.Status.Conditions {
 		if condition.Type == appsv1.DeploymentAvailable {
 			return condition.Status == corev1.ConditionTrue, nil
@@ -734,7 +734,7 @@ func buildClawURL(routeURL, token string) string {
 
 // updateStatus updates the Claw status with current deployment conditions
 func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *openclawv1alpha1.Claw) error {
-	// Check deployment readiness
+	// check deployment readiness
 	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace)
 	if err != nil {
 		return fmt.Errorf("failed to check deployment readiness: %w", err)
@@ -810,7 +810,7 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 			continue
 		}
 
-		// Check if this instance references the Secret
+		// check if this instance references the Secret
 		if instance.Spec.GeminiAPIKey != nil && instance.Spec.GeminiAPIKey.Name == secret.Name {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{

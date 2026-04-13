@@ -39,11 +39,13 @@ func TestOpenClawConfigMapController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Check if ConfigMap was created
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// check if ConfigMap was created
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -59,11 +61,13 @@ func TestOpenClawConfigMapController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Check ConfigMap has correct owner reference
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// check ConfigMap has correct owner reference
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -97,11 +101,13 @@ func TestOpenClawConfigMapController(t *testing.T) {
 				}
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Verify ConfigMap was NOT created
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// verify ConfigMap was NOT created
 			// Sleep to give reconciler time to (incorrectly) create resources
 			time.Sleep(2 * time.Second)
 

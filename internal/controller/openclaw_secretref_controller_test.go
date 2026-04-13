@@ -40,10 +40,12 @@ func TestOpenClawSecretReference(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 			t.Log("Verifying proxy deployment references the user's Secret")
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {

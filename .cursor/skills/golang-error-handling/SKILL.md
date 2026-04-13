@@ -269,7 +269,7 @@ func ValidateRequest(req Request) error {
 	return nil
 }
 
-// Check individual errors
+// check individual errors
 err := ValidateRequest(req)
 if err != nil {
 	var validationErr *ValidationError
@@ -341,7 +341,7 @@ func ErrorToHTTPStatus(err error) (int, string) {
 		return http.StatusOK, ""
 	}
 	
-	// Check specific error types
+	// check specific error types
 	if errors.Is(err, services.ErrNotFound) {
 		return http.StatusNotFound, "resource not found"
 	}
@@ -352,7 +352,7 @@ func ErrorToHTTPStatus(err error) (int, string) {
 		return http.StatusBadRequest, "invalid input"
 	}
 	
-	// Check for validation errors
+	// check for validation errors
 	var validationErr *services.ValidationError
 	if errors.As(err, &validationErr) {
 		return http.StatusBadRequest, fmt.Sprintf("invalid %s: %s", 
@@ -474,9 +474,9 @@ fmt.Errorf("format: %w", err)           // Wrapped error
 
 **Error checking:**
 ```go
-errors.Is(err, ErrNotFound)             // Check sentinel error
-errors.As(err, &validationErr)          // Check error type
-err != nil                               // Check if error occurred
+errors.Is(err, ErrNotFound)             // check sentinel error
+errors.As(err, &validationErr)          // check error type
+err != nil                               // check if error occurred
 ```
 
 **Best practices:**

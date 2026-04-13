@@ -40,11 +40,13 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Check if gateway Secret was created
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// check if gateway Secret was created
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -54,7 +56,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				return err == nil
 			}, "gateway Secret should be created")
 
-			// Verify Secret has OPENCLAW_GATEWAY_TOKEN data entry
+			// verify Secret has OPENCLAW_GATEWAY_TOKEN data entry
 			assert.Contains(t, secret.Data, GatewayTokenKeyName)
 		})
 
@@ -63,11 +65,13 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Verify token format and length
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// verify token format and length
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -92,10 +96,12 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 			// Get the initial token value
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
@@ -110,7 +116,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			// Reconcile again
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Verify token was not regenerated
+			// verify token was not regenerated
 			secret = &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -130,10 +136,12 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 			// Get the first token value
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
@@ -151,7 +159,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			// Reconcile again to generate a new token
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Verify a new unique token was generated
+			// verify a new unique token was generated
 			newSecret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -172,11 +180,13 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Check gateway Secret has correct owner reference
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// check gateway Secret has correct owner reference
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -224,7 +234,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			reconciler := createClawReconciler()
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Check gateway Secret has correct owner reference
+			// check gateway Secret has correct owner reference
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -250,11 +260,13 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Verify gateway Secret has owner reference for garbage collection
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// verify gateway Secret has owner reference for garbage collection
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -267,7 +279,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				if len(secret.OwnerReferences) == 0 {
 					return false
 				}
-				// Verify owner reference has BlockOwnerDeletion set
+				// verify owner reference has BlockOwnerDeletion set
 				ownerRef := secret.OwnerReferences[0]
 				return ownerRef.Kind == ClawResourceKind &&
 					ownerRef.Name == resourceName &&

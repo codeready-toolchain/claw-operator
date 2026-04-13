@@ -1093,7 +1093,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				// Update Route status
 				require.NoError(t, k8sClient.Status().Update(ctx, route), "failed to update Route status")
 
-				// Verify Route was created with status
+				// verify Route was created with status
 				waitFor(t, timeout, interval, func() bool {
 					createdRoute := &unstructured.Unstructured{}
 					createdRoute.SetGroupVersionKind(schema.GroupVersionKind{
@@ -1105,7 +1105,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					if err != nil {
 						return false
 					}
-					// Check if status.ingress[0].host exists
+					// check if status.ingress[0].host exists
 					ingress, found, err := unstructured.NestedSlice(createdRoute.Object, "status", "ingress")
 					if err != nil || !found || len(ingress) == 0 {
 						return false
@@ -1166,19 +1166,19 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				assert.True(t, strings.HasPrefix(updatedInstance.Status.URL, expectedPrefix), "status.url should have prefix %s", expectedPrefix)
 				assert.Contains(t, updatedInstance.Status.URL, "#token=")
 
-				// Verify the token fragment is present and URL-encoded
+				// verify the token fragment is present and URL-encoded
 				urlParts := strings.Split(updatedInstance.Status.URL, "#token=")
 				require.Len(t, urlParts, 2, "URL should have exactly one #token= fragment")
 				assert.Equal(t, "https://"+routeHost, urlParts[0], "URL host part")
 				assert.NotEmpty(t, urlParts[1], "token should not be empty")
 
-				// Verify we can retrieve the same token from the gateway secret
+				// verify we can retrieve the same token from the gateway secret
 				gatewaySecret := &corev1.Secret{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}, gatewaySecret), "failed to get gateway secret")
 				expectedToken := string(gatewaySecret.Data[GatewayTokenKeyName])
 				assert.NotEmpty(t, expectedToken, "expected non-empty gateway token")
 
-				// Verify the token in the URL matches (should be URL-encoded version)
+				// verify the token in the URL matches (should be URL-encoded version)
 				// For hex tokens, URL encoding should be the same as the original
 				assert.Equal(t, expectedToken, urlParts[1], "URL token")
 

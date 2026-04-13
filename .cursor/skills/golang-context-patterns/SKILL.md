@@ -368,8 +368,8 @@ context.AfterFunc(ctx, fn)                 // Run fn when ctx is cancelled
 ```go
 <-ctx.Done()                      // Wait for cancellation
 context.Cause(ctx)                // Get the cause error, or ctx.Err() if no cause was set
-errors.Is(err, context.Canceled)  // Check if cancelled
-errors.Is(err, context.DeadlineExceeded)  // Check if timed out
+errors.Is(err, context.Canceled)  // check if cancelled
+errors.Is(err, context.DeadlineExceeded)  // check if timed out
 ```
 
 **Common timeouts:**
