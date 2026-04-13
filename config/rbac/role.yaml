@@ -64,16 +64,30 @@ rules:
   - openclaw.sandbox.redhat.com
   resources:
   - claws/finalizers
+  - nodepairingrequestapprovals/finalizers
   verbs:
   - update
 - apiGroups:
   - openclaw.sandbox.redhat.com
   resources:
   - claws/status
+  - nodepairingrequestapprovals/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - openclaw.sandbox.redhat.com
+  resources:
+  - nodepairingrequestapprovals
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - route.openshift.io
   resources:
