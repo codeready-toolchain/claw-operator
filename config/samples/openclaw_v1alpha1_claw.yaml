@@ -1,5 +1,5 @@
 apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: OpenClaw
+kind: Claw
 metadata:
   name: instance
   namespace: default

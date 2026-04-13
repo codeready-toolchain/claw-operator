@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/codeready-toolchain/openclaw-operator/test/utils"
 )
@@ -36,7 +38,7 @@ const (
 	// operatorNamespace is the namespace where the operator is deployed in
 	operatorNamespace = "openclaw-operator"
 
-	// userNamespace is the namespace where the user will create the OpenClaw CR in
+	// userNamespace is the namespace where the user will create the Claw CR in
 	userNamespace = "default"
 
 	// serviceAccountName created for the project
@@ -190,7 +192,9 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Cleanup(func() { collectDebugInfo(t) })
 
 			t.Log("creating a ClusterRoleBinding for the service account to allow access to metrics")
-			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
+			cmd := exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
 				"--clusterrole=openclaw-operator-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", operatorNamespace, serviceAccountName),
 			)
@@ -279,41 +283,43 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		t.Run("should successfully reconcile OpenClaw instance with Secret reference", func(t *testing.T) {
+		t.Run("should successfully reconcile Claw instance with Secret reference", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)
-				// Cleanup resources
-				cmd := exec.Command("kubectl", "delete", "openclaw", "instance", "-n", userNamespace)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
 			})
 
 			t.Log("creating the Gemini API key Secret")
-			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value",
 				"-n", userNamespace)
 			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create Secret")
 
-			t.Log("applying the OpenClaw CR")
-			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_openclaw.yaml",
+			t.Log("applying the Claw CR")
+			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_claw.yaml",
 				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to apply OpenClaw CR")
+			require.NoError(t, err, "Failed to apply Claw CR")
 
-			t.Log("verifying the OpenClaw instance becomes Available")
-			deadline := time.Now().Add(3 * time.Minute)
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "openclaw", "instance",
-					"-o", "jsonpath={.status.conditions[?(@.type=='Available')].status}",
-					"-n", userNamespace)
-				output, err := utils.Run(t, cmd)
-				if err == nil && output == "True" {
-					break
-				}
-				time.Sleep(pollInterval)
-			}
+			t.Log("verifying the Claw instance becomes Ready")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == "True", nil
+				})
+			require.NoError(t, err,
+				"Claw instance in namespace %s did not become Ready within %v",
+				userNamespace, extendedTimeout)
 
 			t.Log("verifying the openclaw-proxy deployment references the user's Secret")
 			jsonPathSecretName := "jsonpath={.spec.template.spec.containers[0]" +
@@ -325,33 +331,63 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err)
 			assert.Equal(t, "gemini-api-key", output, "Proxy deployment should reference user's Secret")
 
+			t.Log("verifying the ingress NetworkPolicy exists")
+			cmd = exec.Command("kubectl", "get", "networkpolicy", "openclaw-ingress", "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Ingress NetworkPolicy should exist")
+
+			t.Log("verifying the ingress NetworkPolicy allows traffic on port 18789")
+			cmd = exec.Command("kubectl", "get", "networkpolicy", "openclaw-ingress",
+				"-o", "jsonpath={.spec.ingress[0].ports[0].port}",
+				"-n", userNamespace)
+			portOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "18789", portOutput, "Ingress NetworkPolicy should allow port 18789")
+
+			t.Log("verifying the gateway Secret was created with a token")
+			cmd = exec.Command("kubectl", "get", "secret", "openclaw-secrets",
+				"-o", "jsonpath={.data.OPENCLAW_GATEWAY_TOKEN}",
+				"-n", userNamespace)
+			tokenOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Gateway Secret should exist")
+			assert.NotEmpty(t, tokenOutput, "Gateway token should not be empty")
+
+			t.Log("verifying gatewayTokenSecretRef is set in Claw status")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.gatewayTokenSecretRef}",
+				"-n", userNamespace)
+			secretRefOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "openclaw-secrets", secretRefOutput, "Status should reference the gateway Secret")
+
 			t.Log("verifying reconciliation success in metrics")
-			metricsOutput := getMetricsOutput(t)
+			metricsOutput := fetchFreshMetrics(t, "curl-metrics-reconcile")
 			assert.Contains(t, metricsOutput, `controller_runtime_reconcile_total{controller="openclaw",result="success"}`)
 		})
 
 		t.Run("should configure openclaw-proxy GEMINI_API_KEY env var with correct Secret reference", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)
-				// Cleanup resources
-				cmd := exec.Command("kubectl", "delete", "openclaw", "instance", "-n", userNamespace)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
 			})
 
 			t.Log("creating the Gemini API key Secret")
-			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
 				"--from-literal=api-key=test-gemini-key-value",
 				"-n", userNamespace)
 			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create Secret")
 
-			t.Log("applying the OpenClaw CR")
-			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_openclaw.yaml",
+			t.Log("applying the Claw CR")
+			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_claw.yaml",
 				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to apply OpenClaw CR")
+			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("waiting for openclaw-proxy deployment to be created")
 			deadline := time.Now().Add(2 * time.Minute)
@@ -420,8 +456,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 		t.Run("should trigger pod restart when Secret reference changes", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)
-				// Cleanup resources
-				cmd := exec.Command("kubectl", "delete", "openclaw", "instance", "-n", userNamespace)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-1", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
@@ -430,15 +465,17 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			})
 
 			t.Log("creating the first Gemini API key Secret")
-			cmd := exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key-1",
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key-1", "-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key-1",
 				"--from-literal=api-key=first-api-key",
 				"-n", userNamespace)
 			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create first Secret")
 
-			t.Log("creating a custom OpenClaw CR with first Secret")
-			openclawYAML := `apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: OpenClaw
+			t.Log("creating a custom Claw CR with first Secret")
+			clawYAML := `apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+kind: Claw
 metadata:
   name: instance
 spec:
@@ -446,26 +483,27 @@ spec:
     name: gemini-api-key-1
     key: api-key
 `
-			crFile := filepath.Join("/tmp", "openclaw-e2e-test.yaml")
-			err = os.WriteFile(crFile, []byte(openclawYAML), os.FileMode(0o644))
+			crFile := filepath.Join("/tmp", "claw-e2e-test.yaml")
+			err = os.WriteFile(crFile, []byte(clawYAML), os.FileMode(0o644))
 			require.NoError(t, err, "Failed to write CR file")
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to apply OpenClaw CR")
+			require.NoError(t, err, "Failed to apply Claw CR")
 
-			t.Log("waiting for OpenClaw to become Available")
-			deadline := time.Now().Add(3 * time.Minute)
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "openclaw", "instance",
-					"-o", "jsonpath={.status.conditions[?(@.type=='Available')].status}",
-					"-n", userNamespace)
-				output, err := utils.Run(t, cmd)
-				if err == nil && output == "True" {
-					break
-				}
-				time.Sleep(pollInterval)
-			}
+			t.Log("waiting for Claw to become Ready")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == "True", nil
+				})
+			require.NoError(t, err,
+				"Claw instance in namespace %s did not become Ready within %v",
+				userNamespace, extendedTimeout)
 
 			t.Log("capturing original pod UID")
 			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
@@ -476,15 +514,17 @@ spec:
 			require.NotEmpty(t, originalPodUID)
 
 			t.Log("creating the second Gemini API key Secret")
+			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-2", "-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
 			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key-2",
 				"--from-literal=api-key=second-api-key",
 				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create second Secret")
 
-			t.Log("updating OpenClaw CR to reference the second Secret")
-			openclawYAML2 := `apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: OpenClaw
+			t.Log("updating Claw CR to reference the second Secret")
+			clawYAML2 := `apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+kind: Claw
 metadata:
   name: instance
 spec:
@@ -492,56 +532,55 @@ spec:
     name: gemini-api-key-2
     key: api-key
 `
-			err = os.WriteFile(crFile, []byte(openclawYAML2), os.FileMode(0o644))
+			err = os.WriteFile(crFile, []byte(clawYAML2), os.FileMode(0o644))
 			require.NoError(t, err, "Failed to write updated CR file")
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to update OpenClaw CR")
+			require.NoError(t, err, "Failed to update Claw CR")
 
 			t.Log("verifying the deployment references the new Secret")
-			deadline = time.Now().Add(1 * time.Minute)
-			for time.Now().Before(deadline) {
-				jsonPathSecretName := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
-					".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
-				cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-					"-o", jsonPathSecretName,
-					"-n", userNamespace)
-				output, err := utils.Run(t, cmd)
-				if err == nil && output == "gemini-api-key-2" {
-					break
-				}
-				time.Sleep(pollInterval)
-			}
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+						".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
+					cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+						"-o", jp, "-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == "gemini-api-key-2", nil
+				})
+			require.NoError(t, err, "deployment did not reference new Secret")
 
 			t.Log("verifying pod was restarted (different UID)")
-			deadline = time.Now().Add(2 * time.Minute)
 			var newPodUID string
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
-					"-o", "jsonpath={.items[0].metadata.uid}",
-					"-n", userNamespace)
-				newPodUID, err = utils.Run(t, cmd)
-				if err == nil && newPodUID != "" && newPodUID != originalPodUID {
-					break
-				}
-				time.Sleep(pollInterval)
-			}
-			require.NotEqual(t, originalPodUID, newPodUID, "Pod should have been recreated with new UID")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=openclaw-proxy",
+						"-o", "jsonpath={.items[0].metadata.uid}",
+						"-n", userNamespace)
+					uid, err := utils.Run(t, cmd)
+					if err == nil && uid != "" && uid != originalPodUID {
+						newPodUID = uid
+						return true, nil
+					}
+					return false, nil
+				})
+			require.NoError(t, err, "pod was not recreated with new UID")
+			require.NotEqual(t, originalPodUID, newPodUID,
+				"Pod should have been recreated with new UID")
 
 			t.Log("verifying new pod is running")
-			deadline = time.Now().Add(2 * time.Minute)
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
-					"-o", "jsonpath={.items[0].status.phase}",
-					"-n", userNamespace)
-				output, err := utils.Run(t, cmd)
-				if err == nil && output == "Running" {
-					return
-				}
-				time.Sleep(pollInterval)
-			}
-			require.Fail(t, "timeout waiting for new pod to be running")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=openclaw-proxy",
+						"-o", "jsonpath={.items[0].status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == "Running", nil
+				})
+			require.NoError(t, err, "new pod did not reach Running phase")
 		})
 	})
 }
@@ -595,6 +634,67 @@ func getMetricsOutput(t *testing.T) string {
 	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", operatorNamespace)
 	metricsOutput, err := utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to retrieve logs from curl pod")
+	require.Contains(t, metricsOutput, "< HTTP/1.1 200 OK")
+	return metricsOutput
+}
+
+// fetchFreshMetrics creates a new curl pod to capture current metrics from the metrics endpoint.
+// Unlike getMetricsOutput which reads stale logs from a pre-existing pod, this creates a fresh
+// pod to get metrics reflecting the current controller state.
+func fetchFreshMetrics(t *testing.T, podName string) string {
+	t.Helper()
+
+	token, err := serviceAccountToken(t)
+	require.NoError(t, err)
+	require.NotEmpty(t, token)
+
+	cmd := exec.Command("kubectl", "delete", "pod", podName, "-n", operatorNamespace, "--ignore-not-found")
+	_, _ = utils.Run(t, cmd)
+
+	t.Cleanup(func() {
+		cmd := exec.Command("kubectl", "delete", "pod", podName, "-n", operatorNamespace, "--ignore-not-found")
+		_, _ = utils.Run(t, cmd)
+	})
+
+	cmd = exec.Command("kubectl", "run", podName, "--restart=Never",
+		"--namespace", operatorNamespace,
+		"--image=curlimages/curl:latest",
+		"--overrides",
+		fmt.Sprintf(`{
+			"spec": {
+				"containers": [{
+					"name": "curl",
+					"image": "curlimages/curl:latest",
+					"command": ["/bin/sh", "-c"],
+					"args": ["curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics"],
+					"securityContext": {
+						"allowPrivilegeEscalation": false,
+						"capabilities": {"drop": ["ALL"]},
+						"runAsNonRoot": true,
+						"runAsUser": 1000,
+						"seccompProfile": {"type": "RuntimeDefault"}
+					}
+				}],
+				"serviceAccount": "%s"
+			}
+		}`, token, metricsServiceName, operatorNamespace, serviceAccountName))
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to create metrics pod")
+
+	ctx := context.Background()
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "pods", podName,
+				"-o", "jsonpath={.status.phase}",
+				"-n", operatorNamespace)
+			output, err := utils.Run(t, cmd)
+			return err == nil && output == "Succeeded", nil
+		})
+	require.NoError(t, err, "pod %s did not reach Succeeded phase within %v", podName, defaultTimeout)
+
+	cmd = exec.Command("kubectl", "logs", podName, "-n", operatorNamespace)
+	metricsOutput, err := utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to retrieve metrics logs")
 	require.Contains(t, metricsOutput, "< HTTP/1.1 200 OK")
 	return metricsOutput
 }

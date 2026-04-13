@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
+	netv1 "k8s.io/api/networking/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,7 +37,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 	// so ConfigMap dependency tests are no longer relevant. All resources are created together.
 
 	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
-		const resourceName = OpenClawInstanceName
+		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
 		t.Run("should create Deployment for OpenClaw named 'instance'", func(t *testing.T) {
@@ -45,7 +46,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -59,7 +60,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -90,7 +91,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -104,7 +105,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -122,7 +123,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawDeploymentName,
+					Name:      ClawDeploymentName,
 					Namespace: namespace,
 				}, deployment)
 				return err == nil
@@ -131,7 +132,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			// Check Deployment has correct owner reference
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawDeploymentName,
+					Name:      ClawDeploymentName,
 					Namespace: namespace,
 				}, deployment)
 				if err != nil {
@@ -141,11 +142,59 @@ func TestOpenClawDeploymentController(t *testing.T) {
 					return false
 				}
 				ownerRef := deployment.OwnerReferences[0]
-				return ownerRef.Kind == OpenClawResourceKind &&
+				return ownerRef.Kind == ClawResourceKind &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
 			}, "Deployment should have correct owner reference")
+		})
+
+		t.Run("should create ingress NetworkPolicy with correct owner reference", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			instance := &openclawv1alpha1.Claw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
+
+			instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
+			}
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw")
+
+			reconciler := &ClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			require.NoError(t, err, "reconcile failed")
+
+			np := &netv1.NetworkPolicy{}
+			waitFor(t, timeout, interval, func() bool {
+				err := k8sClient.Get(ctx, client.ObjectKey{
+					Name:      ClawIngressNetworkPolicyName,
+					Namespace: namespace,
+				}, np)
+				return err == nil
+			}, "Ingress NetworkPolicy should be created")
+
+			// Verify owner reference
+			require.NotEmpty(t, np.OwnerReferences, "NetworkPolicy should have owner references")
+			ownerRef := np.OwnerReferences[0]
+			require.Equal(t, ClawResourceKind, ownerRef.Kind)
+			require.Equal(t, resourceName, ownerRef.Name)
+			require.NotNil(t, ownerRef.Controller)
+			require.True(t, *ownerRef.Controller)
 		})
 	})
 
@@ -156,13 +205,13 @@ func TestOpenClawDeploymentController(t *testing.T) {
 		t.Run("should skip Deployment creation for non-matching names", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
-				if err := deleteAndWait(&openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
+				if err := deleteAndWait(&openclawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
 					t.Fatalf("cleanup failed: %v", err)
 				}
 			})
 
 			// Create a new OpenClaw with name 'other-instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -176,7 +225,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -196,7 +245,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 
 			deployment := &appsv1.Deployment{}
 			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      OpenClawDeploymentName,
+				Name:      ClawDeploymentName,
 				Namespace: namespace,
 			}, deployment)
 			require.Error(t, err, "Deployment should not have been created for non-instance OpenClaw")

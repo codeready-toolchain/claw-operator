@@ -127,16 +127,17 @@ func deleteAndWaitAllResources(t *testing.T, namespace string) {
 		obj client.Object
 		key client.ObjectKey
 	}{
-		{&openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: OpenClawInstanceName, Namespace: namespace}},
-		{&corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace}},
-		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: OpenClawNetworkPolicyName, Namespace: namespace}},
-		{&corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}},
+		{&openclawv1alpha1.Claw{}, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}},
+		{&corev1.ConfigMap{}, client.ObjectKey{Name: ClawConfigMapName, Namespace: namespace}},
+		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: ClawNetworkPolicyName, Namespace: namespace}},
+		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: ClawIngressNetworkPolicyName, Namespace: namespace}},
+		{&corev1.Secret{}, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}},
 		{&corev1.Secret{}, client.ObjectKey{Name: aiModelSecret, Namespace: namespace}},
-		{&corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: OpenClawPVCName, Namespace: namespace}},
-		{&corev1.Service{}, client.ObjectKey{Name: OpenClawServiceName, Namespace: namespace}},
-		{&appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}},
-		{&corev1.Service{}, client.ObjectKey{Name: OpenClawProxyServiceName, Namespace: namespace}},
-		{&appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}},
+		{&corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}},
+		{&corev1.Service{}, client.ObjectKey{Name: ClawServiceName, Namespace: namespace}},
+		{&appsv1.Deployment{}, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}},
+		{&corev1.Service{}, client.ObjectKey{Name: ClawProxyServiceName, Namespace: namespace}},
+		{&appsv1.Deployment{}, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}},
 	}
 
 	for _, r := range resources {

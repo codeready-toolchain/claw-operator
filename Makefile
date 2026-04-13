@@ -133,9 +133,16 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
 
+.PHONY: reset-test-e2e
+reset-test-e2e: ## Remove leftover operator resources from a previous e2e run
+	@echo "Resetting e2e test state..."
+	-$(MAKE) undeploy 2>/dev/null
+	-$(MAKE) uninstall 2>/dev/null
+	-kubectl delete ns openclaw-operator --ignore-not-found
+
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/
+test-e2e: setup-test-e2e manifests generate fmt vet reset-test-e2e ## Run the e2e tests. Expected an isolated environment using Kind.
+	KIND_CLUSTER=$(KIND_CLUSTER) go test -v ./test/e2e/
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
@@ -169,7 +176,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} --platform $(PLATFORM) \
+	$(CONTAINER_TOOL) build -t ${IMG} \
 		--build-arg VERSION=$$(git rev-parse --short HEAD) \
 		--build-arg BUILD_TIME=$$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
 		.

@@ -4,27 +4,27 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: openclaws.openclaw.sandbox.redhat.com
+  name: claws.openclaw.sandbox.redhat.com
 spec:
   group: openclaw.sandbox.redhat.com
   names:
-    kind: OpenClaw
-    listKind: OpenClawList
-    plural: openclaws
-    singular: openclaw
+    kind: Claw
+    listKind: ClawList
+    plural: claws
+    singular: claw
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.conditions[?(@.type=="Available")].status
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
-    - jsonPath: .status.conditions[?(@.type=="Available")].reason
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
       name: Reason
       type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: OpenClaw is the Schema for the openclaws API
+        description: Claw is the Schema for the claws API
         properties:
           apiVersion:
             description: |-
@@ -44,7 +44,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: OpenClawSpec defines the desired state of OpenClaw
+            description: ClawSpec defines the desired state of Claw
             properties:
               geminiAPIKey:
                 description: GeminiAPIKey is a reference to a Secret containing the
@@ -66,11 +66,11 @@ spec:
             - geminiAPIKey
             type: object
           status:
-            description: OpenClawStatus defines the observed state of OpenClaw
+            description: ClawStatus defines the observed state of Claw
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of the OpenClaw's state
+                  of the Claw's state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -129,8 +129,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              gatewayTokenSecretRef:
+                description: GatewayTokenSecretRef is the name of the Secret containing
+                  the gateway authentication token
+                type: string
               url:
-                description: URL is the HTTPS URL for accessing the OpenClaw instance
+                description: URL is the HTTPS URL for accessing the Claw instance
                 type: string
             type: object
         type: object

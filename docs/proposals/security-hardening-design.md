@@ -341,7 +341,7 @@ The init container writes to `/home/node/.openclaw` (PVC-mounted), so `readOnlyR
 
 **Phasing ([Q9](security-hardening-impl-questions.md)):** Two main phases plus cleanup. Originally three, but Q11 requires `gcp` and `kubernetes` from launch (which need the Go proxy), merging the CRD and proxy phases.
 
-### Phase 1: Quick wins (no CRD schema changes, no proxy rewrite)
+### Phase 1: Quick wins (includes CRD schema changes: CRD rename and new status field, no proxy rewrite) - DONE
 
 1. **Rename CRD** — `OpenClaw` → `Claw` (Kind, Go types, constants, manifests, tests)
 2. **Init container security context** — single manifest change

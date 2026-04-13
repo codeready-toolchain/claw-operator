@@ -33,7 +33,7 @@ import (
 func TestOpenClawConfigMapController(t *testing.T) {
 
 	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
-		const resourceName = OpenClawInstanceName
+		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
 		t.Run("should create ConfigMap for OpenClaw named 'instance'", func(t *testing.T) {
@@ -42,7 +42,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -56,7 +56,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -74,7 +74,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawConfigMapName,
+					Name:      ClawConfigMapName,
 					Namespace: namespace,
 				}, configMap)
 				return err == nil
@@ -87,7 +87,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 			})
 
 			// Create a new OpenClaw named 'instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -101,7 +101,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -119,7 +119,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      OpenClawConfigMapName,
+					Name:      ClawConfigMapName,
 					Namespace: namespace,
 				}, configMap)
 				if err != nil {
@@ -129,7 +129,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 					return false
 				}
 				ownerRef := configMap.OwnerReferences[0]
-				return ownerRef.Kind == OpenClawResourceKind &&
+				return ownerRef.Kind == ClawResourceKind &&
 					ownerRef.Name == resourceName &&
 					ownerRef.Controller != nil &&
 					*ownerRef.Controller == true
@@ -144,13 +144,13 @@ func TestOpenClawConfigMapController(t *testing.T) {
 		t.Run("should skip ConfigMap creation for non-matching names", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
-				if err := deleteAndWait(&openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
+				if err := deleteAndWait(&openclawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
 					t.Fatalf("cleanup failed: %v", err)
 				}
 			})
 
 			// Create a new OpenClaw with name 'other-instance'
-			instance := &openclawv1alpha1.OpenClaw{}
+			instance := &openclawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			// Create API key Secret
@@ -164,7 +164,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
 
 			// Setup reconciler
-			reconciler := &OpenClawResourceReconciler{
+			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
@@ -184,7 +184,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 
 			configMap := &corev1.ConfigMap{}
 			err = k8sClient.Get(ctx, client.ObjectKey{
-				Name:      OpenClawConfigMapName,
+				Name:      ClawConfigMapName,
 				Namespace: namespace,
 			}, configMap)
 			require.Error(t, err, "ConfigMap should not have been created for non-instance OpenClaw")

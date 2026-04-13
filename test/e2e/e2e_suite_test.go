@@ -20,9 +20,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/require"
 
 	"github.com/codeready-toolchain/openclaw-operator/test/utils"
 )
@@ -48,43 +47,72 @@ var (
 func TestMain(m *testing.M) {
 	fmt.Println("Starting openclaw-operator integration test suite")
 
-	// Setup: build and load image
-	t := &testing.T{} // Temporary T for require in setup
-
-	// Build the manager(Operator) image
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(t, cmd)
-	require.NoError(t, err, "Failed to build the manager(Operator) image")
+	// Build the manager(Operator) image with output streamed to stdout/stderr
+	// so we can see Docker build progress (utils.Run captures output silently).
+	fmt.Println("Building manager image...")
+	if err := runStreaming("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage)); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to build the manager image: %v\n", err)
+		os.Exit(1)
+	}
 
 	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
 	// built and available before running the tests. Also, remove the following block.
 	// Load the manager(Operator) image on Kind
-	err = utils.LoadImageToKindClusterWithName(t, projectImage)
-	require.NoError(t, err, "Failed to load the manager(Operator) image into Kind")
+	fmt.Println("Loading image into Kind cluster...")
+	kindCluster := "kind"
+	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
+		kindCluster = v
+	}
+	if err := runStreaming("kind", "load", "docker-image", projectImage,
+		"--name", kindCluster); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load image into Kind: %v\n", err)
+		os.Exit(1)
+	}
 
 	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
 	// To prevent errors when tests run in environments with CertManager already installed,
 	// we check for its presence before execution.
 	// Setup CertManager before the suite if not skipped and if not already installed
 	if !skipCertManagerInstall {
-		// Check if cert manager is installed already
+		// Zero-value testing.T: TestMain has no real *testing.T; any t.Logf calls inside utils are silently discarded.
+		t := &testing.T{} //nolint:govet // intentional zero-value T in TestMain context
 		isCertManagerAlreadyInstalled = utils.IsCertManagerCRDsInstalled(t)
 		if !isCertManagerAlreadyInstalled {
-			t.Log("Installing CertManager...")
-			require.NoError(t, utils.InstallCertManager(t), "Failed to install CertManager")
+			fmt.Println("Installing CertManager...")
+			if err := utils.InstallCertManager(t); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to install CertManager: %v\n", err)
+				os.Exit(1)
+			}
 		} else {
-			t.Log("WARNING: CertManager is already installed. Skipping installation...")
+			fmt.Println("CertManager already installed, skipping.")
 		}
 	}
 
-	// Run tests
 	code := m.Run()
 
 	// Cleanup: Teardown CertManager after the suite if not skipped and if it was not already installed
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
 		fmt.Println("Uninstalling CertManager...")
+		t := &testing.T{} //nolint:govet // intentional zero-value T in TestMain context
 		_ = utils.UninstallCertManager(t)
 	}
 
 	os.Exit(code)
+}
+
+// runStreaming executes a command with stdout/stderr streamed directly to the
+// console so that long-running setup steps (Docker build, image load) produce
+// visible progress output instead of appearing to hang.
+func runStreaming(name string, args ...string) error {
+	dir, err := utils.GetProjectDir()
+	if err != nil {
+		return fmt.Errorf("failed to get project directory: %w", err)
+	}
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "GO111MODULE=on")
+	fmt.Printf("running: %s %s\n", name, strings.Join(args, " "))
+	return cmd.Run()
 }
