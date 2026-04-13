@@ -32,7 +32,7 @@ The NodePairingRequestApproval Spec SHALL contain a required field named `Reques
 - **THEN** the API server rejects the request due to MinLength validation
 
 ### Requirement: Controller watches NodePairingRequestApproval resources
-The system SHALL implement a controller that watches NodePairingRequestApproval resources and reconciles them.
+The system SHALL implement a controller that watches NodePairingRequestApproval resources and reconciles them. The controller SHALL NOT implement deletion cleanup as resources serve as immutable audit records.
 
 #### Scenario: Controller reconciles on resource creation
 - **WHEN** a NodePairingRequestApproval resource is created
@@ -42,9 +42,9 @@ The system SHALL implement a controller that watches NodePairingRequestApproval 
 - **WHEN** a NodePairingRequestApproval resource is modified
 - **THEN** the controller's Reconcile method is invoked with the updated resource
 
-#### Scenario: Controller reconciles on resource deletion
-- **WHEN** a NodePairingRequestApproval resource is deleted
-- **THEN** the controller's Reconcile method is invoked for cleanup
+#### Scenario: Controller ignores deleted resources
+- **WHEN** a NodePairingRequestApproval resource is deleted by an external actor
+- **THEN** the controller's Reconcile method receives a NotFound error and returns without performing cleanup
 
 ### Requirement: Status subresource support
 The NodePairingRequestApproval CRD SHALL define a Status subresource to track reconciliation state.
