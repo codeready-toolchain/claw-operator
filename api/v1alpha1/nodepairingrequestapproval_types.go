@@ -48,7 +48,8 @@ type NodePairingRequestApproval struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   NodePairingRequestApprovalSpec   `json:"spec,omitempty"`
+	// +kubebuilder:validation:Required
+	Spec   NodePairingRequestApprovalSpec   `json:"spec"`
 	Status NodePairingRequestApprovalStatus `json:"status,omitempty"`
 }
 
