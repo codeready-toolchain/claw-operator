@@ -43,16 +43,16 @@ The `URL` field MUST include a URL fragment containing the gateway authenticatio
 
 #### Scenario: Token fragment appended
 - **WHEN** the `URL` field is populated with the Route URL
-- **THEN** the URL MUST include a fragment in the format `#token=<value>` where `<value>` is the gateway token from the `openclaw-secrets` Secret
+- **THEN** the URL MUST include a fragment in the format `#token=<value>` where `<value>` is the gateway token from the `openclaw-gateway-token` Secret
 
 #### Scenario: Token retrieved from Secret
 - **WHEN** constructing the URL with token fragment
-- **THEN** the token value MUST be read from the `openclaw-secrets` Secret's `OPENCLAW_GATEWAY_TOKEN` data key
+- **THEN** the token value MUST be read from the `openclaw-gateway-token` Secret's `token` data key
 
 #### Scenario: Token Base64 decoded
 - **WHEN** reading the token from the Secret data
 - **THEN** the token value MUST be Base64-decoded before appending to the URL fragment
 
 #### Scenario: Secret read failure
-- **WHEN** the `openclaw-secrets` Secret cannot be read during status update
+- **WHEN** the `openclaw-gateway-token` Secret cannot be read during status update
 - **THEN** the `URL` field MUST be populated with the Route URL without the token fragment

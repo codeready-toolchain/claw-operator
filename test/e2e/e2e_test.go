@@ -345,8 +345,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			assert.Equal(t, "18789", portOutput, "Ingress NetworkPolicy should allow port 18789")
 
 			t.Log("verifying the gateway Secret was created with a token")
-			cmd = exec.Command("kubectl", "get", "secret", "openclaw-secrets",
-				"-o", "jsonpath={.data.OPENCLAW_GATEWAY_TOKEN}",
+			cmd = exec.Command("kubectl", "get", "secret", "openclaw-gateway-token",
+				"-o", "jsonpath={.data.token}",
 				"-n", userNamespace)
 			tokenOutput, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Gateway Secret should exist")
@@ -358,7 +358,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"-n", userNamespace)
 			secretRefOutput, err := utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "openclaw-secrets", secretRefOutput, "Status should reference the gateway Secret")
+			assert.Equal(t, "openclaw-gateway-token", secretRefOutput, "Status should reference the gateway Secret")
 
 			t.Log("verifying reconciliation success in metrics")
 			metricsOutput := fetchFreshMetrics(t, "curl-metrics-reconcile")

@@ -63,8 +63,8 @@ const (
 	ClawRouteName                         = "openclaw"
 	ClawServiceName                       = "openclaw"
 	ClawDeploymentName                    = "openclaw"
-	ClawGatewaySecretName                 = "openclaw-secrets"
-	GatewayTokenKeyName                   = "OPENCLAW_GATEWAY_TOKEN"
+	ClawGatewaySecretName                 = "openclaw-gateway-token"
+	GatewayTokenKeyName                   = "token"
 	ClawProxyServiceName                  = "openclaw-proxy"
 	ClawProxyConfigMapName                = "openclaw-proxy-config"
 	ClawProxyDeploymentName               = "openclaw-proxy"
@@ -339,7 +339,7 @@ func generateGatewayToken() (string, error) {
 	return hex.EncodeToString(randomBytes), nil
 }
 
-// applyGatewaySecret creates or updates the openclaw-secrets Secret with the gateway token
+// applyGatewaySecret creates or updates the openclaw-gateway-token Secret with the gateway token
 func (r *ClawResourceReconciler) applyGatewaySecret(ctx context.Context, instance *openclawv1alpha1.Claw) error {
 	logger := log.FromContext(ctx)
 
@@ -688,7 +688,7 @@ func setReadyCondition(instance *openclawv1alpha1.Claw, ready bool, pendingDeplo
 	})
 }
 
-// getGatewayToken fetches the gateway token from the openclaw-secrets Secret and Base64-decodes it.
+// getGatewayToken fetches the gateway token from the openclaw-gateway-token Secret and Base64-decodes it.
 // Returns the token string, or empty string if the Secret cannot be read.
 func (r *ClawResourceReconciler) getGatewayToken(ctx context.Context, namespace string) string {
 	logger := log.FromContext(ctx)
@@ -791,7 +791,7 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 		return nil
 	}
 
-	// Skip operator-managed secrets (openclaw-secrets for gateway token)
+	// Skip operator-managed secrets (openclaw-gateway-token for gateway token)
 	if secret.Name == ClawGatewaySecretName {
 		return nil
 	}

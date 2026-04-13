@@ -2,7 +2,7 @@
 
 The OpenClawResourceReconciler currently creates two secrets during reconciliation:
 1. `openclaw-proxy-secrets` - contains LLM API keys (e.g., `GEMINI_API_KEY`)
-2. (New) `openclaw-secrets` - will contain the gateway authentication token
+2. (New) `openclaw-gateway-token` - will contain the gateway authentication token
 
 The reconciler uses server-side apply for all resources and follows the pattern:
 - Early secret creation before applying Kustomized resources
@@ -15,7 +15,7 @@ The existing `applyProxySecret()` method provides a template for secret creation
 
 **Goals:**
 - Generate a cryptographically secure random token for gateway authentication
-- Create and manage `openclaw-secrets` Secret with `OPENCLAW_GATEWAY_TOKEN` entry
+- Create and manage `openclaw-gateway-token` Secret with `token` entry
 - Preserve existing tokens (do not regenerate on reconciliation)
 - Follow existing reconciler patterns (owner references, server-side apply, error handling)
 - Add test coverage for secret creation
@@ -42,7 +42,7 @@ The existing `applyProxySecret()` method provides a template for secret creation
 - UUID: Only 128 bits of entropy, less secure than 256 bits
 
 ### 2. Secret Creation Timing
-**Decision:** Create `openclaw-secrets` via a new `applyGatewaySecret()` method called before `applyKustomizedResources()`.
+**Decision:** Create `openclaw-gateway-token` via a new `applyGatewaySecret()` method called before `applyKustomizedResources()`.
 
 **Rationale:**
 - Mirrors the existing pattern for `applyProxySecret()`
@@ -55,7 +55,7 @@ The existing `applyProxySecret()` method provides a template for secret creation
 - Create after Kustomized resources: Secret wouldn't be available if deployment needs it immediately
 
 ### 3. Idempotency Strategy
-**Decision:** Check if secret exists and has `OPENCLAW_GATEWAY_TOKEN` entry. If yes, skip generation and use server-side apply to ensure owner reference is set.
+**Decision:** Check if secret exists and has `token` entry. If yes, skip generation and use server-side apply to ensure owner reference is set.
 
 **Rationale:**
 - Preserves existing tokens across reconciliation loops
@@ -106,18 +106,18 @@ The existing `applyProxySecret()` method provides a template for secret creation
 
 **Deployment:**
 1. Reconciler code changes deployed via operator update
-2. Existing OpenClaw instances will have `openclaw-secrets` created on next reconciliation
+2. Existing OpenClaw instances will have `openclaw-gateway-token` created on next reconciliation
 3. New instances will have secret created immediately
 4. No CRD changes required (no cluster downtime)
 
 **Rollback:**
 - Revert operator deployment to previous version
-- `openclaw-secrets` will remain but won't be updated
+- `openclaw-gateway-token` will remain but won't be updated
 - Can manually delete secrets if needed (will not be recreated by old controller)
 
 **Validation:**
-- Verify `openclaw-secrets` secret exists after operator update
-- Verify secret has `OPENCLAW_GATEWAY_TOKEN` entry with 64 hex characters
+- Verify `openclaw-gateway-token` secret exists after operator update
+- Verify secret has `token` entry with 64 hex characters
 - Verify owner reference points to OpenClaw instance
 - Verify token is not regenerated on subsequent reconciliations
 

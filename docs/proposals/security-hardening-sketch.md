@@ -18,7 +18,7 @@ On Dev Sandbox, each OpenClaw instance runs in a user's namespace with their per
 - Pod hardening: non-root (uid 65532), `readOnlyRootFilesystem`, `seccompProfile: RuntimeDefault`, all capabilities dropped, `automountServiceAccountToken: false`
 - Edge TLS on the Route with HTTP-to-HTTPS redirect
 - Server-side apply with field ownership tracking
-- **Gateway token authentication** — auto-generated cryptographic token in `openclaw-secrets`, injected into gateway Deployment
+- **Gateway token authentication** — auto-generated cryptographic token in `openclaw-gateway-token`, injected into gateway Deployment
 - **Route host injection** — two-pass reconciliation injects real Route hostname into ConfigMap `allowedOrigins`
 - **Secret-based credential reference** — `spec.geminiAPIKey` is a `SecretRef` (not plaintext), proxy Deployment patched with `secretKeyRef`
 
@@ -28,7 +28,7 @@ All questions resolved — see [security-hardening-questions.md](security-harden
 
 ### 1. Gateway Authentication (Q1) — already implemented
 
-The operator already auto-generates a cryptographically random gateway token during reconciliation via `applyGatewaySecret()`, stores it in a Secret (`openclaw-secrets`), and injects it as `OPENCLAW_GATEWAY_TOKEN` into the gateway Deployment. The full URL (including token) is available via `status.url`. Remaining: add `status.gatewayTokenSecretRef` so the UI can discover the Secret by name.
+The operator already auto-generates a cryptographically random gateway token during reconciliation via `applyGatewaySecret()`, stores it in a Secret (`openclaw-gateway-token`), and injects it as `OPENCLAW_GATEWAY_TOKEN` into the gateway Deployment. The full URL (including token) is available via `status.url`. Remaining: add `status.gatewayTokenSecretRef` so the UI can discover the Secret by name.
 
 ### 2. Credential Provisioning (Q2)
 
@@ -134,7 +134,7 @@ Document the threat model (prompt injection, excessive agency) and recommended m
   Resources in namespace:
 
   Claw (instance)               ← spec.credentials[] with all credential entries inline
-  Secret (openclaw-secrets)     ← auto-generated gateway token
+  Secret (openclaw-gateway-token)     ← auto-generated gateway token
   Secret (openclaw-proxy-ca)    ← auto-generated MITM CA cert+key (operator-managed)
   Secret (llm-keys)             ← user-created, referenced by spec.credentials entries
   Secret (gcp-sa)               ← user-created, referenced by spec.credentials entries

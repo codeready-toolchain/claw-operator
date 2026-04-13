@@ -1,6 +1,6 @@
 ## Context
 
-The OpenClaw operator currently sets the `status.url` field to the Route HTTPS endpoint (e.g., `https://openclaw-route.example.com`). The OpenClaw web UI requires a gateway token for authentication, stored in the `openclaw-secrets` Secret under the `OPENCLAW_GATEWAY_TOKEN` key. Users must manually retrieve this token via `kubectl get secret openclaw-secrets -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d` and paste it into the UI.
+The OpenClaw operator currently sets the `status.url` field to the Route HTTPS endpoint (e.g., `https://openclaw-route.example.com`). The OpenClaw web UI requires a gateway token for authentication, stored in the `openclaw-gateway-token` Secret under the `token` key. Users must manually retrieve this token via `kubectl get secret openclaw-gateway-token -o jsonpath='{.data.token}' | base64 -d` and paste it into the UI.
 
 The controller already generates and manages the gateway token in the `applyGatewaySecret()` method during reconciliation. The token is a cryptographically secure 64-character hex string generated using `crypto/rand`.
 
@@ -8,7 +8,7 @@ The controller already generates and manages the gateway token in the `applyGate
 
 **Goals:**
 - Append the gateway token as a URL fragment (`#token=<value>`) to the status URL
-- Read the token from the `openclaw-secrets` Secret during status updates
+- Read the token from the `openclaw-gateway-token` Secret during status updates
 - Maintain backward compatibility with the existing status URL structure (scheme + host)
 - Ensure the token is Base64-decoded from the Secret data before appending
 
@@ -28,7 +28,7 @@ The controller already generates and manages the gateway token in the `applyGate
 - Custom header: Not applicable since the URL is displayed to users, not sent programmatically
 
 ### Decision 2: Fetch token during status update
-**Rationale:** The status update already happens in the `updateStatus()` method after all resources are applied, so the `openclaw-secrets` Secret is guaranteed to exist. This avoids duplicating Secret fetching logic.
+**Rationale:** The status update already happens in the `updateStatus()` method after all resources are applied, so the `openclaw-gateway-token` Secret is guaranteed to exist. This avoids duplicating Secret fetching logic.
 
 **Alternatives considered:**
 - Cache token during `applyGatewaySecret()`: Rejected because it requires passing state between reconciliation phases and could become stale
