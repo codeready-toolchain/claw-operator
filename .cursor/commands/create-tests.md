@@ -81,35 +81,14 @@ func TestOpenClawSomething(t *testing.T) {
             t.Cleanup(func() {
                 deleteAndWaitAllResources(t, namespace)
             })
+            // given
+            createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+            
+            // when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-            // 1. Create prerequisite Secret
-            secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-            require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
-
-            // 2. Create Claw instance with required fields
-            instance := &openclawv1alpha1.Claw{}
-            instance.Name = resourceName
-            instance.Namespace = namespace
-            instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
-                Name: aiModelSecret,
-                Key:  aiModelSecretKey,
-            }
-            require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw")
-
-            // 3. Setup and run reconciler
-            reconciler := &ClawResourceReconciler{
-                Client: k8sClient,
-                Scheme: scheme.Scheme,
-            }
-            _, err := reconciler.Reconcile(ctx, ctrl.Request{
-                NamespacedName: client.ObjectKey{
-                    Name:      resourceName,
-                    Namespace: namespace,
-                },
-            })
-            require.NoError(t, err, "reconcile failed")
-
-            // 4. Assert on created resources using waitFor for async checks
+            // then
             resource := &SomeType{}
             waitFor(t, timeout, interval, func() bool {
                 err := k8sClient.Get(ctx, client.ObjectKey{
@@ -138,7 +117,8 @@ func TestOpenClawSomething(t *testing.T) {
 - `namespace` — `"default"`
 - `timeout` / `interval` — 10s / 250ms
 - `deleteAndWaitAllResources(t, namespace)` — cleanup all operator-managed resources
-- `createTestAPIKeySecret(name, namespace, key, value)` — creates a test Secret
+- `createClawInstance(t, name, namespace)` - creates a Claw instance along with a secret for the API key
+- `createTestAPIKeySecret(name, namespace, key, value)` — creates a test Secret for the API key
 - `createTestGatewaySecret(t, name, namespace)` — creates a gateway Secret with generated token
 
 ## Pitfalls

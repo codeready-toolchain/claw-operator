@@ -38,11 +38,13 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Check if PVC was created
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// check if PVC was created
 			pvc := &corev1.PersistentVolumeClaim{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -58,11 +60,13 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Check PVC has correct owner reference
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// check PVC has correct owner reference
 			pvc := &corev1.PersistentVolumeClaim{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -118,11 +122,13 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 				}
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Verify PVC was NOT created
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// verify PVC was NOT created
 			pvc = &corev1.PersistentVolumeClaim{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}, pvc)

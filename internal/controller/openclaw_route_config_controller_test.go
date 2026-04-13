@@ -63,7 +63,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost)
 			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
-			// Verify replacement
+			// verify replacement
 			openclawJSON, found, err := unstructured.NestedString(configMap.Object, "data", "openclaw.json")
 			require.NoError(t, err, "failed to get openclaw.json")
 			assert.True(t, found, "openclaw.json not found in ConfigMap data")
@@ -174,7 +174,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			// Check if ConfigMap contains localhost fallback
+			// check if ConfigMap contains localhost fallback
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -231,7 +231,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			// Verify buildKustomizedObjects still calls configureProxyDeployment and stampSecretVersionAnnotation
+			// verify buildKustomizedObjects still calls configureProxyDeployment and stampSecretVersionAnnotation
 			objects, err := reconciler.buildKustomizedObjects(ctx, instance)
 			require.NoError(t, err, "buildKustomizedObjects failed")
 
@@ -245,13 +245,13 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			}
 			require.NotNil(t, proxyDeployment, "proxy deployment not found in kustomized objects")
 
-			// Verify Secret reference is configured
+			// verify Secret reference is configured
 			containers, found, err := unstructured.NestedSlice(proxyDeployment.Object, "spec", "template", "spec", "containers")
 			require.NoError(t, err, "failed to get containers")
 			assert.True(t, found, "containers not found in proxy deployment")
 			assert.NotEmpty(t, containers, "expected at least one container in proxy deployment")
 
-			// Verify Secret version annotation is stamped
+			// verify Secret version annotation is stamped
 			annotations, found, err := unstructured.NestedStringMap(proxyDeployment.Object, "spec", "template", "metadata", "annotations")
 			require.NoError(t, err, "failed to get annotations")
 			assert.True(t, found, "annotations not found in proxy deployment pod template")

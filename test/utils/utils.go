@@ -145,7 +145,7 @@ func IsCertManagerCRDsInstalled(t *testing.T) bool {
 		return false
 	}
 
-	// Check if any of the Cert Manager CRDs are present
+	// check if any of the Cert Manager CRDs are present
 	crdList := GetNonEmptyLines(output)
 	for _, crd := range certManagerCRDs {
 		for _, line := range crdList {

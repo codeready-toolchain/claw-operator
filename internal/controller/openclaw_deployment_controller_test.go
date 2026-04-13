@@ -43,11 +43,13 @@ func TestOpenClawDeploymentController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Check if Deployment was created
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// check if Deployment was created
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -63,11 +65,13 @@ func TestOpenClawDeploymentController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Check if Deployment was created
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// check if Deployment was created
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -77,7 +81,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 				return err == nil
 			}, "Deployment should be created")
 
-			// Check Deployment has correct owner reference
+			// check Deployment has correct owner reference
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
 					Name:      ClawDeploymentName,
@@ -102,10 +106,14 @@ func TestOpenClawDeploymentController(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
+
+			// when
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
+			// then
 			np := &netv1.NetworkPolicy{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
@@ -115,7 +123,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 				return err == nil
 			}, "Ingress NetworkPolicy should be created")
 
-			// Verify owner reference
+			// verify owner reference
 			require.NotEmpty(t, np.OwnerReferences, "NetworkPolicy should have owner references")
 			ownerRef := np.OwnerReferences[0]
 			require.Equal(t, ClawResourceKind, ownerRef.Kind)
@@ -137,11 +145,13 @@ func TestOpenClawDeploymentController(t *testing.T) {
 				}
 			})
 
+			// given
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			// Verify Deployment was NOT created
+			// when
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+			// verify Deployment was NOT created
 			// Sleep to give reconciler time to (incorrectly) create resources
 			time.Sleep(2 * time.Second)
 
