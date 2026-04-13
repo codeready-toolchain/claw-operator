@@ -181,6 +181,12 @@ docker-build: ## Build docker image with the manager.
 		--build-arg BUILD_TIME=$$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
 		.
 
+.PHONY: docker-save
+docker-save: ## Save the docker image to a tar file
+	mkdir -p tmp 2>/dev/null 
+	rm -f ${OUTPUT_FILE} || true
+	$(CONTAINER_TOOL) save -o ${OUTPUT_FILE} ${IMG}
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
