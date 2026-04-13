@@ -55,7 +55,12 @@
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -run TestOpenClawPersistentVolumeClaim -v)",
       "Bash(cat)",
       "Read(//tmp/**)",
-      "Bash(wc -l internal/controller/*_test.go)"
+      "Bash(wc -l internal/controller/*_test.go)",
+      "Bash(make fmt:*)",
+      "Bash(make vet:*)",
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -run TestNodePairingRequestController)",
+      "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/openclaw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -run TestNodePairingRequestApprovalController)",
+      "Bash(git show:*)"
     ]
   }
 }
