@@ -11,7 +11,7 @@ The gateway requires `OPENCLAW_GATEWAY_TOKEN` for authentication. The PoC genera
 
 ### Option A: Operator generates a random token and stores it in a Secret
 
-The operator generates a cryptographically random token during reconciliation (if the Secret doesn't exist), stores it in `openclaw-secrets`, and the Deployment mounts it as `OPENCLAW_GATEWAY_TOKEN`. The token is never exposed in the CRD. The UI retrieves it via `kubectl get secret` using the user's kube token.
+The operator generates a cryptographically random token during reconciliation (if the Secret doesn't exist), stores it in `openclaw-gateway-token`, and the Deployment mounts it as `OPENCLAW_GATEWAY_TOKEN`. The token is never exposed in the CRD. The UI retrieves it via `kubectl get secret` using the user's kube token.
 
 - **Pro:** Fully automated — zero friction for the user, secure by default
 - **Pro:** Token never appears in CRD, audit logs of CR changes, or etcd as a non-Secret resource

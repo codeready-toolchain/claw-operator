@@ -78,8 +78,8 @@ spec:
             - name: OPENCLAW_GATEWAY_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: openclaw-secrets
-                  key: OPENCLAW_GATEWAY_TOKEN
+                  name: openclaw-gateway-token
+                  key: token
           resources:
             requests:
               memory: 512Mi

@@ -10,7 +10,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 - `geminiAPIKey` (SecretRef, required): Reference to a user-managed Secret containing the Gemini API key. SecretRef is a custom type with fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1), both validated at admission time. Controller validates the Secret exists and configures the `openclaw-proxy` deployment to reference it directly via environment variable. Pod restarts are triggered automatically when: (1) Secret reference changes (name or key field), or (2) Secret data changes (controller stamps Secret ResourceVersion as pod template annotation).
 
 **CRD Status Fields:**
-- `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`openclaw-secrets`)
+- `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`openclaw-gateway-token`)
 - `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking instance state. Currently includes:
   - `Ready` condition: Indicates whether the Claw instance is ready for use
     - `Status=False, Reason=Provisioning`: Deployments are not yet ready
@@ -58,7 +58,7 @@ The operator uses a **single unified controller** that manages all resources usi
 
 **ClawResourceReconciler** (`internal/controller/openclaw_resource_controller.go`):
 - Reconciles `Claw` CRs named exactly `"instance"` (skips all others)
-- Creates gateway Secret (`openclaw-secrets`) with randomly-generated authentication token
+- Creates gateway Secret (`openclaw-gateway-token`) with randomly-generated authentication token
 - Validates user-provided Secret containing Gemini API key (referenced in CR's `geminiAPIKey` field)
 - Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (3: egress for openclaw, egress for proxy, ingress for gateway), proxy Deployment/ConfigMap, and Route (OpenShift only)
 - Uses **three-phase reconciliation** to dynamically inject Route host into ConfigMap for CORS configuration
@@ -88,10 +88,10 @@ Reconcile(ctx, req) called
   ↓
 PHASE 1: Gateway Secret
 3. applyGatewaySecret(ctx, instance)
-   ├─ Check if openclaw-secrets Secret already exists
-   ├─ If exists and has OPENCLAW_GATEWAY_TOKEN, preserve existing token
+   ├─ Check if openclaw-gateway-token Secret already exists
+   ├─ If exists and has token, preserve existing token
    ├─ If not exists or missing token, generate new 64-char hex token using crypto/rand
-   ├─ Create/update openclaw-secrets Secret with OPENCLAW_GATEWAY_TOKEN data entry
+   ├─ Create/update openclaw-gateway-token Secret with token data entry
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply Secret (Patch with Apply)
   ↓
@@ -166,7 +166,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 **Key methods:**
 - `Reconcile()` — main entry point, orchestrates three-phase reconciliation (gateway Secret → Route → ConfigMap injection + remaining resources)
 - `generateGatewayToken()` — generates cryptographically secure 64-char hex token using crypto/rand
-- `applyGatewaySecret()` — creates/updates openclaw-secrets Secret with gateway token (preserves existing token)
+- `applyGatewaySecret()` — creates/updates openclaw-gateway-token Secret with gateway token (preserves existing token)
 - `applyRouteOnly()` — applies only Route resource from Kustomize manifests (Phase 2)
 - `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
@@ -187,9 +187,9 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `ClawConfigMapName = "openclaw-config"`
 - `ClawPVCName = "openclaw-home-pvc"`
 - `ClawDeploymentName = "openclaw"`
-- `ClawGatewaySecretName = "openclaw-secrets"` — Secret containing gateway authentication token
+- `ClawGatewaySecretName = "openclaw-gateway-token"` — Secret containing gateway authentication token
 - `ClawIngressNetworkPolicyName = "openclaw-ingress"` — ingress NetworkPolicy restricting gateway access to OpenShift router
-- `GatewayTokenKeyName = "OPENCLAW_GATEWAY_TOKEN"` — data key for gateway token in gateway Secret
+- `GatewayTokenKeyName = "token"` — data key for gateway token in gateway Secret
 
 ### Kustomize-based manifest generation
 

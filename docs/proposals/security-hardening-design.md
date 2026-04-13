@@ -30,7 +30,7 @@ The OpenClaw operator deploys a personal AI assistant into a user's Kubernetes n
 
 ### CRD Rename: OpenClaw → Claw
 
-The CRD Kind is renamed from `OpenClaw` to `Claw` to support potential future distributions (e.g., NemoClaw). The API group remains `openclaw.sandbox.redhat.com/v1alpha1` (the operator project identity). Internal resource names (`openclaw-secrets`, `openclaw-config`, etc.) are unchanged.
+The CRD Kind is renamed from `OpenClaw` to `Claw` to support potential future distributions (e.g., NemoClaw). The API group remains `openclaw.sandbox.redhat.com/v1alpha1` (the operator project identity). Internal resource names (`openclaw-gateway-token`, `openclaw-config`, etc.) are unchanged.
 
 ### Inline Credentials (`spec.credentials[]`)
 

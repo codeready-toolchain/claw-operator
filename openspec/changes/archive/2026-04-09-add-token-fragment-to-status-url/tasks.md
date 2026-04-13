@@ -1,6 +1,6 @@
 ## 1. Update Status Logic
 
-- [x] 1.1 Add method to fetch gateway token from `openclaw-secrets` Secret with Base64 decoding
+- [x] 1.1 Add method to fetch gateway token from `openclaw-gateway-token` Secret with Base64 decoding
 - [x] 1.2 Modify `updateStatus()` method to retrieve gateway token during status update
 - [x] 1.3 Append token as URL fragment (`#token=<value>`) when constructing status URL
 - [x] 1.4 Handle Secret read failures gracefully (continue with URL without token fragment)

@@ -79,18 +79,18 @@ The `kubectl get openclaw` output includes:
 
 The OpenClaw operator manages authentication through two types of Secrets:
 
-#### 1. Gateway Authentication Token (`openclaw-secrets`)
+#### 1. Gateway Authentication Token (`openclaw-gateway-token`)
 
 The controller automatically generates and manages a secure authentication token for the OpenClaw gateway:
-- **Secret name:** `openclaw-secrets`
-- **Data entry:** `OPENCLAW_GATEWAY_TOKEN` - A cryptographically secure 64-character hex string (256-bit entropy)
+- **Secret name:** `openclaw-gateway-token`
+- **Data entry:** `token` - A cryptographically secure 64-character hex string (256-bit entropy)
 - **Generation:** Automatically created on first reconciliation using Go's `crypto/rand` package
 - **Persistence:** Token is preserved across reconciliations (never regenerated unless the Secret is deleted)
 - **Lifecycle:** Automatically deleted when the OpenClaw instance is removed (via owner references)
 
 **Example retrieval:**
 ```sh
-kubectl get secret openclaw-secrets -n openclaw-system -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d
+kubectl get secret openclaw-gateway-token -n openclaw-system -o jsonpath='{.data.token}' | base64 -d
 ```
 
 #### 2. LLM API Key (User-Managed Secret)

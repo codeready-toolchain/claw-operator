@@ -184,7 +184,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		}
 	}
 
-	t.Run("should retrieve and decode gateway token from openclaw-secrets", func(t *testing.T) {
+	t.Run("should retrieve and decode gateway token from openclaw-gateway-token", func(t *testing.T) {
 		setupGatewaySecretTest(t)
 		t.Cleanup(func() {
 			deleteAndWaitAllResources(t, namespace)

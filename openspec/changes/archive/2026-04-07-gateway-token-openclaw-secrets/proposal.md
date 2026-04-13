@@ -4,8 +4,8 @@ The OpenClaw gateway currently lacks authentication, allowing unrestricted acces
 
 ## What Changes
 
-- OpenClawResourceReconciler creates a new secret `openclaw-secrets` in the same namespace as the OpenClaw instance
-- Secret contains a single data entry `OPENCLAW_GATEWAY_TOKEN` with a cryptographically secure random token (64 hex characters, equivalent to 32 random bytes)
+- OpenClawResourceReconciler creates a new secret `openclaw-gateway-token` in the same namespace as the OpenClaw instance
+- Secret contains a single data entry `token` with a cryptographically secure random token (64 hex characters, equivalent to 32 random bytes)
 - Token generation uses Go's `crypto/rand` package (equivalent to `openssl rand -hex 32`)
 - Secret is created/managed alongside other OpenClaw resources during reconciliation
 - Secret has owner reference to the OpenClaw instance for automatic garbage collection
@@ -21,5 +21,5 @@ The OpenClaw gateway currently lacks authentication, allowing unrestricted acces
 ## Impact
 
 - `internal/controller/openclaw_resource_controller.go`: Add secret creation logic to reconciler
-- New Kubernetes Secret resource `openclaw-secrets` created in OpenClaw instance namespace
+- New Kubernetes Secret resource `openclaw-gateway-token` created in OpenClaw instance namespace
 - Existing OpenClaw Deployment will need separate changes to mount and use this token (out of scope for this change)

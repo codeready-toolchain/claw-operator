@@ -56,7 +56,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 				return err == nil
 			}, "gateway Secret should be created")
 
-			// verify Secret has OPENCLAW_GATEWAY_TOKEN data entry
+			// verify Secret has token data entry
 			assert.Contains(t, secret.Data, GatewayTokenKeyName)
 		})
 
