@@ -82,7 +82,6 @@ rules:
   - nodepairingrequestapprovals
   verbs:
   - create
-  - delete
   - get
   - list
   - patch

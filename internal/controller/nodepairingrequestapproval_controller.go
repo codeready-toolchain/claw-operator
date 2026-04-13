@@ -34,7 +34,7 @@ type NodePairingRequestApprovalReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=nodepairingrequestapprovals,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=nodepairingrequestapprovals,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=nodepairingrequestapprovals/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=nodepairingrequestapprovals/finalizers,verbs=update
 
