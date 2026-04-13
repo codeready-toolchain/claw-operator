@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -225,4 +226,45 @@ func createTestGatewaySecret(t *testing.T, name, namespace string) *corev1.Secre
 			GatewayTokenKeyName: []byte(token),
 		},
 	}
+}
+
+// createClawInstance creates a Claw instance with the required API key Secret.
+// Returns the created Claw instance.
+func createClawInstance(t *testing.T, ctx context.Context, name, namespace string) {
+	t.Helper()
+
+	// Create API key Secret
+	secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+	require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
+
+	// Create Claw instance
+	instance := &openclawv1alpha1.Claw{}
+	instance.Name = name
+	instance.Namespace = namespace
+	instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+		Name: aiModelSecret,
+		Key:  aiModelSecretKey,
+	}
+	require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+}
+
+// createClawReconciler creates a ClawResourceReconciler for testing.
+func createClawReconciler() *ClawResourceReconciler {
+	return &ClawResourceReconciler{
+		Client: k8sClient,
+		Scheme: scheme.Scheme,
+	}
+}
+
+// reconcileClaw performs a reconciliation for the given Claw resource.
+func reconcileClaw(t *testing.T, ctx context.Context, reconciler *ClawResourceReconciler, name, namespace string) {
+	t.Helper()
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: client.ObjectKey{
+			Name:      name,
+			Namespace: namespace,
+		},
+	})
+	require.NoError(t, err, "reconcile failed")
 }
