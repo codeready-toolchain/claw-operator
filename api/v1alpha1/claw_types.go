@@ -21,17 +21,16 @@ import (
 )
 
 // CredentialType selects the credential injection mechanism used by the proxy.
-// +kubebuilder:validation:Enum=apiKey;bearer;gcp;pathToken;oauth2;kubernetes;none
+// +kubebuilder:validation:Enum=apiKey;bearer;gcp;pathToken;oauth2;none
 type CredentialType string
 
 const (
-	CredentialTypeAPIKey     CredentialType = "apiKey"
-	CredentialTypeBearer     CredentialType = "bearer"
-	CredentialTypeGCP        CredentialType = "gcp"
-	CredentialTypePathToken  CredentialType = "pathToken"
-	CredentialTypeOAuth2     CredentialType = "oauth2"
-	CredentialTypeKubernetes CredentialType = "kubernetes"
-	CredentialTypeNone       CredentialType = "none"
+	CredentialTypeAPIKey    CredentialType = "apiKey"
+	CredentialTypeBearer    CredentialType = "bearer"
+	CredentialTypeGCP       CredentialType = "gcp"
+	CredentialTypePathToken CredentialType = "pathToken"
+	CredentialTypeOAuth2    CredentialType = "oauth2"
+	CredentialTypeNone      CredentialType = "none"
 )
 
 // Condition types for Claw status.
@@ -109,19 +108,12 @@ type OAuth2Config struct {
 	Scopes []string `json:"scopes,omitempty"`
 }
 
-// KubernetesConfig configures projected ServiceAccount token injection.
-type KubernetesConfig struct {
-	// ServiceAccountName is the SA whose token the proxy uses for Kubernetes API requests.
-	// If empty, defaults to "openclaw-agent".
-	// +optional
-	ServiceAccountName string `json:"serviceAccountName,omitempty"`
-}
-
 // CredentialSpec defines a single credential entry for proxy injection.
 // +kubebuilder:validation:XValidation:rule="self.type != 'apiKey' || has(self.apiKey)",message="apiKey config is required when type is apiKey"
 // +kubebuilder:validation:XValidation:rule="self.type != 'gcp' || has(self.gcp)",message="gcp config is required when type is gcp"
 // +kubebuilder:validation:XValidation:rule="self.type != 'pathToken' || has(self.pathToken)",message="pathToken config is required when type is pathToken"
 // +kubebuilder:validation:XValidation:rule="self.type != 'oauth2' || has(self.oauth2)",message="oauth2 config is required when type is oauth2"
+// +kubebuilder:validation:XValidation:rule="self.type == 'none' || has(self.secretRef)",message="secretRef is required for this credential type"
 type CredentialSpec struct {
 	// Name uniquely identifies this credential entry.
 	// +kubebuilder:validation:MinLength=1
@@ -131,7 +123,7 @@ type CredentialSpec struct {
 	Type CredentialType `json:"type"`
 
 	// SecretRef references the Kubernetes Secret holding the credential value.
-	// Not required for types "kubernetes" (uses projected SA token) and "none".
+	// Not required for type "none" (proxy allowlist, no auth).
 	// +optional
 	SecretRef *SecretRef `json:"secretRef,omitempty"`
 
@@ -160,10 +152,6 @@ type CredentialSpec struct {
 	// OAuth2 configures client credentials token exchange. Required when type is "oauth2".
 	// +optional
 	OAuth2 *OAuth2Config `json:"oauth2,omitempty"`
-
-	// Kubernetes configures projected ServiceAccount token injection.
-	// +optional
-	Kubernetes *KubernetesConfig `json:"kubernetes,omitempty"`
 }
 
 // ClawSpec defines the desired state of Claw

@@ -61,7 +61,6 @@ spec:
 | `gcp` | GCP SA JSON → OAuth2 token + token vending | `secretRef`, `domain`, `gcp.project`, `gcp.location` |
 | `pathToken` | Token in URL path | `secretRef`, `domain`, `pathToken.prefix` |
 | `oauth2` | Client credentials → token exchange | `secretRef`, `domain`, `oauth2.clientID`, `oauth2.tokenURL`, `oauth2.scopes` |
-| `kubernetes` | ServiceAccount projected token | `domain`, `kubernetes.serviceAccountName` |
 | `none` | Proxy allowlist (no auth) | `domain` |
 
 **Domain format:** exact match (`api.github.com`) or suffix match (`.googleapis.com`, leading dot). See [credential-examples.md](security-hardening-credential-examples.md) for syntax details.
@@ -70,7 +69,7 @@ spec:
 
 **Validation ([Q10](security-hardening-impl-questions.md)):** CEL validation rules on the `credentials` array items enforce that the correct type-specific sub-struct is present for each `type` value. The controller validates during reconciliation as defense-in-depth (e.g., checking that referenced Secrets exist).
 
-**Phase 2 types ([Q11](security-hardening-impl-questions.md)):** `apiKey`, `bearer`, `gcp`, and `kubernetes` ship in Phase 2. All 7 types are registered in the CRD schema from the start; unsupported types (`pathToken`, `oauth2`, `none`) log a warning and set a condition.
+**Phase 2 types ([Q11](security-hardening-impl-questions.md)):** `apiKey`, `bearer`, and `gcp` ship in Phase 2. The remaining types (`pathToken`, `oauth2`, `none`) were added subsequently. The `kubernetes` type was deferred to Phase 3 pending a design decision on SA token projection vs user-managed secrets.
 
 **Type definitions** live in `api/v1alpha1/openclaw_types.go` alongside the existing `Claw` types. The `CredentialSpec` struct is used as the array element type for `ClawSpec.Credentials`. See [credential-examples.md](security-hardening-credential-examples.md) for the full Go types and YAML examples for each type.
 
@@ -112,7 +111,6 @@ Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inje
 - `gcp` — loads SA JSON, obtains short-lived OAuth2 token via `golang.org/x/oauth2/google`, caches and auto-refreshes; includes **token vending** — intercepts `POST oauth2.googleapis.com/token` and returns a dummy token so Google SDK clients inside OpenClaw work with placeholder credentials (pattern from paude-proxy)
 - `pathToken` — inserts the token into the URL path (e.g., Telegram `/bot<TOKEN>/...`)
 - `oauth2` — exchanges client credentials for a short-lived access token, injects as Bearer
-- `kubernetes` — reads projected ServiceAccount token from file (re-read on each request for rotation), injects as Bearer for kube-apiserver
 - `none` — no credential injection, just forwards (allowlist entry)
 
 **Domain matching:**
@@ -188,8 +186,6 @@ The operator never copies secret values. It reads each credential entry's `secre
     ```
 
     The config JSON references the file path (`"saFilePath": "/etc/proxy/credentials/vertex-ai/sa-key.json"`). The proxy reads the file at startup and refreshes OAuth2 tokens from the SA JSON.
-
-3. **Projected ServiceAccount tokens** (Kubernetes type) — the operator adds a projected volume for the specified ServiceAccount. The proxy re-reads the token file on each request (tokens rotate automatically).
 
 The env var names (e.g., `CRED_GEMINI`) are operator-generated from the credential entry's `name` field, ensuring uniqueness. ConfigMap and Deployment changes are applied atomically via SSA; a config hash annotation on the Deployment triggers a rollout when credentials change.
 
@@ -339,7 +335,7 @@ The init container writes to `/home/node/.openclaw` (PVC-mounted), so `readOnlyR
 
 ## Implementation Plan
 
-**Phasing ([Q9](security-hardening-impl-questions.md)):** Two main phases plus cleanup. Originally three, but Q11 requires `gcp` and `kubernetes` from launch (which need the Go proxy), merging the CRD and proxy phases.
+**Phasing ([Q9](security-hardening-impl-questions.md)):** Two main phases plus cleanup. Originally three, but Q11 requires `gcp` from launch (which needs the Go proxy), merging the CRD and proxy phases. The `kubernetes` type was deferred to Phase 3 after discovering that projected SA token volumes don't support user-specified ServiceAccounts.
 
 ### Phase 1: Quick wins (includes CRD schema changes: CRD rename and new status field, no proxy rewrite) - DONE
 
@@ -349,21 +345,21 @@ The init container writes to `/home/node/.openclaw` (PVC-mounted), so `readOnlyR
 4. **Ingress NetworkPolicy** — new manifest in `internal/assets/manifests/`
 5. **Status fields** — add `gatewayTokenSecretRef`, rename `Available` condition to `Ready` (same semantics for now; `CredentialsResolved` and `ProxyConfigured` added in Phase 2 when those subsystems exist)
 
-### Phase 2: Inline credentials + Go proxy
+### Phase 2: Inline credentials + Go proxy - DONE
 
 6. **Define `spec.credentials[]` types and replace `spec.geminiAPIKey`** — `CredentialSpec`, `CredentialType`, sub-config structs in `api/v1alpha1/` + CEL validation + `make manifests && make generate`; clean break, no deprecation (no production users)
 7. **Credential validation** — controller reads `instance.Spec.Credentials` directly, validates Secrets exist
 8. **Proxy CA management** — `applyProxyCA()` generates/stores CA cert+key in Secret, mounts into proxy and gateway pods (Q12)
 9. **Proxy config generation** — operator builds proxy config JSON from `spec.credentials`
-10. **Build the Go proxy** — CONNECT + MITM handler, leaf cert generation, `apiKey`/`bearer`/`gcp`/`kubernetes` injectors; port paude-proxy injection layer, add health endpoint, config-driven routing
+10. **Build the Go proxy** — CONNECT + MITM handler, leaf cert generation, `apiKey`/`bearer`/`gcp`/`pathToken`/`oauth2`/`none` injectors; port paude-proxy injection layer, add health endpoint, config-driven routing
 11. **Gateway config generation** — operator generates `openclaw.json` from `spec.credentials` with real `https://` base URLs, placeholder API keys, and `request.proxy.mode: "env-proxy"`; sets `HTTP_PROXY`/`HTTPS_PROXY` + `NODE_EXTRA_CA_CERTS` env vars on gateway Deployment
 12. **Proxy container image** — Containerfile, CI pipeline (podman), OLM bundle with `relatedImages` + `PROXY_IMAGE` env var
 13. **Replace nginx manifests** — update `proxy-deployment.yaml`, `proxy-configmap.yaml`, remove nginx entrypoint and `configureProxyDeployment()`/`stampSecretVersionAnnotation()` code
 14. **Status conditions** — add `CredentialsResolved` and `ProxyConfigured` conditions (subsystems now exist)
 
-### Phase 3: Remaining types + cleanup
+### Phase 3: Kubernetes credential type + cleanup
 
-15. **Add remaining injectors** — `pathToken`, `oauth2`, `none` in the Go proxy
+15. **`kubernetes` credential type** — deferred from Phase 2. Requires a design decision on how to inject ServiceAccount tokens for the Kubernetes API: projected SA token volumes only provide the proxy pod's own SA token, not a user-specified one. Options include using the TokenRequest API to mint tokens for arbitrary SAs, accepting a user-managed Secret containing a kubeconfig/token, or another approach. Will be designed and implemented when there is a concrete use case.
 16. **RBAC audit** — trim operator ClusterRole to least-privilege
 17. **Threat model documentation** — application-layer security analysis
 
@@ -385,5 +381,5 @@ All implementation questions are resolved. See [security-hardening-impl-question
 | Q8 | Route hostname discovery | Two-pass reconciliation, `Ready=False` until resolved |
 | Q9 | Implementation phasing | Phase 1 (quick wins + CRD rename) → Phase 2 (inline credentials + Go proxy) → Phase 3 (remaining types + cleanup) |
 | Q10 | Credential validation | CEL validation rules on `spec.credentials[]` items + controller defense-in-depth |
-| Q11 | Phase 2 credential types | `apiKey`, `bearer`, `gcp`, `kubernetes` (all 7 registered in schema) |
+| Q11 | Phase 2 credential types | `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `none` (6 types implemented; `kubernetes` deferred to Phase 3) |
 | Q12 | Proxy traffic routing | CONNECT + MITM with operator-managed CA; `HTTP_PROXY`/`HTTPS_PROXY` env vars |

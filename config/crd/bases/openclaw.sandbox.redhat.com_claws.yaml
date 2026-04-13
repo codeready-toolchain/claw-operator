@@ -99,16 +99,6 @@ spec:
                       - location
                       - project
                       type: object
-                    kubernetes:
-                      description: Kubernetes configures projected ServiceAccount
-                        token injection.
-                      properties:
-                        serviceAccountName:
-                          description: |-
-                            ServiceAccountName is the SA whose token the proxy uses for Kubernetes API requests.
-                            If empty, defaults to "openclaw-agent".
-                          type: string
-                      type: object
                     name:
                       description: Name uniquely identifies this credential entry.
                       minLength: 1
@@ -150,7 +140,7 @@ spec:
                     secretRef:
                       description: |-
                         SecretRef references the Kubernetes Secret holding the credential value.
-                        Not required for types "kubernetes" (uses projected SA token) and "none".
+                        Not required for type "none" (proxy allowlist, no auth).
                       properties:
                         key:
                           description: Key is the key in the Secret's data map
@@ -172,7 +162,6 @@ spec:
                       - gcp
                       - pathToken
                       - oauth2
-                      - kubernetes
                       - none
                       type: string
                   required:
@@ -189,6 +178,8 @@ spec:
                     rule: self.type != 'pathToken' || has(self.pathToken)
                   - message: oauth2 config is required when type is oauth2
                     rule: self.type != 'oauth2' || has(self.oauth2)
+                  - message: secretRef is required for this credential type
+                    rule: self.type == 'none' || has(self.secretRef)
                 type: array
             type: object
           status:

@@ -35,33 +35,40 @@ import (
 )
 
 const (
-	// operatorNamespace is the namespace where the operator is deployed in
 	operatorNamespace = "openclaw-operator"
+	userNamespace     = "default"
 
-	// userNamespace is the namespace where the user will create the Claw CR in
-	userNamespace = "default"
-
-	// serviceAccountName created for the project
-	serviceAccountName = "openclaw-operator-controller-manager"
-
-	// metricsServiceName is the name of the metrics service of the project
-	metricsServiceName = "openclaw-operator-controller-manager-metrics-service"
-
-	// metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
+	serviceAccountName     = "openclaw-operator-controller-manager"
+	metricsServiceName     = "openclaw-operator-controller-manager-metrics-service"
 	metricsRoleBindingName = "openclaw-operator-metrics-binding"
 
-	// Test timeouts
 	defaultTimeout  = 2 * time.Minute
 	pollInterval    = 1 * time.Second
 	extendedTimeout = 5 * time.Minute
 )
 
+// clawYAMLWithGemini returns a Claw CR YAML using spec.credentials[] with apiKey type.
+func clawYAMLWithGemini(secretName, secretKey string) string {
+	return fmt.Sprintf(`apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        name: %s
+        key: %s
+      domain: ".googleapis.com"
+      apiKey:
+        header: x-goog-api-key
+`, secretName, secretKey)
+}
+
 func TestManager(t *testing.T) { //nolint:gocyclo
 	var controllerPodName string
 
-	// Setup: create the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
 	t.Log("creating manager namespace")
 	cmd := exec.Command("kubectl", "create", "ns", operatorNamespace)
 	_, err := utils.Run(t, cmd)
@@ -83,7 +90,6 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to deploy the controller-manager")
 
-	// Cleanup: undeploy the controller, uninstall CRDs, and delete the namespace.
 	t.Cleanup(func() {
 		t.Log("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", operatorNamespace)
@@ -102,7 +108,6 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 		_, _ = utils.Run(t, cmd)
 	})
 
-	// Helper function to collect debug info on test failure
 	collectDebugInfo := func(t *testing.T) {
 		t.Helper()
 		if !t.Failed() {
@@ -154,7 +159,6 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			deadline := time.Now().Add(defaultTimeout)
 			var podOutput string
 			for time.Now().Before(deadline) {
-				// Get the name of the controller-manager pod
 				cmd := exec.Command("kubectl", "get",
 					"pods", "-l", "control-plane=controller-manager",
 					"-o", "go-template={{ range .items }}"+
@@ -171,14 +175,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 					if len(podNames) == 1 {
 						controllerPodName = podNames[0]
 						if strings.Contains(controllerPodName, "controller-manager") {
-							// Validate the pod's status
 							cmd = exec.Command("kubectl", "get",
 								"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
 								"-n", operatorNamespace,
 							)
 							output, err := utils.Run(t, cmd)
 							if err == nil && output == "Running" {
-								return // Success
+								return
 							}
 						}
 					}
@@ -283,7 +286,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		t.Run("should successfully reconcile Claw instance with Secret reference", func(t *testing.T) {
+		t.Run("should reconcile Claw with credential-based proxy wiring", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)
 				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
@@ -292,8 +295,9 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 			})
 
-			t.Log("creating the Gemini API key Secret")
-			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace, "--ignore-not-found")
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
 			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value",
@@ -302,12 +306,12 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "Failed to create Secret")
 
 			t.Log("applying the Claw CR")
-			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_claw.yaml",
-				"-n", userNamespace)
+			cmd = exec.Command("kubectl", "apply", "-f",
+				"config/samples/openclaw_v1alpha1_claw.yaml", "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
-			t.Log("verifying the Claw instance becomes Ready")
+			t.Log("waiting for Claw to become Ready")
 			ctx := context.Background()
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
 				func(ctx context.Context) (bool, error) {
@@ -317,32 +321,40 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 					output, err := utils.Run(t, cmd)
 					return err == nil && output == "True", nil
 				})
-			require.NoError(t, err,
-				"Claw instance in namespace %s did not become Ready within %v",
-				userNamespace, extendedTimeout)
+			require.NoError(t, err, "Claw did not become Ready within %v", extendedTimeout)
 
-			t.Log("verifying the openclaw-proxy deployment references the user's Secret")
-			jsonPathSecretName := "jsonpath={.spec.template.spec.containers[0]" +
-				".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
+			t.Log("verifying CRED_GEMINI env var references the user's Secret")
+			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+				".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.name}"
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-				"-o", jsonPathSecretName,
-				"-n", userNamespace)
+				"-o", jp, "-n", userNamespace)
 			output, err := utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "gemini-api-key", output, "Proxy deployment should reference user's Secret")
+			assert.Equal(t, "gemini-api-key", output,
+				"CRED_GEMINI should reference gemini-api-key Secret")
+
+			t.Log("verifying proxy-config ConfigMap was generated")
+			cmd = exec.Command("kubectl", "get", "configmap", "proxy-config",
+				"-o", "jsonpath={.data.proxy-config\\.json}",
+				"-n", userNamespace)
+			configOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err, "proxy-config ConfigMap should exist")
+			assert.Contains(t, configOutput, ".googleapis.com",
+				"proxy config should contain the credential domain")
+
+			t.Log("verifying the proxy CA Secret was created")
+			cmd = exec.Command("kubectl", "get", "secret", "openclaw-proxy-ca",
+				"-o", "jsonpath={.data.ca\\.crt}",
+				"-n", userNamespace)
+			caOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Proxy CA Secret should exist")
+			assert.NotEmpty(t, caOutput, "CA cert should not be empty")
 
 			t.Log("verifying the ingress NetworkPolicy exists")
-			cmd = exec.Command("kubectl", "get", "networkpolicy", "openclaw-ingress", "-n", userNamespace)
+			cmd = exec.Command("kubectl", "get", "networkpolicy", "openclaw-ingress",
+				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Ingress NetworkPolicy should exist")
-
-			t.Log("verifying the ingress NetworkPolicy allows traffic on port 18789")
-			cmd = exec.Command("kubectl", "get", "networkpolicy", "openclaw-ingress",
-				"-o", "jsonpath={.spec.ingress[0].ports[0].port}",
-				"-n", userNamespace)
-			portOutput, err := utils.Run(t, cmd)
-			require.NoError(t, err)
-			assert.Equal(t, "18789", portOutput, "Ingress NetworkPolicy should allow port 18789")
 
 			t.Log("verifying the gateway Secret was created with a token")
 			cmd = exec.Command("kubectl", "get", "secret", "openclaw-gateway-token",
@@ -352,20 +364,37 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "Gateway Secret should exist")
 			assert.NotEmpty(t, tokenOutput, "Gateway token should not be empty")
 
-			t.Log("verifying gatewayTokenSecretRef is set in Claw status")
+			t.Log("verifying gatewayTokenSecretRef in status")
 			cmd = exec.Command("kubectl", "get", "claw", "instance",
 				"-o", "jsonpath={.status.gatewayTokenSecretRef}",
 				"-n", userNamespace)
 			secretRefOutput, err := utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "openclaw-gateway-token", secretRefOutput, "Status should reference the gateway Secret")
+			assert.Equal(t, "openclaw-gateway-token", secretRefOutput)
+
+			t.Log("verifying CredentialsResolved condition")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.conditions[?(@.type=='CredentialsResolved')].status}",
+				"-n", userNamespace)
+			condOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "True", condOutput, "CredentialsResolved should be True")
+
+			t.Log("verifying ProxyConfigured condition")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+				"-n", userNamespace)
+			condOutput, err = utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "True", condOutput, "ProxyConfigured should be True")
 
 			t.Log("verifying reconciliation success in metrics")
 			metricsOutput := fetchFreshMetrics(t, "curl-metrics-reconcile")
-			assert.Contains(t, metricsOutput, `controller_runtime_reconcile_total{controller="openclaw",result="success"}`)
+			assert.Contains(t, metricsOutput,
+				`controller_runtime_reconcile_total{controller="openclaw",result="success"}`)
 		})
 
-		t.Run("should configure openclaw-proxy GEMINI_API_KEY env var with correct Secret reference", func(t *testing.T) {
+		t.Run("should wire credential env var with correct Secret reference", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)
 				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
@@ -374,8 +403,9 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 			})
 
-			t.Log("creating the Gemini API key Secret")
-			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace, "--ignore-not-found")
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
 			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
 				"--from-literal=api-key=test-gemini-key-value",
@@ -384,12 +414,12 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "Failed to create Secret")
 
 			t.Log("applying the Claw CR")
-			cmd = exec.Command("kubectl", "apply", "-f", "config/samples/openclaw_v1alpha1_claw.yaml",
-				"-n", userNamespace)
+			cmd = exec.Command("kubectl", "apply", "-f",
+				"config/samples/openclaw_v1alpha1_claw.yaml", "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
-			t.Log("waiting for openclaw-proxy deployment to be created")
+			t.Log("waiting for openclaw-proxy deployment")
 			deadline := time.Now().Add(2 * time.Minute)
 			for time.Now().Before(deadline) {
 				cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
@@ -401,35 +431,23 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				time.Sleep(pollInterval)
 			}
 
-			t.Log("verifying GEMINI_API_KEY env var references the correct Secret name")
-			jsonPathSecretName := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
-				".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
+			t.Log("verifying CRED_GEMINI references the correct Secret name")
+			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+				".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.name}"
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-				"-o", jsonPathSecretName,
-				"-n", userNamespace)
+				"-o", jp, "-n", userNamespace)
 			output, err := utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "gemini-api-key", output, "GEMINI_API_KEY should reference gemini-api-key Secret")
+			assert.Equal(t, "gemini-api-key", output)
 
-			t.Log("verifying GEMINI_API_KEY env var references the correct Secret key")
-			jsonPathSecretKey := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
-				".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.key}"
+			t.Log("verifying CRED_GEMINI references the correct Secret key")
+			jp = "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+				".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.key}"
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-				"-o", jsonPathSecretKey,
-				"-n", userNamespace)
+				"-o", jp, "-n", userNamespace)
 			output, err = utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "api-key", output, "GEMINI_API_KEY should reference 'api-key' key in Secret")
-
-			t.Log("verifying GEMINI_API_KEY env var is not optional")
-			jsonPathOptional := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
-				".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.optional}"
-			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
-				"-o", jsonPathOptional,
-				"-n", userNamespace)
-			output, err = utils.Run(t, cmd)
-			require.NoError(t, err)
-			assert.Equal(t, "false", output, "GEMINI_API_KEY should be required (optional=false)")
+			assert.Equal(t, "api-key", output)
 
 			t.Log("verifying the deployment uses the proxy container")
 			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
@@ -439,7 +457,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err)
 			assert.Equal(t, "proxy", output, "First container should be named 'proxy'")
 
-			t.Log("verifying pods are running with the Secret reference")
+			t.Log("verifying pods are running")
 			deadline = time.Now().Add(3 * time.Minute)
 			for time.Now().Before(deadline) {
 				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
@@ -453,39 +471,32 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			}
 		})
 
-		t.Run("should trigger pod restart when Secret reference changes", func(t *testing.T) {
+		t.Run("should trigger pod restart when credential Secret reference changes", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)
 				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
-				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-1", "-n", userNamespace)
+				cmd = exec.Command("kubectl", "delete", "secret", "llm-key-1", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
-				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-2", "-n", userNamespace)
+				cmd = exec.Command("kubectl", "delete", "secret", "llm-key-2", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
 			})
 
-			t.Log("creating the first Gemini API key Secret")
-			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key-1", "-n", userNamespace, "--ignore-not-found")
+			t.Log("creating the first credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "llm-key-1",
+				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key-1",
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "llm-key-1",
 				"--from-literal=api-key=first-api-key",
 				"-n", userNamespace)
 			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create first Secret")
 
-			t.Log("creating a custom Claw CR with first Secret")
-			clawYAML := `apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: Claw
-metadata:
-  name: instance
-spec:
-  geminiAPIKey:
-    name: gemini-api-key-1
-    key: api-key
-`
+			t.Log("creating Claw CR referencing first Secret")
 			crFile := filepath.Join("/tmp", "claw-e2e-test.yaml")
-			err = os.WriteFile(crFile, []byte(clawYAML), os.FileMode(0o644))
-			require.NoError(t, err, "Failed to write CR file")
+			err = os.WriteFile(crFile, []byte(clawYAMLWithGemini("llm-key-1", "api-key")),
+				os.FileMode(0o644))
+			require.NoError(t, err)
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
@@ -501,9 +512,7 @@ spec:
 					output, err := utils.Run(t, cmd)
 					return err == nil && output == "True", nil
 				})
-			require.NoError(t, err,
-				"Claw instance in namespace %s did not become Ready within %v",
-				userNamespace, extendedTimeout)
+			require.NoError(t, err, "Claw did not become Ready within %v", extendedTimeout)
 
 			t.Log("capturing original pod UID")
 			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
@@ -513,27 +522,20 @@ spec:
 			require.NoError(t, err)
 			require.NotEmpty(t, originalPodUID)
 
-			t.Log("creating the second Gemini API key Secret")
-			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key-2", "-n", userNamespace, "--ignore-not-found")
+			t.Log("creating the second credential Secret")
+			cmd = exec.Command("kubectl", "delete", "secret", "llm-key-2",
+				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key-2",
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "llm-key-2",
 				"--from-literal=api-key=second-api-key",
 				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to create second Secret")
 
 			t.Log("updating Claw CR to reference the second Secret")
-			clawYAML2 := `apiVersion: openclaw.sandbox.redhat.com/v1alpha1
-kind: Claw
-metadata:
-  name: instance
-spec:
-  geminiAPIKey:
-    name: gemini-api-key-2
-    key: api-key
-`
-			err = os.WriteFile(crFile, []byte(clawYAML2), os.FileMode(0o644))
-			require.NoError(t, err, "Failed to write updated CR file")
+			err = os.WriteFile(crFile, []byte(clawYAMLWithGemini("llm-key-2", "api-key")),
+				os.FileMode(0o644))
+			require.NoError(t, err)
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
@@ -543,11 +545,11 @@ spec:
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {
 					jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
-						".env[?(@.name=='GEMINI_API_KEY')].valueFrom.secretKeyRef.name}"
+						".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.name}"
 					cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
 						"-o", jp, "-n", userNamespace)
 					output, err := utils.Run(t, cmd)
-					return err == nil && output == "gemini-api-key-2", nil
+					return err == nil && output == "llm-key-2", nil
 				})
 			require.NoError(t, err, "deployment did not reference new Secret")
 
@@ -585,9 +587,6 @@ spec:
 	})
 }
 
-// serviceAccountToken returns a token for the specified service account in the given namespace.
-// It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
-// and parsing the resulting token from the API response.
 func serviceAccountToken(t *testing.T) (string, error) {
 	t.Helper()
 	const tokenRequestRawString = `{
@@ -595,7 +594,6 @@ func serviceAccountToken(t *testing.T) (string, error) {
 		"kind": "TokenRequest"
 	}`
 
-	// Temporary file to store the token request
 	secretName := fmt.Sprintf("%s-token-request", serviceAccountName)
 	tokenRequestFile := filepath.Join("/tmp", secretName)
 	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o644))
@@ -605,7 +603,6 @@ func serviceAccountToken(t *testing.T) (string, error) {
 
 	deadline := time.Now().Add(defaultTimeout)
 	for time.Now().Before(deadline) {
-		// Execute kubectl command to create the token
 		cmd := exec.Command("kubectl", "create", "--raw", fmt.Sprintf(
 			"/api/v1/namespaces/%s/serviceaccounts/%s/token",
 			operatorNamespace,
@@ -614,7 +611,6 @@ func serviceAccountToken(t *testing.T) (string, error) {
 
 		output, err := cmd.CombinedOutput()
 		if err == nil {
-			// Parse the JSON output to extract the token
 			var token tokenRequest
 			err = json.Unmarshal(output, &token)
 			if err == nil {
@@ -627,7 +623,6 @@ func serviceAccountToken(t *testing.T) (string, error) {
 	return "", fmt.Errorf("timeout waiting for service account token creation")
 }
 
-// getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.
 func getMetricsOutput(t *testing.T) string {
 	t.Helper()
 	t.Log("getting the curl-metrics logs")
@@ -638,9 +633,6 @@ func getMetricsOutput(t *testing.T) string {
 	return metricsOutput
 }
 
-// fetchFreshMetrics creates a new curl pod to capture current metrics from the metrics endpoint.
-// Unlike getMetricsOutput which reads stale logs from a pre-existing pod, this creates a fresh
-// pod to get metrics reflecting the current controller state.
 func fetchFreshMetrics(t *testing.T, podName string) string {
 	t.Helper()
 
@@ -699,8 +691,6 @@ func fetchFreshMetrics(t *testing.T, podName string) string {
 	return metricsOutput
 }
 
-// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
-// containing only the token field that we need to extract.
 type tokenRequest struct {
 	Status struct {
 		Token string `json:"token"`

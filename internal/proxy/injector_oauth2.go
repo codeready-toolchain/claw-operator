@@ -17,15 +17,18 @@ limitations under the License.
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
 // OAuth2Injector performs a client_credentials grant to obtain an access token,
-// caches it, and injects Authorization: Bearer <token>.
+// caches it via a reusable TokenSource, and injects Authorization: Bearer <token>.
 // The client secret is read from an environment variable; client ID, token URL,
 // and scopes are provided via the route config.
 type OAuth2Injector struct {
@@ -34,6 +37,10 @@ type OAuth2Injector struct {
 	tokenURL       string
 	scopes         []string
 	defaultHeaders map[string]string
+
+	once        sync.Once
+	tokenSource oauth2.TokenSource
+	initErr     error
 }
 
 func NewOAuth2Injector(route *Route) (*OAuth2Injector, error) {
@@ -55,10 +62,11 @@ func NewOAuth2Injector(route *Route) (*OAuth2Injector, error) {
 	}, nil
 }
 
-func (o *OAuth2Injector) Inject(req *http.Request) error {
+func (o *OAuth2Injector) initTokenSource() {
 	clientSecret := os.Getenv(o.envVar)
 	if clientSecret == "" {
-		return fmt.Errorf("credential env var %s is empty", o.envVar)
+		o.initErr = fmt.Errorf("credential env var %s is empty", o.envVar)
+		return
 	}
 
 	cfg := &clientcredentials.Config{
@@ -67,8 +75,16 @@ func (o *OAuth2Injector) Inject(req *http.Request) error {
 		TokenURL:     o.tokenURL,
 		Scopes:       o.scopes,
 	}
+	o.tokenSource = cfg.TokenSource(context.Background())
+}
 
-	token, err := cfg.Token(req.Context())
+func (o *OAuth2Injector) Inject(req *http.Request) error {
+	o.once.Do(o.initTokenSource)
+	if o.initErr != nil {
+		return o.initErr
+	}
+
+	token, err := o.tokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("oauth2 token exchange failed: %w", err)
 	}

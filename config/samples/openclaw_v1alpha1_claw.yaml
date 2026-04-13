@@ -4,8 +4,12 @@ metadata:
   name: instance
   namespace: default
 spec:
-  # GeminiAPIKey references a Secret containing the Gemini API key
-  # Create the Secret first using the example in gemini-api-key-secret.yaml
-  geminiAPIKey:
-    name: gemini-api-key
-    key: api-key
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        name: gemini-api-key
+        key: api-key
+      domain: ".googleapis.com"
+      apiKey:
+        header: x-goog-api-key

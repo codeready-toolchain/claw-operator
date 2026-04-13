@@ -131,7 +131,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
 	})
 
-	t.Run("should fail when secretRef is nil for apiKey type", func(t *testing.T) {
+	t.Run("should reject creation when secretRef is nil for apiKey type via CEL validation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &openclawv1alpha1.Claw{}
@@ -145,13 +145,8 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 				APIKey: &openclawv1alpha1.APIKeyConfig{Header: "x-api-key"},
 			},
 		}
-		require.NoError(t, k8sClient.Create(ctx, instance))
-
-		reconciler := createClawReconciler()
-		_, err := reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{Name: ClawInstanceName, Namespace: namespace},
-		})
-		require.Error(t, err)
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "admission should reject apiKey without secretRef")
 		assert.Contains(t, err.Error(), "secretRef is required")
 	})
 
@@ -434,44 +429,6 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 		assert.True(t, foundVol, "GCP credential volume should be present")
 	})
 
-	t.Run("should add projected SA token volume for kubernetes credential", func(t *testing.T) {
-		objects := buildObjects(t)
-		creds := []openclawv1alpha1.CredentialSpec{
-			{
-				Name:   "k8s-api",
-				Type:   openclawv1alpha1.CredentialTypeKubernetes,
-				Domain: "kubernetes.default.svc",
-			},
-		}
-		require.NoError(t, configureProxyForCredentials(objects, creds))
-
-		container := findProxyContainer(t, objects)
-		mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
-
-		var foundMount bool
-		for _, m := range mounts {
-			mount := m.(map[string]any)
-			if mount["name"] == "proxy-sa-token" {
-				assert.Equal(t, "/var/run/secrets/proxy-sa", mount["mountPath"])
-				assert.Equal(t, true, mount["readOnly"])
-				foundMount = true
-			}
-		}
-		assert.True(t, foundMount, "projected SA token volume mount should be present")
-
-		volumes := findVolumes(t, objects)
-		var foundVol bool
-		for _, v := range volumes {
-			vol := v.(map[string]any)
-			if vol["name"] == "proxy-sa-token" {
-				foundVol = true
-				_, hasProjected := vol["projected"]
-				assert.True(t, hasProjected, "volume should use projected source")
-			}
-		}
-		assert.True(t, foundVol, "projected SA token volume should be present")
-	})
-
 	t.Run("should skip credentials with nil secretRef for apiKey type", func(t *testing.T) {
 		objects := buildObjects(t)
 		creds := []openclawv1alpha1.CredentialSpec{
@@ -507,11 +464,6 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 				Type:      openclawv1alpha1.CredentialTypeBearer,
 				SecretRef: &openclawv1alpha1.SecretRef{Name: "s2", Key: "k2"},
 				Domain:    "api.openai.com",
-			},
-			{
-				Name:   "k8s",
-				Type:   openclawv1alpha1.CredentialTypeKubernetes,
-				Domain: "kubernetes.default.svc",
 			},
 		}
 		require.NoError(t, configureProxyForCredentials(objects, creds))

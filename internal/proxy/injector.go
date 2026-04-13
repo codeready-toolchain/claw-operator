@@ -50,8 +50,6 @@ func NewInjector(route *Route) (Injector, error) {
 		return NewBearerInjector(route)
 	case "gcp":
 		return NewGCPInjector(route)
-	case "kubernetes":
-		return NewKubernetesInjector(route)
 	case "none":
 		return NewNoneInjector(route)
 	case "path_token":

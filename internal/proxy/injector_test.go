@@ -18,8 +18,6 @@ package proxy
 
 import (
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -58,10 +56,6 @@ func TestNewInjector(t *testing.T) {
 		{
 			name:  "gcp injector",
 			route: Route{Injector: "gcp", SAFilePath: "/tmp/sa.json"},
-		},
-		{
-			name:  "kubernetes injector",
-			route: Route{Injector: "kubernetes", SATokenPath: "/tmp/token"},
 		},
 		{
 			name:    "unknown injector",
@@ -194,22 +188,6 @@ func TestBearerInjector(t *testing.T) {
 	assert.Equal(t, "2023-06-01", req.Header.Get("anthropic-version"))
 }
 
-func TestKubernetesInjector(t *testing.T) {
-	dir := t.TempDir()
-	tokenPath := filepath.Join(dir, "token")
-	require.NoError(t, os.WriteFile(tokenPath, []byte("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"), 0o644))
-
-	inj, err := NewKubernetesInjector(&Route{
-		SATokenPath: tokenPath,
-	})
-	require.NoError(t, err)
-
-	req, _ := http.NewRequest(http.MethodGet, "https://kubernetes.default.svc", nil)
-	require.NoError(t, inj.Inject(req))
-
-	assert.Equal(t, "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9", req.Header.Get("Authorization"))
-}
-
 func TestNoneInjector(t *testing.T) {
 	inj, err := NewNoneInjector(&Route{
 		DefaultHeaders: map[string]string{"x-custom": "value"},
@@ -280,20 +258,4 @@ func TestOAuth2InjectorEmptyEnvVar(t *testing.T) {
 	err = inj.Inject(req)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CRED_EMPTY_OAUTH is empty")
-}
-
-func TestKubernetesInjectorEmptyFile(t *testing.T) {
-	dir := t.TempDir()
-	tokenPath := filepath.Join(dir, "token")
-	require.NoError(t, os.WriteFile(tokenPath, []byte(""), 0o644))
-
-	inj, err := NewKubernetesInjector(&Route{
-		SATokenPath: tokenPath,
-	})
-	require.NoError(t, err)
-
-	req, _ := http.NewRequest(http.MethodGet, "https://kubernetes.default.svc", nil)
-	err = inj.Inject(req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "is empty")
 }

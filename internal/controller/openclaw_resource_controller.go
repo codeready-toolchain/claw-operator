@@ -456,7 +456,7 @@ func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instan
 
 	for _, cred := range instance.Spec.Credentials {
 		// Validate SecretRef exists for types that require it
-		if cred.Type != openclawv1alpha1.CredentialTypeKubernetes && cred.Type != openclawv1alpha1.CredentialTypeNone {
+		if cred.Type != openclawv1alpha1.CredentialTypeNone {
 			if cred.SecretRef == nil {
 				errs = append(errs, fmt.Errorf("credential %q (type %s): secretRef is required", cred.Name, cred.Type))
 				continue
@@ -605,7 +605,6 @@ type proxyRoute struct {
 	ValuePrefix    string            `json:"valuePrefix,omitempty"`
 	EnvVar         string            `json:"envVar,omitempty"`
 	SAFilePath     string            `json:"saFilePath,omitempty"`
-	SATokenPath    string            `json:"saTokenPath,omitempty"`
 	GCPProject     string            `json:"gcpProject,omitempty"`
 	GCPLocation    string            `json:"gcpLocation,omitempty"`
 	PathPrefix     string            `json:"pathPrefix,omitempty"`
@@ -656,9 +655,6 @@ func generateProxyConfig(credentials []openclawv1alpha1.CredentialSpec) ([]byte,
 				route.GCPProject = cred.GCP.Project
 				route.GCPLocation = cred.GCP.Location
 			}
-		case openclawv1alpha1.CredentialTypeKubernetes:
-			route.Injector = "kubernetes"
-			route.SATokenPath = "/var/run/secrets/proxy-sa/token"
 		case openclawv1alpha1.CredentialTypeNone:
 			route.Injector = "none"
 		case openclawv1alpha1.CredentialTypePathToken:
@@ -734,8 +730,14 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 		}
 
 		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
-		if err != nil || !found || len(containers) == 0 {
+		if err != nil {
 			return fmt.Errorf("failed to get containers from proxy deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in proxy deployment")
+		}
+		if len(containers) == 0 {
+			return fmt.Errorf("no containers found in proxy deployment")
 		}
 
 		container, ok := containers[0].(map[string]any)
@@ -787,31 +789,6 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 					"readOnly":  true,
 				})
 
-			case openclawv1alpha1.CredentialTypeKubernetes:
-				saName := "openclaw-agent"
-				if cred.Kubernetes != nil && cred.Kubernetes.ServiceAccountName != "" {
-					saName = cred.Kubernetes.ServiceAccountName
-				}
-				volumes = append(volumes, map[string]any{
-					"name": "proxy-sa-token",
-					"projected": map[string]any{
-						"sources": []any{
-							map[string]any{
-								"serviceAccountToken": map[string]any{
-									"audience":          "api",
-									"expirationSeconds": int64(3600),
-									"path":              "token",
-								},
-							},
-						},
-					},
-				})
-				_ = saName // SA name used for RBAC setup (separate concern)
-				volumeMounts = append(volumeMounts, map[string]any{
-					"name":      "proxy-sa-token",
-					"mountPath": "/var/run/secrets/proxy-sa",
-					"readOnly":  true,
-				})
 			}
 		}
 

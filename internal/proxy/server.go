@@ -43,6 +43,7 @@ type Server struct {
 	caKey     *ecdsa.PrivateKey
 	injectors map[string]Injector // domain -> injector
 	logger    *slog.Logger
+	transport *http.Transport
 
 	certCache   map[string]*tls.Certificate
 	certCacheMu sync.RWMutex
@@ -70,6 +71,12 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 		caKey:     caKey,
 		injectors: injectors,
 		logger:    logger,
+		transport: &http.Transport{
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			DialContext: (&net.Dialer{
+				Timeout: 15 * time.Second,
+			}).DialContext,
+		},
 		certCache: make(map[string]*tls.Certificate),
 	}, nil
 }
@@ -217,15 +224,7 @@ func (s *Server) proxyRequest(clientConn net.Conn, req *http.Request, route *Rou
 	req.URL.Host = targetHost
 	req.RequestURI = ""
 
-	// Forward to upstream via HTTPS
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-		DialContext: (&net.Dialer{
-			Timeout: 15 * time.Second,
-		}).DialContext,
-	}
-
-	resp, err := transport.RoundTrip(req)
+	resp, err := s.transport.RoundTrip(req)
 	if err != nil {
 		s.logger.Error("upstream request failed", "host", targetHost, "error", err)
 		s.writeErrorResponse(clientConn, http.StatusBadGateway, "upstream connection failed")
