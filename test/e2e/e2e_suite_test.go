@@ -63,7 +63,14 @@ func TestMain(m *testing.M) {
 	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
 		kindCluster = v
 	}
-	if err := runStreaming("kind", "load", "docker-image", projectImage,
+	// Save the image to a tar file then load it into Kind
+	// (because podman and kind do not work well together with loading images from a docker registry
+	// see https://github.com/kubernetes-sigs/kind/issues/2038)
+	if err := runStreaming("make", "docker-save", fmt.Sprintf("IMG=%s", projectImage), "OUTPUT_FILE=tmp/projectImage.tar"); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to save image: %v\n", err)
+		os.Exit(1)
+	}
+	if err := runStreaming("kind", "load", "image-archive", "tmp/projectImage.tar",
 		"--name", kindCluster); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load image into Kind: %v\n", err)
 		os.Exit(1)
