@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -241,6 +242,6 @@ func deleteAndWaitNodePairingRequestApproval(t *testing.T, namespace, name strin
 	// Wait for resource to be deleted
 	waitFor(t, timeout, interval, func() bool {
 		err := k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, instance)
-		return client.IgnoreNotFound(err) == nil
+		return apierrors.IsNotFound(err)
 	}, "NodePairingRequestApproval should be deleted")
 }
