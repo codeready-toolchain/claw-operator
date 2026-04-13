@@ -20,71 +20,24 @@ spec:
           type: RuntimeDefault
       containers:
         - name: proxy
-          image: mirror.gcr.io/library/nginx:1.27-alpine
+          image: openclaw-proxy:latest
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "/etc/nginx/docker-entrypoint.sh"]
+          args:
+            - --config=/etc/proxy/proxy-config.json
+            - --ca-cert=/etc/proxy/ca/ca.crt
+            - --ca-key=/etc/proxy/ca/ca.key
+            - --listen=:8080
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
-          env:
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-proxy-secrets
-                  key: ANTHROPIC_API_KEY
-                  optional: true
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-proxy-secrets
-                  key: OPENAI_API_KEY
-                  optional: true
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-proxy-secrets
-                  key: GEMINI_API_KEY
-                  optional: true
-            - name: OPENROUTER_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-proxy-secrets
-                  key: OPENROUTER_API_KEY
-                  optional: true
-            - name: GITHUB_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-proxy-secrets
-                  key: GITHUB_TOKEN
-                  optional: true
-            - name: TELEGRAM_BOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-proxy-secrets
-                  key: TELEGRAM_BOT_TOKEN
-                  optional: true
-            - name: GOOGLE_APPLICATION_CREDENTIALS
-              value: /etc/gcp/sa-key.json
-            - name: GOOGLE_CLOUD_PROJECT
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-gcp-credentials
-                  key: GOOGLE_CLOUD_PROJECT
-                  optional: true
-            - name: GOOGLE_CLOUD_LOCATION
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-gcp-credentials
-                  key: GOOGLE_CLOUD_LOCATION
-                  optional: true
           resources:
             requests:
               memory: 64Mi
               cpu: 50m
             limits:
-              memory: 128Mi
-              cpu: 200m
+              memory: 256Mi
+              cpu: 500m
           livenessProbe:
             httpGet:
               path: /healthz
@@ -98,47 +51,26 @@ spec:
             initialDelaySeconds: 3
             periodSeconds: 10
           volumeMounts:
-            - name: nginx-config
-              mountPath: /etc/nginx/templates/default.conf.template
-              subPath: default.conf.template
+            - name: proxy-config
+              mountPath: /etc/proxy/proxy-config.json
+              subPath: proxy-config.json
               readOnly: true
-            - name: nginx-config
-              mountPath: /etc/nginx/docker-entrypoint.sh
-              subPath: docker-entrypoint.sh
-              readOnly: true
-            - name: nginx-conf-dir
-              mountPath: /etc/nginx/conf.d
-            - name: nginx-cache
-              mountPath: /var/cache/nginx
-            - name: nginx-run
-              mountPath: /var/run
-            - name: tmp-volume
-              mountPath: /tmp
-            - name: gcp-credentials
-              mountPath: /etc/gcp
+            - name: proxy-ca
+              mountPath: /etc/proxy/ca
               readOnly: true
           securityContext:
             runAsNonRoot: true
-            runAsUser: 101
-            runAsGroup: 101
+            runAsUser: 65532
+            runAsGroup: 65532
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
       volumes:
-        - name: nginx-config
+        - name: proxy-config
           configMap:
             name: openclaw-proxy-config
-        - name: nginx-conf-dir
-          emptyDir: {}
-        - name: nginx-cache
-          emptyDir: {}
-        - name: nginx-run
-          emptyDir: {}
-        - name: tmp-volume
-          emptyDir: {}
-        - name: gcp-credentials
+        - name: proxy-ca
           secret:
-            secretName: openclaw-gcp-credentials
-            optional: true
+            secretName: openclaw-proxy-ca

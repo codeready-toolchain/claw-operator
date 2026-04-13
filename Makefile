@@ -51,6 +51,7 @@ endif
 OPERATOR_SDK_VERSION ?= v1.42.0
 # Image URL to use all building/pushing image targets
 IMG ?= openclaw-operator:latest
+PROXY_IMG ?= openclaw-proxy:latest
 PLATFORM ?= linux/amd64
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
@@ -167,6 +168,10 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
+.PHONY: build-proxy
+build-proxy: fmt vet ## Build proxy binary.
+	go build -o bin/proxy cmd/proxy/main.go
+
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
@@ -190,6 +195,14 @@ docker-save: ## Save the docker image to a tar file
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-build-proxy
+docker-build-proxy: ## Build docker image for the credential proxy.
+	$(CONTAINER_TOOL) build -t ${PROXY_IMG} -f Dockerfile.proxy .
+
+.PHONY: docker-push-proxy
+docker-push-proxy: ## Push docker image for the credential proxy.
+	$(CONTAINER_TOOL) push ${PROXY_IMG}
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
