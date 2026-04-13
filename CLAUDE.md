@@ -4,21 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. CRD: `OpenClaw` in API group `openclaw.sandbox.redhat.com/v1alpha1`.
+Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. CRD: `Claw` in API group `openclaw.sandbox.redhat.com/v1alpha1`.
 
 **CRD Spec Fields:**
 - `geminiAPIKey` (SecretRef, required): Reference to a user-managed Secret containing the Gemini API key. SecretRef is a custom type with fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1), both validated at admission time. Controller validates the Secret exists and configures the `openclaw-proxy` deployment to reference it directly via environment variable. Pod restarts are triggered automatically when: (1) Secret reference changes (name or key field), or (2) Secret data changes (controller stamps Secret ResourceVersion as pod template annotation).
 
 **CRD Status Fields:**
+- `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`openclaw-secrets`)
 - `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking instance state. Currently includes:
-  - `Available` condition: Indicates whether the OpenClaw instance is ready for use
+  - `Ready` condition: Indicates whether the Claw instance is ready for use
     - `Status=False, Reason=Provisioning`: Deployments are not yet ready
     - `Status=True, Reason=Ready`: Both `openclaw` and `openclaw-proxy` Deployments are available
 
 **CRD Printcolumns:**
-The CRD defines custom printcolumns for `kubectl get openclaw` output:
-- `Ready`: Shows Available condition status (True/False/Unknown) via JSONPath `.status.conditions[?(@.type=="Available")].status`
-- `Reason`: Shows Available condition reason (Provisioning/Ready) via JSONPath `.status.conditions[?(@.type=="Available")].reason`
+The CRD defines custom printcolumns for `kubectl get claw` output:
+- `Ready`: Shows Ready condition status (True/False/Unknown) via JSONPath `.status.conditions[?(@.type=="Ready")].status`
+- `Reason`: Shows Ready condition reason (Provisioning/Ready) via JSONPath `.status.conditions[?(@.type=="Ready")].reason`
 
 **Version Logging:**
 The operator logs version and build time at startup: `version` (short commit SHA) and `buildTime` (RFC3339). Injected via LDFLAGS during `docker-build`. Local builds show defaults (`dev`/`unknown`).
@@ -55,11 +56,11 @@ make docker-build IMG=<registry>/openclaw-operator:tag
 
 The operator uses a **single unified controller** that manages all resources using Kustomize and server-side apply:
 
-**OpenClawResourceReconciler** (`internal/controller/openclaw_resource_controller.go`):
-- Reconciles `OpenClaw` CRs named exactly `"instance"` (skips all others)
+**ClawResourceReconciler** (`internal/controller/openclaw_resource_controller.go`):
+- Reconciles `Claw` CRs named exactly `"instance"` (skips all others)
 - Creates gateway Secret (`openclaw-secrets`) with randomly-generated authentication token
 - Validates user-provided Secret containing Gemini API key (referenced in CR's `geminiAPIKey` field)
-- Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (2), proxy Deployment/ConfigMap, and Route (OpenShift only)
+- Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (3: egress for openclaw, egress for proxy, ingress for gateway), proxy Deployment/ConfigMap, and Route (OpenShift only)
 - Uses **three-phase reconciliation** to dynamically inject Route host into ConfigMap for CORS configuration
 - Uses server-side apply for idempotent, conflict-free resource management
 - Automatically labels all resources with `app.kubernetes.io/name: openclaw`
@@ -81,7 +82,7 @@ The controller uses a **three-phase reconciliation** approach to enable dynamic 
 ```
 Reconcile(ctx, req) called
   ↓
-1. Fetch OpenClaw CR
+1. Fetch Claw CR
   ↓
 2. Filter by name (only "instance")
   ↓
@@ -142,7 +143,8 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 11. updateStatus(ctx, instance)
    ├─ Fetch openclaw Deployment and check Available condition
    ├─ Fetch openclaw-proxy Deployment and check Available condition
-   ├─ Set OpenClaw Available condition based on both deployment statuses
+   ├─ Set Claw Ready condition based on both deployment statuses
+   ├─ Set GatewayTokenSecretRef to gateway Secret name
    ├─ Populate instance.Status.URL with Route URL (if available)
    ├─ Update LastTransitionTime only if condition status changes
    └─ Update status via status subresource (client.Status().Update)
@@ -169,24 +171,24 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
 - `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in ConfigMap with Route host (or localhost fallback)
-- `applyKustomizedResources()` — builds and applies manifests via Kustomize + SSA with optional filter function
 - `applyResources()` — applies list of unstructured objects using server-side apply
 - `configureProxyDeployment()` — modifies openclaw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
 - `stampSecretVersionAnnotation()` — adds Secret ResourceVersion annotation to pod template BEFORE applying (ensures pod template changes trigger restarts when Secret data changes, not just reference)
 - `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition
 - `checkDeploymentsReady()` — checks if both openclaw and openclaw-proxy Deployments are ready
-- `setAvailableCondition()` — sets Available condition on OpenClaw based on deployment states
-- `updateStatus()` — updates OpenClaw status conditions and URL field via status subresource
+- `setReadyCondition()` — sets Ready condition on Claw based on deployment states
+- `updateStatus()` — updates Claw status conditions, GatewayTokenSecretRef, and URL field via status subresource
 - `parseYAMLToObjects()` — converts multi-doc YAML to unstructured objects
 - `readEmbeddedFile()` — reads files from embedded filesystem
-- `findOpenClawsReferencingSecret()` — maps Secret events to OpenClaw reconcile requests (for Secret watching)
+- `findClawsReferencingSecret()` — maps Secret events to Claw reconcile requests (for Secret watching)
 
 **Shared constants** (`internal/controller/openclaw_resource_controller.go`):
-- `OpenClawInstanceName = "instance"` — only this name is reconciled
-- `OpenClawConfigMapName = "openclaw-config"`
-- `OpenClawPVCName = "openclaw-home-pvc"`
-- `OpenClawDeploymentName = "openclaw"`
-- `OpenClawGatewaySecretName = "openclaw-secrets"` — Secret containing gateway authentication token
+- `ClawInstanceName = "instance"` — only this name is reconciled
+- `ClawConfigMapName = "openclaw-config"`
+- `ClawPVCName = "openclaw-home-pvc"`
+- `ClawDeploymentName = "openclaw"`
+- `ClawGatewaySecretName = "openclaw-secrets"` — Secret containing gateway authentication token
+- `ClawIngressNetworkPolicyName = "openclaw-ingress"` — ingress NetworkPolicy restricting gateway access to OpenShift router
 - `GatewayTokenKeyName = "OPENCLAW_GATEWAY_TOKEN"` — data key for gateway token in gateway Secret
 
 ### Kustomize-based manifest generation
@@ -202,13 +204,14 @@ The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
 - **configmap.yaml** — OpenClaw configuration
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
-- **deployment.yaml** — OpenClaw application pods
+- **deployment.yaml** — OpenClaw application pods (init container with full security context hardening)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)
 - **route.yaml** — OpenShift Route for external HTTPS access (skipped on non-OpenShift)
 - **proxy-configmap.yaml** — Nginx configuration for LLM API proxy
 - **proxy-deployment.yaml** — Nginx proxy (env vars reference user-managed Secrets; controller patches GEMINI_API_KEY after applying)
 - **proxy-service.yaml** — ClusterIP service for proxy (port 8080)
 - **networkpolicy.yaml** — Two NetworkPolicies for egress control (OpenClaw → proxy, proxy → internet)
+- **ingress-networkpolicy.yaml** — Ingress NetworkPolicy restricting gateway access to OpenShift router namespace
 
 **Runtime process:**
 1. Controller loads entire `manifests/` directory into in-memory filesystem
@@ -220,15 +223,15 @@ The `internal/assets/manifests/` directory contains:
 
 ### Key directories
 
-- `api/v1alpha1/` — CRD type definitions (OpenClawSpec, OpenClawStatus)
-- `internal/controller/` — OpenClawReconciler implementation and tests (separate test files per resource type for readability)
-- `internal/assets/manifests/` — Embedded Kustomize directory with all manifests (10 total: kustomization.yaml, core resources, networking, and proxy components)
-- `cmd/main.go` — Manager entrypoint, wires up the unified OpenClawReconciler. Contains package-level `version` and `buildTime` variables set via LDFLAGS during build, logged at startup
+- `api/v1alpha1/` — CRD type definitions (ClawSpec, ClawStatus)
+- `internal/controller/` — ClawResourceReconciler implementation and tests (separate test files per resource type for readability)
+- `internal/assets/manifests/` — Embedded Kustomize directory with all manifests (11 total: kustomization.yaml, core resources, networking, and proxy components)
+- `cmd/main.go` — Manager entrypoint, wires up the unified ClawResourceReconciler. Contains package-level `version` and `buildTime` variables set via LDFLAGS during build, logged at startup
 - `config/` — Kustomize overlays for CRDs, RBAC, manager deployment
 
 ### Code generation
 
-After modifying `api/v1alpha1/openclaw_types.go`, run both:
+After modifying `api/v1alpha1/claw_types.go`, run both:
 ```bash
 make manifests   # regenerate CRD YAML in config/crd/bases/
 make generate    # regenerate zz_generated.deepcopy.go
@@ -244,7 +247,7 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 - **Pattern:** `Test*` functions with `t.Run()` subtests; uses `t.Cleanup()` for cleanup; uses `waitFor()` helper for async assertions (10s timeout, 250ms poll)
 - **Polling helper:** `waitFor(t, timeout, interval, condition, message)` — custom helper for async checks (replaces Gomega's `Eventually()`)
 - **Table-driven tests:** Use standard Go pattern with struct slices and `t.Run(tt.name, ...)` for parameterized tests
-- **Test CRs:** All test OpenClaw instances must include the required `geminiAPIKey` field (e.g., `instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}`)
+- **Test CRs:** All test Claw instances must include the required `geminiAPIKey` field (e.g., `instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}`)
 - **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secretref_controller_test.go`, `openclaw_status_controller_test.go`, etc.)
 - **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment 
 
@@ -269,7 +272,7 @@ func TestMain(m *testing.M) {
 **Error handling with testify/require:**
 ```go
 // Setup failures (fatal - can't continue)
-require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
+require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw")
 
 // Unexpected errors in happy path
 _, err := reconciler.Reconcile(ctx, req)
@@ -330,6 +333,6 @@ t.Cleanup(func() {
 ## Conventions
 
 - Owner references are set on all created resources via `controllerutil.SetControllerReference`
-- Pod security: non-root (uid 65532), restricted seccomp, all capabilities dropped
+- Pod security: non-root (uid 65532), restricted seccomp, all capabilities dropped (both init and main containers)
 - Linting config in `.golangci.yml` — notable: `lll`, `dupl` enabled
 - License header required (template in `hack/boilerplate.go.txt`)

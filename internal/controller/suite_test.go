@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -127,16 +128,17 @@ func deleteAndWaitAllResources(t *testing.T, namespace string) {
 		obj client.Object
 		key client.ObjectKey
 	}{
-		{&openclawv1alpha1.OpenClaw{}, client.ObjectKey{Name: OpenClawInstanceName, Namespace: namespace}},
-		{&corev1.ConfigMap{}, client.ObjectKey{Name: OpenClawConfigMapName, Namespace: namespace}},
-		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: OpenClawNetworkPolicyName, Namespace: namespace}},
-		{&corev1.Secret{}, client.ObjectKey{Name: OpenClawGatewaySecretName, Namespace: namespace}},
+		{&openclawv1alpha1.Claw{}, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}},
+		{&corev1.ConfigMap{}, client.ObjectKey{Name: ClawConfigMapName, Namespace: namespace}},
+		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: ClawNetworkPolicyName, Namespace: namespace}},
+		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: ClawIngressNetworkPolicyName, Namespace: namespace}},
+		{&corev1.Secret{}, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}},
 		{&corev1.Secret{}, client.ObjectKey{Name: aiModelSecret, Namespace: namespace}},
-		{&corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: OpenClawPVCName, Namespace: namespace}},
-		{&corev1.Service{}, client.ObjectKey{Name: OpenClawServiceName, Namespace: namespace}},
-		{&appsv1.Deployment{}, client.ObjectKey{Name: OpenClawDeploymentName, Namespace: namespace}},
-		{&corev1.Service{}, client.ObjectKey{Name: OpenClawProxyServiceName, Namespace: namespace}},
-		{&appsv1.Deployment{}, client.ObjectKey{Name: OpenClawProxyDeploymentName, Namespace: namespace}},
+		{&corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}},
+		{&corev1.Service{}, client.ObjectKey{Name: ClawServiceName, Namespace: namespace}},
+		{&appsv1.Deployment{}, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}},
+		{&corev1.Service{}, client.ObjectKey{Name: ClawProxyServiceName, Namespace: namespace}},
+		{&appsv1.Deployment{}, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}},
 	}
 
 	for _, r := range resources {
@@ -224,4 +226,45 @@ func createTestGatewaySecret(t *testing.T, name, namespace string) *corev1.Secre
 			GatewayTokenKeyName: []byte(token),
 		},
 	}
+}
+
+// createClawInstance creates a Claw instance with the required API key Secret.
+// Returns the created Claw instance.
+func createClawInstance(t *testing.T, ctx context.Context, name, namespace string) {
+	t.Helper()
+
+	// Create API key Secret
+	secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+	require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
+
+	// Create Claw instance
+	instance := &openclawv1alpha1.Claw{}
+	instance.Name = name
+	instance.Namespace = namespace
+	instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{
+		Name: aiModelSecret,
+		Key:  aiModelSecretKey,
+	}
+	require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+}
+
+// createClawReconciler creates a ClawResourceReconciler for testing.
+func createClawReconciler() *ClawResourceReconciler {
+	return &ClawResourceReconciler{
+		Client: k8sClient,
+		Scheme: scheme.Scheme,
+	}
+}
+
+// reconcileClaw performs a reconciliation for the given Claw resource.
+func reconcileClaw(t *testing.T, ctx context.Context, reconciler *ClawResourceReconciler, name, namespace string) {
+	t.Helper()
+
+	_, err := reconciler.Reconcile(ctx, ctrl.Request{
+		NamespacedName: client.ObjectKey{
+			Name:      name,
+			Namespace: namespace,
+		},
+	})
+	require.NoError(t, err, "reconcile failed")
 }

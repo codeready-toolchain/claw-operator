@@ -33,50 +33,54 @@ type SecretRef struct {
 	Key string `json:"key"`
 }
 
-// OpenClawSpec defines the desired state of OpenClaw
-type OpenClawSpec struct {
+// ClawSpec defines the desired state of Claw
+type ClawSpec struct {
 	// GeminiAPIKey is a reference to a Secret containing the Gemini API key
 	// +kubebuilder:validation:Required
 	GeminiAPIKey *SecretRef `json:"geminiAPIKey"`
 }
 
-// OpenClawStatus defines the observed state of OpenClaw
-type OpenClawStatus struct {
-	// Conditions represent the latest available observations of the OpenClaw's state
+// ClawStatus defines the observed state of Claw
+type ClawStatus struct {
+	// GatewayTokenSecretRef is the name of the Secret containing the gateway authentication token
+	// +optional
+	GatewayTokenSecretRef string `json:"gatewayTokenSecretRef,omitempty"`
+
+	// Conditions represent the latest available observations of the Claw's state
 	// +optional
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// URL is the HTTPS URL for accessing the OpenClaw instance
+	// URL is the HTTPS URL for accessing the Claw instance
 	// +optional
 	URL string `json:"url,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:path=openclaws,scope=Namespaced
-// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type==\"Available\")].status"
-// +kubebuilder:printcolumn:name="Reason",type="string",JSONPath=".status.conditions[?(@.type==\"Available\")].reason"
+// +kubebuilder:resource:path=claws,scope=Namespaced
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].status"
+// +kubebuilder:printcolumn:name="Reason",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].reason"
 
-// OpenClaw is the Schema for the openclaws API
-type OpenClaw struct {
+// Claw is the Schema for the claws API
+type Claw struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   OpenClawSpec   `json:"spec,omitempty"`
-	Status OpenClawStatus `json:"status,omitempty"`
+	Spec   ClawSpec   `json:"spec,omitempty"`
+	Status ClawStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// OpenClawList contains a list of OpenClaw
-type OpenClawList struct {
+// ClawList contains a list of Claw
+type ClawList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []OpenClaw `json:"items"`
+	Items           []Claw `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&OpenClaw{}, &OpenClawList{})
+	SchemeBuilder.Register(&Claw{}, &ClawList{})
 }
