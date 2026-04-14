@@ -30,3 +30,5 @@ tmp
 
 # Generated deploy overlay (created by make deploy/build-installer)
 config/.deploy/
+
+.claude/settings.local.json
