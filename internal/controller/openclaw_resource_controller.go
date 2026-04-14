@@ -89,7 +89,8 @@ const (
 // ClawResourceReconciler reconciles all resources for Claw
 type ClawResourceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme     *runtime.Scheme
+	ProxyImage string
 }
 
 // +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=claws,verbs=get;list;watch
@@ -174,6 +175,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	objects, err := r.buildKustomizedObjects()
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Override proxy image if configured (set via PROXY_IMAGE env var)
+	if err := configureProxyImage(objects, r.ProxyImage); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to configure proxy image: %w", err)
 	}
 
 	// Configure proxy deployment with credential env vars and volume mounts
@@ -725,6 +731,42 @@ func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instan
 
 	logger.Info("Applied proxy config ConfigMap")
 	return nil
+}
+
+// configureProxyImage overrides the proxy Deployment's container image.
+// If image is empty, the embedded default is preserved.
+func configureProxyImage(objects []*unstructured.Unstructured, image string) error {
+	if image == "" {
+		return nil
+	}
+
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+			continue
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from proxy deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in proxy deployment")
+		}
+
+		for i, c := range containers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawProxyContainerName {
+				cm["image"] = image
+				containers[i] = cm
+				return unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers")
+			}
+		}
+		return fmt.Errorf("container %q not found in proxy deployment", ClawProxyContainerName)
+	}
+	return fmt.Errorf("openclaw-proxy deployment not found in manifests")
 }
 
 // configureProxyForCredentials adds credential env vars and volume mounts to the

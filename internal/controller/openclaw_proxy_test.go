@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
@@ -367,6 +368,49 @@ func TestGenerateProxyConfig(t *testing.T) {
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
 		assert.Nil(t, cfg.Routes)
+	})
+}
+
+func TestConfigureProxyImage(t *testing.T) {
+	buildObjects := func(t *testing.T) []*unstructured.Unstructured {
+		t.Helper()
+		reconciler := createClawReconciler()
+		objects, err := reconciler.buildKustomizedObjects()
+		require.NoError(t, err)
+		return objects
+	}
+
+	getProxyImage := func(t *testing.T, objects []*unstructured.Unstructured) string {
+		t.Helper()
+		for _, obj := range objects {
+			if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+				continue
+			}
+			containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+			for _, c := range containers {
+				cm := c.(map[string]any)
+				if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawProxyContainerName {
+					img, _, _ := unstructured.NestedString(cm, "image")
+					return img
+				}
+			}
+		}
+		t.Fatal("proxy container not found")
+		return ""
+	}
+
+	t.Run("should override proxy image when set", func(t *testing.T) {
+		objects := buildObjects(t)
+		require.NoError(t, configureProxyImage(objects, "quay.io/myuser/openclaw-proxy:v1"))
+
+		assert.Equal(t, "quay.io/myuser/openclaw-proxy:v1", getProxyImage(t, objects))
+	})
+
+	t.Run("should preserve default image when empty", func(t *testing.T) {
+		objects := buildObjects(t)
+		require.NoError(t, configureProxyImage(objects, ""))
+
+		assert.Equal(t, "openclaw-proxy:latest", getProxyImage(t, objects))
 	})
 }
 

@@ -224,8 +224,19 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default > dist/install.yaml
+	$(call generate-deploy-overlay,$(IMG),$(PROXY_IMG))
+	$(KUSTOMIZE) build config/.deploy > dist/install.yaml
+	@rm -rf config/.deploy
+
+# generate-deploy-overlay creates a temporary kustomize overlay at config/.deploy/
+# that wraps config/default with image and PROXY_IMAGE overrides.
+# This avoids mutating committed files (manager.yaml, kustomization.yaml).
+# Usage: $(call generate-deploy-overlay,<controller-image>,<proxy-image>)
+define generate-deploy-overlay
+	@rm -rf config/.deploy && mkdir -p config/.deploy
+	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- ../default\nimages:\n- name: controller\n  newName: $(shell echo $(1) | cut -d: -f1)\n  newTag: $(shell echo $(1) | cut -d: -f2)\npatches:\n- path: proxy_image_patch.yaml\n  target:\n    kind: Deployment\n' > config/.deploy/kustomization.yaml
+	@printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: controller-manager\nspec:\n  template:\n    spec:\n      containers:\n      - name: manager\n        env:\n        - name: PROXY_IMAGE\n          value: "$(2)"\n' > config/.deploy/proxy_image_patch.yaml
+endef
 
 ##@ Deployment
 
@@ -243,12 +254,57 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
+	$(call generate-deploy-overlay,$(IMG),$(PROXY_IMG))
+	$(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
+	@rm -rf config/.deploy
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+
+##@ Dev Deployment
+
+# Dev targets derive IMG and PROXY_IMG from REGISTRY and TAG.
+# Usage: make dev-setup REGISTRY=quay.io/myuser
+TAG ?= dev
+
+.PHONY: dev-build
+dev-build: ## Build operator and proxy images for dev.
+ifndef REGISTRY
+	$(error REGISTRY is required. Usage: make dev-build REGISTRY=quay.io/myuser)
+endif
+	$(MAKE) docker-build IMG=$(REGISTRY)/openclaw-operator:$(TAG)
+	$(MAKE) docker-build-proxy PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+
+.PHONY: dev-push
+dev-push: ## Push operator and proxy images for dev.
+ifndef REGISTRY
+	$(error REGISTRY is required. Usage: make dev-push REGISTRY=quay.io/myuser)
+endif
+	$(MAKE) docker-push IMG=$(REGISTRY)/openclaw-operator:$(TAG)
+	$(MAKE) docker-push-proxy PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+
+.PHONY: dev-deploy
+dev-deploy: ## Install CRDs and deploy controller for dev.
+ifndef REGISTRY
+	$(error REGISTRY is required. Usage: make dev-deploy REGISTRY=quay.io/myuser)
+endif
+	$(MAKE) install
+	$(MAKE) deploy IMG=$(REGISTRY)/openclaw-operator:$(TAG) PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+
+.PHONY: dev-setup
+dev-setup: ## Full dev setup: build, push, and deploy.
+ifndef REGISTRY
+	$(error REGISTRY is required. Usage: make dev-setup REGISTRY=quay.io/myuser)
+endif
+	$(MAKE) dev-build REGISTRY=$(REGISTRY) TAG=$(TAG)
+	$(MAKE) dev-push REGISTRY=$(REGISTRY) TAG=$(TAG)
+	$(MAKE) dev-deploy REGISTRY=$(REGISTRY) TAG=$(TAG)
+
+.PHONY: dev-cleanup
+dev-cleanup: ## Remove deployed controller and CRDs.
+	$(MAKE) undeploy ignore-not-found=true
+	$(MAKE) uninstall ignore-not-found=true
 
 ##@ Dependencies
 

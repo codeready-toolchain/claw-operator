@@ -207,8 +207,9 @@ func main() {
 	}
 
 	if err = (&controller.ClawResourceReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		ProxyImage: os.Getenv("PROXY_IMAGE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Claw")
 		os.Exit(1)

@@ -1,8 +1,4 @@
-resources:
-- manager.yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-images:
-- name: controller
-  newName: example.com/openclaw-operator
-  newTag: v0.0.1
+resources:
+- manager.yaml
