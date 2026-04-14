@@ -184,7 +184,7 @@ docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} \
 		--build-arg VERSION=$$(git rev-parse --short HEAD) \
 		--build-arg BUILD_TIME=$$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
-		.
+		-f Containerfile .
 
 .PHONY: docker-save
 docker-save: ## Save the docker image to a tar file
@@ -198,7 +198,7 @@ docker-push: ## Push docker image with the manager.
 
 .PHONY: docker-build-proxy
 docker-build-proxy: ## Build docker image for the credential proxy.
-	$(CONTAINER_TOOL) build -t ${PROXY_IMG} -f Dockerfile.proxy .
+	$(CONTAINER_TOOL) build -t ${PROXY_IMG} -f Containerfile.proxy .
 
 .PHONY: docker-push-proxy
 docker-push-proxy: ## Push docker image for the credential proxy.
@@ -213,13 +213,13 @@ docker-push-proxy: ## Push docker image for the credential proxy.
 PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
+	# copy existing Containerfile and insert --platform=${BUILDPLATFORM} into Containerfile.cross, and preserve the original Containerfile
+	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Containerfile > Containerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name claw-operator-builder
 	$(CONTAINER_TOOL) buildx use claw-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Containerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm claw-operator-builder
-	rm Dockerfile.cross
+	rm Containerfile.cross
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
