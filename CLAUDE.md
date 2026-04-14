@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. CRD: `Claw` in API group `openclaw.sandbox.redhat.com/v1alpha1`.
+Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. CRD: `Claw` in API group `claw.sandbox.redhat.com/v1alpha1`.
 
 **CRD Spec Fields:**
 - `geminiAPIKey` (SecretRef, required): Reference to a user-managed Secret containing the Gemini API key. SecretRef is a custom type with fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1), both validated at admission time. Controller validates the Secret exists and configures the `openclaw-proxy` deployment to reference it directly via environment variable. Pod restarts are triggered automatically when: (1) Secret reference changes (name or key field), or (2) Secret data changes (controller stamps Secret ResourceVersion as pod template annotation).
@@ -128,7 +128,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ stampSecretVersionAnnotation(ctx, objects, instance)
    │  ├─ Fetch user's Secret to get its ResourceVersion
    │  ├─ Find openclaw-proxy Deployment in parsed objects
-   │  ├─ Add annotation to pod template: openclaw.sandbox.redhat.com/gemini-secret-version=<ResourceVersion>
+   │  ├─ Add annotation to pod template: claw.sandbox.redhat.com/gemini-secret-version=<ResourceVersion>
    │  └─ This triggers pod restarts when Secret data changes (ResourceVersion updates), not just Secret reference changes
    └─ Return parsed objects
   ↓

@@ -93,9 +93,9 @@ type ClawResourceReconciler struct {
 	ProxyImage string
 }
 
-// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=claws,verbs=get;list;watch
-// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=claws/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=openclaw.sandbox.redhat.com,resources=claws/finalizers,verbs=update
+// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws,verbs=get;list;watch
+// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
@@ -881,7 +881,7 @@ func stampProxyConfigHash(objects []*unstructured.Unstructured, hash string) err
 		if annotations == nil {
 			annotations = make(map[string]string)
 		}
-		annotations["openclaw.sandbox.redhat.com/proxy-config-hash"] = hash
+		annotations["claw.sandbox.redhat.com/proxy-config-hash"] = hash
 
 		if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
 			return fmt.Errorf("failed to set pod template annotations: %w", err)

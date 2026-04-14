@@ -1,4 +1,4 @@
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance

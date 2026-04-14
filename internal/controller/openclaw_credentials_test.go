@@ -309,7 +309,7 @@ func TestOpenClawCredentialSecretReference(t *testing.T) {
 				if annotations == nil {
 					return false
 				}
-				_, exists := annotations["openclaw.sandbox.redhat.com/proxy-config-hash"]
+				_, exists := annotations["claw.sandbox.redhat.com/proxy-config-hash"]
 				return exists
 			}, "pod template should have proxy-config-hash annotation")
 		})

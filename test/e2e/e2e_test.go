@@ -51,7 +51,7 @@ const (
 
 // clawYAMLWithGemini returns a Claw CR YAML using spec.credentials[] with apiKey type.
 func clawYAMLWithGemini(secretName, secretKey string) string {
-	return fmt.Sprintf(`apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+	return fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance
