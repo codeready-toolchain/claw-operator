@@ -491,6 +491,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			assert.Equal(t, "proxy", output, "First container should be named 'proxy'")
 
 			t.Log("verifying pods are running")
+			var podsRunning bool
 			deadline = time.Now().Add(3 * time.Minute)
 			for time.Now().Before(deadline) {
 				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw-proxy",
@@ -498,10 +499,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 					"-n", userNamespace)
 				output, err := utils.Run(t, cmd)
 				if err == nil && strings.Contains(output, podPhaseRunning) {
+					podsRunning = true
 					break
 				}
 				time.Sleep(pollInterval)
 			}
+			require.True(t, podsRunning,
+				"claw-proxy pods in namespace %s never reached Running phase", userNamespace)
 		})
 
 		t.Run("should trigger pod restart when credential Secret reference changes", func(t *testing.T) {
