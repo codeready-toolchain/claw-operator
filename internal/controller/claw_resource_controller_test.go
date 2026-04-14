@@ -34,18 +34,18 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 // --- ConfigMap tests ---
 
-func TestOpenClawConfigMapController(t *testing.T) {
+func TestClawConfigMapController(t *testing.T) {
 
-	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
+	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
 		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
-		t.Run("should create ConfigMap for OpenClaw named 'instance'", func(t *testing.T) {
+		t.Run("should create ConfigMap for Claw named 'instance'", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -94,14 +94,14 @@ func TestOpenClawConfigMapController(t *testing.T) {
 		})
 	})
 
-	t.Run("When reconciling an OpenClaw with different name", func(t *testing.T) {
+	t.Run("When reconciling an Claw with different name", func(t *testing.T) {
 		const resourceName = "other-instance"
 		ctx := context.Background()
 
 		t.Run("should skip ConfigMap creation for non-matching names", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
-				if err := deleteAndWait(&openclawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
+				if err := deleteAndWait(&clawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
 					t.Fatalf("cleanup failed: %v", err)
 				}
 			})
@@ -117,7 +117,7 @@ func TestOpenClawConfigMapController(t *testing.T) {
 				Name:      ClawConfigMapName,
 				Namespace: namespace,
 			}, configMap)
-			require.Error(t, err, "ConfigMap should not have been created for non-instance OpenClaw")
+			require.Error(t, err, "ConfigMap should not have been created for non-instance Claw")
 		})
 	})
 }
@@ -126,11 +126,11 @@ func TestOpenClawConfigMapController(t *testing.T) {
 
 func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 
-	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
+	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
 		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
-		t.Run("should create PVC for OpenClaw named 'instance'", func(t *testing.T) {
+		t.Run("should create PVC for Claw named 'instance'", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -179,12 +179,12 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 		})
 	})
 
-	t.Run("When reconciling an OpenClaw with different name", func(t *testing.T) {
+	t.Run("When reconciling an Claw with different name", func(t *testing.T) {
 		const resourceName = "other-instance"
 		ctx := context.Background()
 
 		t.Run("should skip PVC creation for non-matching names", func(t *testing.T) {
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, instance)
 			if err == nil {
 				_ = k8sClient.Delete(ctx, instance)
@@ -205,7 +205,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
-				if err := deleteAndWait(&openclawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
+				if err := deleteAndWait(&clawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
 					t.Fatalf("cleanup failed: %v", err)
 				}
 			})
@@ -218,7 +218,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}, pvc)
 				return apierrors.IsNotFound(err)
-			}, "PVC should not have been created for non-instance OpenClaw")
+			}, "PVC should not have been created for non-instance Claw")
 		})
 	})
 }
@@ -227,11 +227,11 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 
 func TestOpenClawDeploymentController(t *testing.T) {
 
-	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
+	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
 		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
-		t.Run("should create Deployment for OpenClaw named 'instance'", func(t *testing.T) {
+		t.Run("should create Deployment for Claw named 'instance'", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -315,14 +315,14 @@ func TestOpenClawDeploymentController(t *testing.T) {
 		})
 	})
 
-	t.Run("When reconciling an OpenClaw with different name", func(t *testing.T) {
+	t.Run("When reconciling an Claw with different name", func(t *testing.T) {
 		const resourceName = "other-instance"
 		ctx := context.Background()
 
 		t.Run("should skip Deployment creation for non-matching names", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
-				if err := deleteAndWait(&openclawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
+				if err := deleteAndWait(&clawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
 					t.Fatalf("cleanup failed: %v", err)
 				}
 			})
@@ -338,7 +338,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 				Name:      ClawDeploymentName,
 				Namespace: namespace,
 			}, deployment)
-			require.Error(t, err, "Deployment should not have been created for non-instance OpenClaw")
+			require.Error(t, err, "Deployment should not have been created for non-instance Claw")
 		})
 	})
 }
@@ -347,11 +347,11 @@ func TestOpenClawDeploymentController(t *testing.T) {
 
 func TestOpenClawGatewaySecretController(t *testing.T) {
 
-	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
+	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
 		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
-		t.Run("should create gateway Secret when OpenClaw instance is reconciled", func(t *testing.T) {
+		t.Run("should create gateway Secret when Claw instance is reconciled", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -508,11 +508,11 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			apiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, apiSecret), "failed to create Secret")
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw")
 
 			gatewaySecret := createTestGatewaySecret(t, ClawGatewaySecretName, namespace)
 			require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway Secret")
@@ -664,41 +664,41 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		ctx := context.Background()
 
 		t.Run("should create ConfigMap with localhost fallback when Route CRD not available", func(t *testing.T) {
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			if err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance); err == nil {
 				_ = k8sClient.Delete(ctx, instance)
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance)
 					return err != nil
-				}, "OpenClaw should be deleted")
+				}, "Claw should be deleted")
 			}
 
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance = &openclawv1alpha1.Claw{}
+			instance = &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 
 			secret := createTestAPIKeySecret(apiKeySecret, namespace, apiKeySecretKey, apiKey)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create Secret")
 
-			instance.Spec.Credentials = []openclawv1alpha1.CredentialSpec{
+			instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 				{
 					Name: "gemini",
-					Type: openclawv1alpha1.CredentialTypeAPIKey,
-					SecretRef: &openclawv1alpha1.SecretRef{
+					Type: clawv1alpha1.CredentialTypeAPIKey,
+					SecretRef: &clawv1alpha1.SecretRef{
 						Name: apiKeySecret,
 						Key:  apiKeySecretKey,
 					},
 					Domain: ".googleapis.com",
-					APIKey: &openclawv1alpha1.APIKeyConfig{
+					APIKey: &clawv1alpha1.APIKeyConfig{
 						Header: "x-goog-api-key",
 					},
 				},
 			}
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,

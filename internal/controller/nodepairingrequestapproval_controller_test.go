@@ -28,7 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 func TestNodePairingRequestApprovalController(t *testing.T) {
@@ -41,12 +41,12 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		})
 
 		// Create NodePairingRequestApproval with RequestID
-		instance := &openclawv1alpha1.NodePairingRequestApproval{
+		instance := &clawv1alpha1.NodePairingRequestApproval{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: openclawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
 				RequestID: "test-request-123",
 			},
 		}
@@ -54,7 +54,7 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create NodePairingRequestApproval")
 
 		// Verify resource was created with correct RequestID
-		fetched := &openclawv1alpha1.NodePairingRequestApproval{}
+		fetched := &clawv1alpha1.NodePairingRequestApproval{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
 		assert.Equal(t, "test-request-123", fetched.Spec.RequestID)
 	})
@@ -68,12 +68,12 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		})
 
 		// Create NodePairingRequestApproval
-		instance := &openclawv1alpha1.NodePairingRequestApproval{
+		instance := &clawv1alpha1.NodePairingRequestApproval{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: openclawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
 				RequestID: "create-test-456",
 			},
 		}
@@ -107,12 +107,12 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		})
 
 		// Create NodePairingRequestApproval
-		instance := &openclawv1alpha1.NodePairingRequestApproval{
+		instance := &clawv1alpha1.NodePairingRequestApproval{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: openclawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
 				RequestID: "update-test-789",
 			},
 		}
@@ -120,7 +120,7 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create NodePairingRequestApproval")
 
 		// Update RequestID
-		fetched := &openclawv1alpha1.NodePairingRequestApproval{}
+		fetched := &clawv1alpha1.NodePairingRequestApproval{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
 		fetched.Spec.RequestID = "updated-request-999"
 		require.NoError(t, k8sClient.Update(ctx, fetched), "failed to update NodePairingRequestApproval")
@@ -143,7 +143,7 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		assert.Equal(t, ctrl.Result{}, result, "should not requeue")
 
 		// Verify updated RequestID
-		updated := &openclawv1alpha1.NodePairingRequestApproval{}
+		updated := &clawv1alpha1.NodePairingRequestApproval{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
 		assert.Equal(t, "updated-request-999", updated.Spec.RequestID)
 	})
@@ -157,12 +157,12 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		})
 
 		// Create NodePairingRequestApproval
-		instance := &openclawv1alpha1.NodePairingRequestApproval{
+		instance := &clawv1alpha1.NodePairingRequestApproval{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: openclawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
 				RequestID: "status-test-111",
 			},
 		}
@@ -170,7 +170,7 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create NodePairingRequestApproval")
 
 		// Update Status.Conditions
-		fetched := &openclawv1alpha1.NodePairingRequestApproval{}
+		fetched := &clawv1alpha1.NodePairingRequestApproval{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
 
 		originalRequestID := fetched.Spec.RequestID
@@ -186,7 +186,7 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		require.NoError(t, k8sClient.Status().Update(ctx, fetched), "failed to update status")
 
 		// Verify Spec.RequestID unchanged
-		updated := &openclawv1alpha1.NodePairingRequestApproval{}
+		updated := &clawv1alpha1.NodePairingRequestApproval{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
 		assert.Equal(t, originalRequestID, updated.Spec.RequestID, "Spec.RequestID should remain unchanged")
 		assert.Len(t, updated.Status.Conditions, 1, "Status.Conditions should have one condition")
@@ -202,12 +202,12 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		})
 
 		// Create NodePairingRequestApproval
-		instance := &openclawv1alpha1.NodePairingRequestApproval{
+		instance := &clawv1alpha1.NodePairingRequestApproval{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: openclawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
 				RequestID: "conditions-test-222",
 			},
 		}
@@ -215,7 +215,7 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create NodePairingRequestApproval")
 
 		// Verify Conditions field is accessible and initially empty (or nil)
-		fetched := &openclawv1alpha1.NodePairingRequestApproval{}
+		fetched := &clawv1alpha1.NodePairingRequestApproval{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
 		// Conditions can be nil or empty initially (omitempty tag means API server may not return the field)
 		assert.Empty(t, fetched.Status.Conditions, "Status.Conditions should be empty initially")
@@ -227,7 +227,7 @@ func deleteAndWaitNodePairingRequestApproval(t *testing.T, namespace, name strin
 	t.Helper()
 	ctx := context.Background()
 
-	instance := &openclawv1alpha1.NodePairingRequestApproval{
+	instance := &clawv1alpha1.NodePairingRequestApproval{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,

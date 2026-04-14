@@ -4,22 +4,71 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. CRD: `Claw` in API group `claw.sandbox.redhat.com/v1alpha1`.
+Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes.
 
-**CRD Spec Fields:**
-- `geminiAPIKey` (SecretRef, required): Reference to a user-managed Secret containing the Gemini API key. SecretRef is a custom type with fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1), both validated at admission time. Controller validates the Secret exists and configures the `openclaw-proxy` deployment to reference it directly via environment variable. Pod restarts are triggered automatically when: (1) Secret reference changes (name or key field), or (2) Secret data changes (controller stamps Secret ResourceVersion as pod template annotation).
+**CRDs:**
+- `Claw` in API group `claw.sandbox.redhat.com/v1alpha1` — Main CRD for OpenClaw instances
+- `NodePairingRequestApproval` in API group `claw.sandbox.redhat.com/v1alpha1` — CRD for node pairing requests
 
-**CRD Status Fields:**
+### Claw CRD
+
+**Spec Fields:**
+- `credentials` ([]CredentialSpec, optional): Array of credential configurations for proxy credential injection per domain. Each entry defines a credential with:
+  - `name` (string, required, minLength=1): Unique identifier for this credential
+  - `type` (CredentialType, required): Credential injection mechanism. Enum: `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `none`
+  - `secretRef` (SecretRef, optional): Reference to Kubernetes Secret holding credential value. Required for all types except `none`. SecretRef has fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1)
+  - `domain` (string, required, minLength=1): Domain to match against request Host header. Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot)
+  - `defaultHeaders` (map[string]string, optional): Headers injected on every proxied request (e.g., "anthropic-version: 2023-06-01")
+  - `apiKey` (APIKeyConfig, optional): Required when type is `apiKey`. Fields: `header` (header name, minLength=1), `valuePrefix` (optional, e.g., "Bot ")
+  - `gcp` (GCPConfig, optional): Required when type is `gcp`. Fields: `project` (GCP project ID, minLength=1), `location` (GCP region, minLength=1)
+  - `pathToken` (PathTokenConfig, optional): Required when type is `pathToken`. Fields: `prefix` (URL path prefix, minLength=1)
+  - `oauth2` (OAuth2Config, optional): Required when type is `oauth2`. Fields: `clientID` (minLength=1), `tokenURL` (minLength=1), `scopes` ([]string, optional)
+
+**Status Fields:**
 - `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`openclaw-gateway-token`)
-- `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking instance state. Currently includes:
-  - `Ready` condition: Indicates whether the Claw instance is ready for use
+- `url` (string, optional): HTTPS URL for accessing the Claw instance
+- `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking instance state. Condition types:
+  - `Ready`: Indicates whether the Claw instance is ready for use
     - `Status=False, Reason=Provisioning`: Deployments are not yet ready
     - `Status=True, Reason=Ready`: Both `openclaw` and `openclaw-proxy` Deployments are available
+  - `CredentialsResolved`: Tracks credential validation status
+    - `Status=True, Reason=Resolved`: All credentials validated successfully
+    - `Status=False, Reason=ValidationFailed`: Credential validation failed
+  - `ProxyConfigured`: Tracks proxy configuration status
+    - `Status=True, Reason=Configured`: Proxy configured successfully
+    - `Status=False, Reason=ConfigFailed`: Proxy configuration failed
 
-**CRD Printcolumns:**
-The CRD defines custom printcolumns for `kubectl get claw` output:
-- `Ready`: Shows Ready condition status (True/False/Unknown) via JSONPath `.status.conditions[?(@.type=="Ready")].status`
-- `Reason`: Shows Ready condition reason (Provisioning/Ready) via JSONPath `.status.conditions[?(@.type=="Ready")].reason`
+**Printcolumns:**
+- `Ready`: Shows Ready condition status via JSONPath `.status.conditions[?(@.type=="Ready")].status`
+- `Reason`: Shows Ready condition reason via JSONPath `.status.conditions[?(@.type=="Ready")].reason`
+
+**Credential Type Constants:**
+- `CredentialTypeAPIKey = "apiKey"` — Custom header injection
+- `CredentialTypeBearer = "bearer"` — Bearer token (Authorization header)
+- `CredentialTypeGCP = "gcp"` — GCP service account with OAuth2 token refresh
+- `CredentialTypePathToken = "pathToken"` — Token injection into URL path
+- `CredentialTypeOAuth2 = "oauth2"` — Client credentials token exchange
+- `CredentialTypeNone = "none"` — Proxy allowlist, no authentication
+
+**Validation Rules:**
+- CE validation ensures type-specific config fields are present when required
+- `apiKey` config required when `type == "apiKey"`
+- `gcp` config required when `type == "gcp"`
+- `pathToken` config required when `type == "pathToken"`
+- `oauth2` config required when `type == "oauth2"`
+- `secretRef` required for all types except `none`
+
+### NodePairingRequestApproval CRD
+
+**Spec Fields:**
+- `requestID` (string, required, minLength=1): Unique identifier for the pairing request
+
+**Status Fields:**
+- `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking approval state
+
+**Printcolumns:**
+- `RequestID`: Shows request ID via JSONPath `.spec.requestID`
+- `Age`: Shows creation timestamp via JSONPath `.metadata.creationTimestamp`
 
 **Version Logging:**
 The operator logs version and build time at startup: `version` (short commit SHA) and `buildTime` (RFC3339). Injected via LDFLAGS during `docker-build`. Local builds show defaults (`dev`/`unknown`).
@@ -61,17 +110,18 @@ make dev-cleanup                                  # Tear down
 
 The operator uses a **single unified controller** that manages all resources using Kustomize and server-side apply:
 
-**ClawResourceReconciler** (`internal/controller/openclaw_resource_controller.go`):
+**ClawResourceReconciler** (`internal/controller/claw_resource_controller.go`):
 - Reconciles `Claw` CRs named exactly `"instance"` (skips all others)
 - Creates gateway Secret (`openclaw-gateway-token`) with randomly-generated authentication token
-- Validates user-provided Secret containing Gemini API key (referenced in CR's `geminiAPIKey` field)
+- Validates user-provided credentials (array of CredentialSpec in CR's `credentials` field) and referenced Secrets
 - Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (3: egress for openclaw, egress for proxy, ingress for gateway), proxy Deployment/ConfigMap, and Route (OpenShift only)
 - Uses **three-phase reconciliation** to dynamically inject Route host into ConfigMap for CORS configuration
 - Uses server-side apply for idempotent, conflict-free resource management
 - Automatically labels all resources with `app.kubernetes.io/name: openclaw`
 - Gracefully skips resources whose CRDs aren't registered (e.g., Route on vanilla Kubernetes)
-- Updates status conditions based on Deployment readiness after applying resources
+- Updates status conditions (Ready, CredentialsResolved, ProxyConfigured) based on Deployment readiness and credential validation
 - Supports proxy image override via `ProxyImage` field (set from `PROXY_IMAGE` env var on the manager)
+- Configures proxy with multi-credential support for different LLM API domains
 
 **Key benefits:**
 - Simplified codebase: 1 controller managing all resources
@@ -122,13 +172,13 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ configureProxyDeployment(objects, instance)
    │  ├─ Find openclaw-proxy Deployment in parsed objects
    │  ├─ Navigate to spec.template.spec.containers[].env[]
-   │  ├─ Find GEMINI_API_KEY env var
-   │  ├─ Update valueFrom.secretKeyRef to point to user's Secret (name and key from instance.Spec.GeminiAPIKey)
+   │  ├─ Configure credential-specific environment variables based on instance.Spec.Credentials
+   │  ├─ Update valueFrom.secretKeyRef to point to user's Secrets (name and key from each CredentialSpec.SecretRef)
    │  └─ Modify in-place BEFORE applying (so pod template changes trigger automatic pod restarts on Secret ref changes)
    ├─ stampSecretVersionAnnotation(ctx, objects, instance)
-   │  ├─ Fetch user's Secret to get its ResourceVersion
+   │  ├─ Fetch user's Secrets to get their ResourceVersions
    │  ├─ Find openclaw-proxy Deployment in parsed objects
-   │  ├─ Add annotation to pod template: claw.sandbox.redhat.com/gemini-secret-version=<ResourceVersion>
+   │  ├─ Add annotations to pod template: claw.sandbox.redhat.com/<credential-name>-secret-version=<ResourceVersion>
    │  └─ This triggers pod restarts when Secret data changes (ResourceVersion updates), not just Secret reference changes
    └─ Return parsed objects
   ↓
@@ -189,7 +239,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `readEmbeddedFile()` — reads files from embedded filesystem
 - `findClawsReferencingSecret()` — maps Secret events to Claw reconcile requests (for Secret watching)
 
-**Shared constants** (`internal/controller/openclaw_resource_controller.go`):
+**Shared constants** (`internal/controller/claw_resource_controller.go`):
 - `ClawInstanceName = "instance"` — only this name is reconciled
 - `ClawConfigMapName = "openclaw-config"`
 - `ClawPVCName = "openclaw-home-pvc"`
@@ -197,6 +247,12 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `ClawGatewaySecretName = "openclaw-gateway-token"` — Secret containing gateway authentication token
 - `ClawIngressNetworkPolicyName = "openclaw-ingress"` — ingress NetworkPolicy restricting gateway access to OpenShift router
 - `GatewayTokenKeyName = "token"` — data key for gateway token in gateway Secret
+
+**NodePairingRequestApprovalReconciler** (`internal/controller/nodepairingrequestapproval_controller.go`):
+- Reconciles `NodePairingRequestApproval` CRs
+- Currently a minimal implementation that logs reconciliation events
+- Designed for future node pairing approval workflow
+- RBAC includes permissions for CR and status management
 
 ### Kustomize-based manifest generation
 
@@ -230,15 +286,18 @@ The `internal/assets/manifests/` directory contains:
 
 ### Key directories
 
-- `api/v1alpha1/` — CRD type definitions (ClawSpec, ClawStatus)
-- `internal/controller/` — ClawResourceReconciler implementation and tests (separate test files per resource type for readability)
+- `api/v1alpha1/` — CRD type definitions
+  - `claw_types.go` — Claw CRD (ClawSpec, ClawStatus, CredentialSpec, credential types and configs)
+  - `nodepairingrequestapproval_types.go` — NodePairingRequestApproval CRD
+  - `groupversion_info.go` — API group registration (`claw.sandbox.redhat.com/v1alpha1`)
+- `internal/controller/` — ClawResourceReconciler and NodePairingRequestApprovalReconciler implementations and tests (separate test files per resource type for readability)
 - `internal/assets/manifests/` — Embedded Kustomize directory with all manifests (11 total: kustomization.yaml, core resources, networking, and proxy components)
-- `cmd/main.go` — Manager entrypoint, wires up the unified ClawResourceReconciler. Contains package-level `version` and `buildTime` variables set via LDFLAGS during build, logged at startup
+- `cmd/main.go` — Manager entrypoint, wires up controllers. Contains package-level `version` and `buildTime` variables set via LDFLAGS during build, logged at startup
 - `config/` — Kustomize overlays for CRDs, RBAC, manager deployment
 
 ### Code generation
 
-After modifying `api/v1alpha1/claw_types.go`, run both:
+After modifying API types in `api/v1alpha1/` (`claw_types.go`, `nodepairingrequestapproval_types.go`), run both:
 ```bash
 make manifests   # regenerate CRD YAML in config/crd/bases/
 make generate    # regenerate zz_generated.deepcopy.go
@@ -254,8 +313,8 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 - **Pattern:** `Test*` functions with `t.Run()` subtests; uses `t.Cleanup()` for cleanup; uses `waitFor()` helper for async assertions (10s timeout, 250ms poll)
 - **Polling helper:** `waitFor(t, timeout, interval, condition, message)` — custom helper for async checks (replaces Gomega's `Eventually()`)
 - **Table-driven tests:** Use standard Go pattern with struct slices and `t.Run(tt.name, ...)` for parameterized tests
-- **Test CRs:** All test Claw instances must include the required `geminiAPIKey` field (e.g., `instance.Spec.GeminiAPIKey = &openclawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}`)
-- **Test files:** Separate test files per resource type (`openclaw_configmap_controller_test.go`, `openclaw_secretref_controller_test.go`, `openclaw_status_controller_test.go`, etc.)
+- **Test CRs:** Test Claw instances can include the optional `credentials` field for credential testing (e.g., `instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, SecretRef: &clawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}, Domain: "generativelanguage.googleapis.com", APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"}}}`)
+- **Test files:** Separate test files per resource type (`claw_configmap_test.go`, `claw_credentials_test.go`, `claw_status_test.go`, etc.)
 - **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment 
 
 ### Testing Patterns

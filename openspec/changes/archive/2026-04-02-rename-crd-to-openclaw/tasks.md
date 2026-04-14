@@ -20,12 +20,12 @@
 - [x] 3.2 Update type references from `OpenClawInstance` to `OpenClaw` in openclaw_configmap_controller.go
 - [x] 3.3 Update kubebuilder RBAC comments to reference `openclaws` resource in openclaw_configmap_controller.go
 - [x] 3.4 Update log messages and comments from "OpenClawInstance" to "OpenClaw" in openclaw_configmap_controller.go
-- [x] 3.5 Update SetupWithManager to use `&openclawv1alpha1.OpenClaw{}` in openclaw_configmap_controller.go
+- [x] 3.5 Update SetupWithManager to use `&clawv1alpha1.OpenClaw{}` in openclaw_configmap_controller.go
 - [x] 3.6 Update import statements in `internal/controller/openclaw_deployment_controller.go` to use `OpenClaw` type
 - [x] 3.7 Update type references from `OpenClawInstance` to `OpenClaw` in openclaw_deployment_controller.go
 - [x] 3.8 Update kubebuilder RBAC comments to reference `openclaws` resource in openclaw_deployment_controller.go
 - [x] 3.9 Update log messages and comments from "OpenClawInstance" to "OpenClaw" in openclaw_deployment_controller.go
-- [x] 3.10 Update SetupWithManager to use `&openclawv1alpha1.OpenClaw{}` in openclaw_deployment_controller.go
+- [x] 3.10 Update SetupWithManager to use `&clawv1alpha1.OpenClaw{}` in openclaw_deployment_controller.go
 
 ## 4. Update Test Files
 

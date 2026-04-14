@@ -6,7 +6,7 @@
 ## 2. Create Controller File
 
 - [x] 2.1 Create internal/controller/openclaw_pvc_controller.go with OpenClawPersistentVolumeClaimReconciler struct
-- [x] 2.2 Add package imports (context, corev1, apierrors, runtime, serializer, ctrl, builder, client, controllerutil, log, predicate, openclawv1alpha1, assets)
+- [x] 2.2 Add package imports (context, corev1, apierrors, runtime, serializer, ctrl, builder, client, controllerutil, log, predicate, clawv1alpha1, assets)
 - [x] 2.3 Add constant OpenClawPVCName = "openclaw-home-pvc"
 - [x] 2.4 Define OpenClawPersistentVolumeClaimReconciler struct with Client and Scheme fields
 

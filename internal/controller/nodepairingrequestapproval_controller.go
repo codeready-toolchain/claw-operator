@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 // NodePairingRequestApprovalReconciler reconciles a NodePairingRequestApproval object
@@ -45,7 +45,7 @@ func (r *NodePairingRequestApprovalReconciler) Reconcile(ctx context.Context, re
 	logger.Info("Reconciling NodePairingRequestApproval", "name", req.Name, "namespace", req.Namespace)
 
 	// Fetch the NodePairingRequestApproval instance
-	instance := &openclawv1alpha1.NodePairingRequestApproval{}
+	instance := &clawv1alpha1.NodePairingRequestApproval{}
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -69,6 +69,6 @@ func (r *NodePairingRequestApprovalReconciler) Reconcile(ctx context.Context, re
 // SetupWithManager sets up the controller with the Manager.
 func (r *NodePairingRequestApprovalReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&openclawv1alpha1.NodePairingRequestApproval{}).
+		For(&clawv1alpha1.NodePairingRequestApproval{}).
 		Complete(r)
 }

@@ -57,7 +57,7 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 	"github.com/codeready-toolchain/claw-operator/internal/assets"
 )
 
@@ -110,7 +110,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	logger.Info("Reconciling Claw", "name", req.Name, "namespace", req.Namespace)
 
 	// Fetch the Claw resource
-	instance := &openclawv1alpha1.Claw{}
+	instance := &clawv1alpha1.Claw{}
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -136,13 +136,13 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Validate all credential entries (Secrets exist, type-specific config present)
 	if err := r.validateCredentials(ctx, instance); err != nil {
 		logger.Error(err, "Credential validation failed")
-		setCondition(instance, openclawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, openclawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after credential validation failure")
 		}
 		return ctrl.Result{}, err
 	}
-	setCondition(instance, openclawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionTrue, openclawv1alpha1.ConditionReasonResolved, "All credential Secrets are valid")
+	setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionTrue, clawv1alpha1.ConditionReasonResolved, "All credential Secrets are valid")
 
 	// Ensure proxy CA certificate exists for MITM proxy
 	if err := r.applyProxyCA(ctx, instance); err != nil {
@@ -154,7 +154,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	proxyConfigJSON, err := generateProxyConfig(instance.Spec.Credentials)
 	if err != nil {
 		logger.Error(err, "Failed to generate proxy config")
-		setCondition(instance, openclawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, openclawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after proxy config failure")
 		}
@@ -163,13 +163,13 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	if err := r.applyProxyConfigMap(ctx, instance, proxyConfigJSON); err != nil {
 		logger.Error(err, "Failed to apply proxy config")
-		setCondition(instance, openclawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, openclawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after proxy config failure")
 		}
 		return ctrl.Result{}, err
 	}
-	setCondition(instance, openclawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionTrue, openclawv1alpha1.ConditionReasonConfigured, "Proxy config generated successfully")
+	setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionTrue, clawv1alpha1.ConditionReasonConfigured, "Proxy config generated successfully")
 
 	// Build kustomized objects
 	objects, err := r.buildKustomizedObjects()
@@ -326,7 +326,7 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 
 // applyRouteOnly applies only the Route resource from provided objects
 // Returns number of routes applied (0 if CRD not registered)
-func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*unstructured.Unstructured, instance *openclawv1alpha1.Claw) (int, error) {
+func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) (int, error) {
 	// Handle empty objects safely (len() on nil slice returns 0)
 	if len(objects) == 0 {
 		return 0, nil
@@ -400,7 +400,7 @@ func generateGatewayToken() (string, error) {
 }
 
 // applyGatewaySecret creates or updates the openclaw-gateway-token Secret with the gateway token
-func (r *ClawResourceReconciler) applyGatewaySecret(ctx context.Context, instance *openclawv1alpha1.Claw) error {
+func (r *ClawResourceReconciler) applyGatewaySecret(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	logger := log.FromContext(ctx)
 
 	// check if the secret already exists
@@ -438,7 +438,7 @@ func (r *ClawResourceReconciler) applyGatewaySecret(ctx context.Context, instanc
 	}
 }
 
-func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, instance *openclawv1alpha1.Claw, token string) error {
+func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, instance *clawv1alpha1.Claw, token string) error {
 	logger := log.FromContext(ctx)
 	// Create the Secret object
 	secret := &corev1.Secret{}
@@ -469,12 +469,12 @@ func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, inst
 
 // validateCredentials validates all credential entries: checks that referenced Secrets exist
 // and that type-specific configuration is present. Returns an error describing all failures.
-func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instance *openclawv1alpha1.Claw) error {
+func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	var errs []error
 
 	for _, cred := range instance.Spec.Credentials {
 		// Validate SecretRef exists for types that require it
-		if cred.Type != openclawv1alpha1.CredentialTypeNone {
+		if cred.Type != clawv1alpha1.CredentialTypeNone {
 			if cred.SecretRef == nil {
 				errs = append(errs, fmt.Errorf("credential %q (type %s): secretRef is required", cred.Name, cred.Type))
 				continue
@@ -495,19 +495,19 @@ func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instan
 
 		// Type-specific validation (defense-in-depth beyond CEL)
 		switch cred.Type {
-		case openclawv1alpha1.CredentialTypeAPIKey:
+		case clawv1alpha1.CredentialTypeAPIKey:
 			if cred.APIKey == nil {
 				errs = append(errs, fmt.Errorf("credential %q: apiKey config is required for type apiKey", cred.Name))
 			}
-		case openclawv1alpha1.CredentialTypeGCP:
+		case clawv1alpha1.CredentialTypeGCP:
 			if cred.GCP == nil {
 				errs = append(errs, fmt.Errorf("credential %q: gcp config is required for type gcp", cred.Name))
 			}
-		case openclawv1alpha1.CredentialTypePathToken:
+		case clawv1alpha1.CredentialTypePathToken:
 			if cred.PathToken == nil {
 				errs = append(errs, fmt.Errorf("credential %q: pathToken config is required for type pathToken", cred.Name))
 			}
-		case openclawv1alpha1.CredentialTypeOAuth2:
+		case clawv1alpha1.CredentialTypeOAuth2:
 			if cred.OAuth2 == nil {
 				errs = append(errs, fmt.Errorf("credential %q: oauth2 config is required for type oauth2", cred.Name))
 			}
@@ -522,7 +522,7 @@ func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instan
 
 // applyProxyCA ensures the proxy CA Secret exists with a valid CA certificate and key.
 // If the Secret is missing or lacks valid data, a new P-256 ECDSA CA is generated.
-func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *openclawv1alpha1.Claw) error {
+func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	logger := log.FromContext(ctx)
 
 	existing := &corev1.Secret{}
@@ -582,7 +582,7 @@ func generateCACertificate() (certPEM, keyPEM []byte, err error) {
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			Organization: []string{"Claw Operator"},
-			CommonName:   "OpenClaw Proxy CA",
+			CommonName:   "Claw Proxy CA",
 		},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
 		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
@@ -646,7 +646,7 @@ func credEnvVarName(credName string) string {
 
 // generateProxyConfig builds the proxy config JSON from spec.credentials[].
 // Exact-match domains are emitted before suffix-match domains for predictable matching.
-func generateProxyConfig(credentials []openclawv1alpha1.CredentialSpec) ([]byte, error) {
+func generateProxyConfig(credentials []clawv1alpha1.CredentialSpec) ([]byte, error) {
 	var exact, suffix []proxyRoute
 
 	for _, cred := range credentials {
@@ -656,32 +656,32 @@ func generateProxyConfig(credentials []openclawv1alpha1.CredentialSpec) ([]byte,
 		}
 
 		switch cred.Type {
-		case openclawv1alpha1.CredentialTypeAPIKey:
+		case clawv1alpha1.CredentialTypeAPIKey:
 			route.Injector = "api_key"
 			route.EnvVar = credEnvVarName(cred.Name)
 			if cred.APIKey != nil {
 				route.Header = cred.APIKey.Header
 				route.ValuePrefix = cred.APIKey.ValuePrefix
 			}
-		case openclawv1alpha1.CredentialTypeBearer:
+		case clawv1alpha1.CredentialTypeBearer:
 			route.Injector = "bearer"
 			route.EnvVar = credEnvVarName(cred.Name)
-		case openclawv1alpha1.CredentialTypeGCP:
+		case clawv1alpha1.CredentialTypeGCP:
 			route.Injector = "gcp"
 			route.SAFilePath = "/etc/proxy/credentials/" + cred.Name + "/sa-key.json"
 			if cred.GCP != nil {
 				route.GCPProject = cred.GCP.Project
 				route.GCPLocation = cred.GCP.Location
 			}
-		case openclawv1alpha1.CredentialTypeNone:
+		case clawv1alpha1.CredentialTypeNone:
 			route.Injector = "none"
-		case openclawv1alpha1.CredentialTypePathToken:
+		case clawv1alpha1.CredentialTypePathToken:
 			route.Injector = "path_token"
 			route.EnvVar = credEnvVarName(cred.Name)
 			if cred.PathToken != nil {
 				route.PathPrefix = cred.PathToken.Prefix
 			}
-		case openclawv1alpha1.CredentialTypeOAuth2:
+		case clawv1alpha1.CredentialTypeOAuth2:
 			route.Injector = "oauth2"
 			route.EnvVar = credEnvVarName(cred.Name)
 			if cred.OAuth2 != nil {
@@ -707,7 +707,7 @@ func generateProxyConfig(credentials []openclawv1alpha1.CredentialSpec) ([]byte,
 }
 
 // applyProxyConfigMap creates or updates the proxy config ConfigMap with the precomputed JSON.
-func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instance *openclawv1alpha1.Claw, configJSON []byte) error {
+func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instance *clawv1alpha1.Claw, configJSON []byte) error {
 	logger := log.FromContext(ctx)
 
 	cm := &corev1.ConfigMap{}
@@ -772,7 +772,7 @@ func configureProxyImage(objects []*unstructured.Unstructured, image string) err
 // configureProxyForCredentials adds credential env vars and volume mounts to the
 // openclaw-proxy Deployment based on spec.credentials[]. This modifies the parsed
 // kustomize objects in-place before they are applied via SSA.
-func configureProxyForCredentials(objects []*unstructured.Unstructured, credentials []openclawv1alpha1.CredentialSpec) error {
+func configureProxyForCredentials(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
 	for _, obj := range objects {
 		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
 			continue
@@ -809,8 +809,8 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 
 		for _, cred := range credentials {
 			switch cred.Type {
-			case openclawv1alpha1.CredentialTypeAPIKey, openclawv1alpha1.CredentialTypeBearer,
-				openclawv1alpha1.CredentialTypePathToken, openclawv1alpha1.CredentialTypeOAuth2:
+			case clawv1alpha1.CredentialTypeAPIKey, clawv1alpha1.CredentialTypeBearer,
+				clawv1alpha1.CredentialTypePathToken, clawv1alpha1.CredentialTypeOAuth2:
 				if cred.SecretRef == nil {
 					continue
 				}
@@ -824,7 +824,7 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 					},
 				})
 
-			case openclawv1alpha1.CredentialTypeGCP:
+			case clawv1alpha1.CredentialTypeGCP:
 				if cred.SecretRef == nil {
 					continue
 				}
@@ -973,7 +973,7 @@ func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, name
 }
 
 // getRouteURL fetches the Route and returns the HTTPS URL, or empty string if not found
-func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *openclawv1alpha1.Claw) (string, error) {
+func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *clawv1alpha1.Claw) (string, error) {
 	logger := log.FromContext(ctx)
 
 	// Create an unstructured object to fetch the Route (OpenShift-specific resource)
@@ -1025,7 +1025,7 @@ func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *open
 }
 
 // setCondition is a generic helper to set a condition on the Claw instance.
-func setCondition(instance *openclawv1alpha1.Claw, condType string, status metav1.ConditionStatus, reason, message string) {
+func setCondition(instance *clawv1alpha1.Claw, condType string, status metav1.ConditionStatus, reason, message string) {
 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 		Type:               condType,
 		Status:             status,
@@ -1036,17 +1036,17 @@ func setCondition(instance *openclawv1alpha1.Claw, condType string, status metav
 }
 
 // setReadyCondition sets the Ready condition on the Claw instance based on deployment readiness
-func setReadyCondition(instance *openclawv1alpha1.Claw, ready bool, pendingDeployments []string) {
+func setReadyCondition(instance *clawv1alpha1.Claw, ready bool, pendingDeployments []string) {
 	var status metav1.ConditionStatus
 	var reason, message string
 
 	if ready {
 		status = metav1.ConditionTrue
-		reason = openclawv1alpha1.ConditionReasonReady
+		reason = clawv1alpha1.ConditionReasonReady
 		message = "Claw instance is ready"
 	} else {
 		status = metav1.ConditionFalse
-		reason = openclawv1alpha1.ConditionReasonProvisioning
+		reason = clawv1alpha1.ConditionReasonProvisioning
 		if len(pendingDeployments) > 0 {
 			message = "Waiting for deployments to become ready"
 		} else {
@@ -1055,7 +1055,7 @@ func setReadyCondition(instance *openclawv1alpha1.Claw, ready bool, pendingDeplo
 	}
 
 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-		Type:               openclawv1alpha1.ConditionTypeReady,
+		Type:               clawv1alpha1.ConditionTypeReady,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
@@ -1108,7 +1108,7 @@ func buildClawURL(routeURL, token string) string {
 }
 
 // updateStatus updates the Claw status with current deployment conditions
-func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *openclawv1alpha1.Claw) error {
+func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	// check deployment readiness
 	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace)
 	if err != nil {
@@ -1145,7 +1145,7 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *ope
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&openclawv1alpha1.Claw{}).
+		For(&clawv1alpha1.Claw{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
@@ -1172,7 +1172,7 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 	}
 
 	// List all Claw CRs in the same namespace
-	openClawList := &openclawv1alpha1.ClawList{}
+	openClawList := &clawv1alpha1.ClawList{}
 	if err := r.List(ctx, openClawList, client.InNamespace(secret.Namespace)); err != nil {
 		return nil
 	}
