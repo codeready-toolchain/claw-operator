@@ -237,6 +237,13 @@ func TestIsTokenVendingRequest(t *testing.T) {
 			path:   "/other",
 			want:   false,
 		},
+		{
+			name:   "valid with explicit port",
+			method: http.MethodPost,
+			host:   "oauth2.googleapis.com:443",
+			path:   "/token",
+			want:   true,
+		},
 	}
 
 	for _, tt := range tests {

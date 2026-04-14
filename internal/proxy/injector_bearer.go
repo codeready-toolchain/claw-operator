@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 )
 
 // BearerInjector injects Authorization: Bearer <token>.
@@ -43,9 +44,12 @@ func (b *BearerInjector) Inject(req *http.Request) error {
 	if token == "" {
 		return fmt.Errorf("credential env var %s is empty", b.envVar)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 	for k, v := range b.defaultHeaders {
+		if strings.EqualFold(k, "Authorization") {
+			continue
+		}
 		req.Header.Set(k, v)
 	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	return nil
 }

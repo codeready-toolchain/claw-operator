@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
@@ -75,7 +77,9 @@ func (o *OAuth2Injector) initTokenSource() {
 		TokenURL:     o.tokenURL,
 		Scopes:       o.scopes,
 	}
-	o.tokenSource = cfg.TokenSource(context.Background())
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, httpClient)
+	o.tokenSource = cfg.TokenSource(ctx)
 }
 
 func (o *OAuth2Injector) Inject(req *http.Request) error {
@@ -89,9 +93,12 @@ func (o *OAuth2Injector) Inject(req *http.Request) error {
 		return fmt.Errorf("oauth2 token exchange failed: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	for k, v := range o.defaultHeaders {
+		if strings.EqualFold(k, "Authorization") {
+			continue
+		}
 		req.Header.Set(k, v)
 	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	return nil
 }

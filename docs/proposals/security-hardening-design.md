@@ -69,7 +69,7 @@ spec:
 
 **Validation ([Q10](security-hardening-impl-questions.md)):** CEL validation rules on the `credentials` array items enforce that the correct type-specific sub-struct is present for each `type` value. The controller validates during reconciliation as defense-in-depth (e.g., checking that referenced Secrets exist).
 
-**Phase 2 types ([Q11](security-hardening-impl-questions.md)):** `apiKey`, `bearer`, and `gcp` ship in Phase 2. The remaining types (`pathToken`, `oauth2`, `none`) were added subsequently. The `kubernetes` type was deferred to Phase 3 pending a design decision on SA token projection vs user-managed secrets.
+**Phase 2 types ([Q11](security-hardening-impl-questions.md)):** All six credential types — `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, and `none` — ship in Phase 2. The `kubernetes` type is deferred to Phase 3 pending a design decision on SA token projection vs user-managed secrets.
 
 **Type definitions** live in `api/v1alpha1/openclaw_types.go` alongside the existing `Claw` types. The `CredentialSpec` struct is used as the array element type for `ClawSpec.Credentials`. See [credential-examples.md](security-hardening-credential-examples.md) for the full Go types and YAML examples for each type.
 

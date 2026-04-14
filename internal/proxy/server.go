@@ -36,6 +36,11 @@ import (
 	"time"
 )
 
+type certEntry struct {
+	cert   *tls.Certificate
+	expiry time.Time
+}
+
 // Server is the CONNECT/MITM credential-injecting forward proxy.
 type Server struct {
 	config    *Config
@@ -45,8 +50,9 @@ type Server struct {
 	logger    *slog.Logger
 	transport *http.Transport
 
-	certCache   map[string]*tls.Certificate
+	certCache   map[string]*certEntry
 	certCacheMu sync.RWMutex
+	stopCleanup chan struct{}
 }
 
 // NewServer creates a proxy server from the given config and CA materials.
@@ -65,7 +71,7 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 		injectors[cfg.Routes[i].Domain] = inj
 	}
 
-	return &Server{
+	s := &Server{
 		config:    cfg,
 		caCert:    caCert,
 		caKey:     caKey,
@@ -77,8 +83,36 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 				Timeout: 15 * time.Second,
 			}).DialContext,
 		},
-		certCache: make(map[string]*tls.Certificate),
-	}, nil
+		certCache:   make(map[string]*certEntry),
+		stopCleanup: make(chan struct{}),
+	}
+	go s.certCacheCleanup()
+	return s, nil
+}
+
+// Close stops background goroutines. Call on server shutdown.
+func (s *Server) Close() {
+	close(s.stopCleanup)
+}
+
+func (s *Server) certCacheCleanup() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopCleanup:
+			return
+		case <-ticker.C:
+			now := time.Now()
+			s.certCacheMu.Lock()
+			for host, entry := range s.certCache {
+				if now.After(entry.expiry) {
+					delete(s.certCache, host)
+				}
+			}
+			s.certCacheMu.Unlock()
+		}
+	}
 }
 
 func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, error) {
@@ -172,14 +206,18 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tlsConn.Close() }()
 
-	// Read the decrypted HTTP request
 	reader := bufio.NewReader(tlsConn)
 	for {
+		_ = tlsConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		req, err := http.ReadRequest(reader)
 		if err != nil {
-			if err != io.EOF {
-				s.logger.Error("read request from client failed", "error", err)
+			if err == io.EOF {
+				return
 			}
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				return
+			}
+			s.logger.Error("read request from client failed", "error", err)
 			return
 		}
 
@@ -251,40 +289,42 @@ func (s *Server) writeErrorResponse(conn net.Conn, status int, message string) {
 }
 
 func (s *Server) getOrCreateLeafCert(host string) (*tls.Certificate, error) {
+	now := time.Now()
+
 	s.certCacheMu.RLock()
-	if cert, ok := s.certCache[host]; ok {
+	if entry, ok := s.certCache[host]; ok && now.Before(entry.expiry) {
 		s.certCacheMu.RUnlock()
-		return cert, nil
+		return entry.cert, nil
 	}
 	s.certCacheMu.RUnlock()
 
 	s.certCacheMu.Lock()
 	defer s.certCacheMu.Unlock()
 
-	// Double-check after acquiring write lock
-	if cert, ok := s.certCache[host]; ok {
-		return cert, nil
+	if entry, ok := s.certCache[host]; ok && now.Before(entry.expiry) {
+		return entry.cert, nil
 	}
 
-	cert, err := s.generateLeafCert(host)
+	cert, expiry, err := s.generateLeafCert(host)
 	if err != nil {
 		return nil, err
 	}
-	s.certCache[host] = cert
+	s.certCache[host] = &certEntry{cert: cert, expiry: expiry}
 	return cert, nil
 }
 
-func (s *Server) generateLeafCert(host string) (*tls.Certificate, error) {
+func (s *Server) generateLeafCert(host string) (*tls.Certificate, time.Time, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("generate leaf key: %w", err)
+		return nil, time.Time{}, fmt.Errorf("generate leaf key: %w", err)
 	}
 
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return nil, fmt.Errorf("generate serial: %w", err)
+		return nil, time.Time{}, fmt.Errorf("generate serial: %w", err)
 	}
 
+	notAfter := time.Now().Add(24 * time.Hour)
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
@@ -292,7 +332,7 @@ func (s *Server) generateLeafCert(host string) (*tls.Certificate, error) {
 		},
 		DNSNames:  []string{host},
 		NotBefore: time.Now().Add(-1 * time.Hour),
-		NotAfter:  time.Now().Add(24 * time.Hour),
+		NotAfter:  notAfter,
 		KeyUsage:  x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageServerAuth,
@@ -301,12 +341,12 @@ func (s *Server) generateLeafCert(host string) (*tls.Certificate, error) {
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, s.caCert, &key.PublicKey, s.caKey)
 	if err != nil {
-		return nil, fmt.Errorf("sign leaf cert: %w", err)
+		return nil, time.Time{}, fmt.Errorf("sign leaf cert: %w", err)
 	}
 
 	cert := &tls.Certificate{
 		Certificate: [][]byte{certDER},
 		PrivateKey:  key,
 	}
-	return cert, nil
+	return cert, notAfter, nil
 }

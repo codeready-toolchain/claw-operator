@@ -17,10 +17,15 @@ limitations under the License.
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/codeready-toolchain/openclaw-operator/internal/proxy"
 )
@@ -54,15 +59,46 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv, err := proxy.NewServer(cfg, caCert, caKey, logger)
+	proxySrv, err := proxy.NewServer(cfg, caCert, caKey, logger)
 	if err != nil {
 		logger.Error("failed to create proxy server", "error", err)
 		os.Exit(1)
 	}
 
-	logger.Info("starting proxy", "addr", *listenAddr)
-	if err := http.ListenAndServe(*listenAddr, srv.Handler()); err != nil {
-		logger.Error("proxy server failed", "error", err)
+	httpSrv := &http.Server{
+		Addr:    *listenAddr,
+		Handler: proxySrv.Handler(),
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("starting proxy", "addr", *listenAddr)
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case sig := <-sigCh:
+		logger.Info("received signal, shutting down", "signal", sig)
+	case err := <-errCh:
+		if err != nil {
+			logger.Error("proxy server failed", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	proxySrv.Close()
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		logger.Error("graceful shutdown failed", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("proxy server stopped")
 }

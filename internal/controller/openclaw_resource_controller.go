@@ -79,6 +79,7 @@ const (
 	ClawProxyConfigMapName       = "openclaw-proxy-config"
 	ClawProxyDeploymentName      = "openclaw-proxy"
 	ClawProxyCACertSecretName    = "openclaw-proxy-ca"
+	ClawProxyContainerName       = "proxy"
 	// Kubernetes resource kinds
 	RouteKind      = "Route"
 	DeploymentKind = "Deployment"
@@ -148,8 +149,18 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Generate and apply proxy config from credentials
-	if err := r.applyProxyConfigMap(ctx, instance); err != nil {
+	// Generate proxy config JSON once; used by both applyProxyConfigMap and stampProxyConfigHash
+	proxyConfigJSON, err := generateProxyConfig(instance.Spec.Credentials)
+	if err != nil {
+		logger.Error(err, "Failed to generate proxy config")
+		setCondition(instance, openclawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, openclawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after proxy config failure")
+		}
+		return ctrl.Result{}, err
+	}
+
+	if err := r.applyProxyConfigMap(ctx, instance, proxyConfigJSON); err != nil {
 		logger.Error(err, "Failed to apply proxy config")
 		setCondition(instance, openclawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, openclawv1alpha1.ConditionReasonConfigFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
@@ -171,7 +182,8 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Stamp proxy config hash to trigger rollout on config changes
-	if err := r.stampProxyConfigHash(ctx, objects, instance); err != nil {
+	proxyConfigHash := fmt.Sprintf("%x", sha256.Sum256(proxyConfigJSON))
+	if err := stampProxyConfigHash(objects, proxyConfigHash); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to stamp proxy config hash: %w", err)
 	}
 
@@ -688,14 +700,9 @@ func generateProxyConfig(credentials []openclawv1alpha1.CredentialSpec) ([]byte,
 	return json.Marshal(cfg)
 }
 
-// applyProxyConfigMap creates or updates the proxy config ConfigMap from spec.credentials.
-func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instance *openclawv1alpha1.Claw) error {
+// applyProxyConfigMap creates or updates the proxy config ConfigMap with the precomputed JSON.
+func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instance *openclawv1alpha1.Claw, configJSON []byte) error {
 	logger := log.FromContext(ctx)
-
-	configJSON, err := generateProxyConfig(instance.Spec.Credentials)
-	if err != nil {
-		return fmt.Errorf("failed to generate proxy config: %w", err)
-	}
 
 	cm := &corev1.ConfigMap{}
 	cm.SetName(ClawProxyConfigMapName)
@@ -736,13 +743,22 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 		if !found {
 			return fmt.Errorf("containers field not found in proxy deployment")
 		}
-		if len(containers) == 0 {
-			return fmt.Errorf("no containers found in proxy deployment")
-		}
 
-		container, ok := containers[0].(map[string]any)
-		if !ok {
-			return fmt.Errorf("failed to parse proxy container")
+		containerIdx := -1
+		var container map[string]any
+		for i, c := range containers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawProxyContainerName {
+				containerIdx = i
+				container = cm
+				break
+			}
+		}
+		if containerIdx < 0 {
+			return fmt.Errorf("container %q not found in proxy deployment", ClawProxyContainerName)
 		}
 
 		envVars, _, _ := unstructured.NestedSlice(container, "env")
@@ -798,7 +814,7 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 		if err := unstructured.SetNestedSlice(container, volumeMounts, "volumeMounts"); err != nil {
 			return fmt.Errorf("failed to set volume mounts: %w", err)
 		}
-		containers[0] = container
+		containers[containerIdx] = container
 		if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
 			return fmt.Errorf("failed to set containers: %w", err)
 		}
@@ -813,13 +829,7 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 
 // stampProxyConfigHash adds a hash annotation to the proxy pod template to trigger
 // rollouts when the proxy config changes.
-func (r *ClawResourceReconciler) stampProxyConfigHash(_ context.Context, objects []*unstructured.Unstructured, instance *openclawv1alpha1.Claw) error {
-	configJSON, err := generateProxyConfig(instance.Spec.Credentials)
-	if err != nil {
-		return fmt.Errorf("failed to generate proxy config for hashing: %w", err)
-	}
-	hash := fmt.Sprintf("%x", sha256.Sum256(configJSON))
-
+func stampProxyConfigHash(objects []*unstructured.Unstructured, hash string) error {
 	for _, obj := range objects {
 		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
 			continue

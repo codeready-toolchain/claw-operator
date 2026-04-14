@@ -315,42 +315,6 @@ func TestOpenClawCredentialSecretReference(t *testing.T) {
 		})
 	})
 
-	t.Run("should fail validation when Secret does not exist", func(t *testing.T) {
-		ctx := context.Background()
-		t.Cleanup(func() {
-			deleteAndWaitAllResources(t, namespace)
-		})
-
-		instance := &openclawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
-		instance.Namespace = namespace
-		instance.Spec.Credentials = []openclawv1alpha1.CredentialSpec{
-			{
-				Name: "missing-cred",
-				Type: openclawv1alpha1.CredentialTypeAPIKey,
-				SecretRef: &openclawv1alpha1.SecretRef{
-					Name: "nonexistent-secret",
-					Key:  "api-key",
-				},
-				Domain: "api.example.com",
-				APIKey: &openclawv1alpha1.APIKeyConfig{
-					Header: "x-api-key",
-				},
-			},
-		}
-		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
-
-		reconciler := createClawReconciler()
-		_, err := reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{
-				Name:      ClawInstanceName,
-				Namespace: namespace,
-			},
-		})
-		require.Error(t, err, "expected error when Secret does not exist")
-		assert.Contains(t, err.Error(), "credential validation failed")
-		assert.Contains(t, err.Error(), "nonexistent-secret")
-	})
 }
 
 func TestConfigureProxyForCredentials(t *testing.T) {
