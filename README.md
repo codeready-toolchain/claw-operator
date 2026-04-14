@@ -243,7 +243,7 @@ Get your API key from [Google AI Studio](https://aistudio.google.com/apikey).
 **2. Create the Claw CR** (must be named `instance`):
 
 ```sh
-oc apply -f config/samples/openclaw_v1alpha1_claw.yaml -n claw-operator
+oc apply -f config/samples/claw_v1alpha1_claw.yaml -n <user-namespace>
 ```
 
 Or create it directly:

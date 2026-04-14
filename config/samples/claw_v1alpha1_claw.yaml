@@ -2,7 +2,6 @@ apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance
-  namespace: default
 spec:
   credentials:
     - name: gemini
