@@ -1155,7 +1155,7 @@ func (r *ClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.findClawsReferencingSecret),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
-		Named("openclaw").
+		Named("claw").
 		Complete(r)
 }
 
