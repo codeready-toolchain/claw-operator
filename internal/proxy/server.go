@@ -132,6 +132,13 @@ func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, erro
 		return nil, nil, fmt.Errorf("parse CA certificate: %w", err)
 	}
 
+	if !cert.IsCA {
+		return nil, nil, fmt.Errorf("CA certificate has IsCA=false, cannot sign leaf certs")
+	}
+	if cert.KeyUsage&x509.KeyUsageCertSign == 0 {
+		return nil, nil, fmt.Errorf("CA certificate missing KeyUsageCertSign")
+	}
+
 	keyBlock, _ := pem.Decode(keyPEM)
 	if keyBlock == nil {
 		return nil, nil, fmt.Errorf("failed to decode CA key PEM")
@@ -139,6 +146,16 @@ func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, erro
 	key, err := x509.ParseECPrivateKey(keyBlock.Bytes)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse CA key: %w", err)
+	}
+
+	certPub, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("CA certificate public key is not ECDSA")
+	}
+	if certPub.Curve != key.PublicKey.Curve ||
+		certPub.X.Cmp(key.PublicKey.X) != 0 ||
+		certPub.Y.Cmp(key.PublicKey.Y) != 0 {
+		return nil, nil, fmt.Errorf("CA private key does not match certificate public key")
 	}
 
 	return cert, key, nil
@@ -207,10 +224,12 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		MinVersion:   tls.VersionTLS12,
 	}
 	tlsConn := tls.Server(clientConn, tlsConfig)
+	_ = clientConn.SetDeadline(time.Now().Add(10 * time.Second))
 	if err := tlsConn.Handshake(); err != nil {
 		s.logger.Error("TLS handshake with client failed", "host", hostOnly, "error", err)
 		return
 	}
+	_ = clientConn.SetDeadline(time.Time{})
 	defer func() { _ = tlsConn.Close() }()
 
 	reader := bufio.NewReader(tlsConn)
@@ -233,6 +252,13 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) proxyRequest(clientConn net.Conn, req *http.Request, route *Route, targetHost string) {
+	defer func() {
+		if req.Body != nil {
+			_, _ = io.Copy(io.Discard, req.Body)
+			_ = req.Body.Close()
+		}
+	}()
+
 	// Strip all client-supplied auth headers (defense in depth)
 	StripAuthHeaders(req)
 

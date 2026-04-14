@@ -90,6 +90,40 @@ func TestNewServer(t *testing.T) {
 		assert.Contains(t, err.Error(), "parse CA")
 	})
 
+	t.Run("should fail when cert is not a CA", func(t *testing.T) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+		tmpl := &x509.Certificate{
+			SerialNumber: serial,
+			Subject:      pkix.Name{CommonName: "Not A CA"},
+			NotBefore:    time.Now().Add(-time.Hour),
+			NotAfter:     time.Now().Add(time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+		}
+		certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		require.NoError(t, err)
+		nonCACert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+		cfg := &Config{Routes: []Route{}}
+		_, err = NewServer(cfg, nonCACert, keyPEM, logger)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "IsCA=false")
+	})
+
+	t.Run("should fail when key does not match cert", func(t *testing.T) {
+		otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		otherKeyDER, err := x509.MarshalECPrivateKey(otherKey)
+		require.NoError(t, err)
+		mismatchedKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: otherKeyDER})
+
+		cfg := &Config{Routes: []Route{}}
+		_, err = NewServer(cfg, certPEM, mismatchedKeyPEM, logger)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not match")
+	})
+
 	t.Run("should fail with invalid injector config", func(t *testing.T) {
 		cfg := &Config{
 			Routes: []Route{
