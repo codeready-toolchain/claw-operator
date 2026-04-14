@@ -40,6 +40,13 @@ const (
 	ConditionTypeProxyConfigured     = "ProxyConfigured"
 )
 
+// Annotation keys used on proxy pod templates.
+const (
+	AnnotationKeyProxyConfigHash  = "claw.sandbox.redhat.com/proxy-config-hash"
+	AnnotationPrefixSecretVersion = "claw.sandbox.redhat.com/"
+	AnnotationSuffixSecretVersion = "-secret-version"
+)
+
 // Condition reasons for Claw status.
 const (
 	ConditionReasonReady            = "Ready"

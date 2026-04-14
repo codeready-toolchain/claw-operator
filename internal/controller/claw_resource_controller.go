@@ -193,6 +193,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to stamp proxy config hash: %w", err)
 	}
 
+	// Stamp Secret ResourceVersions to trigger rollout when Secret data changes
+	if err := r.stampSecretVersionAnnotation(ctx, objects, instance); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to stamp secret version annotations: %w", err)
+	}
+
 	// Apply Route and wait for ingress host to be populated
 	var routeHost string
 	var routeApplied int
@@ -881,7 +886,7 @@ func stampProxyConfigHash(objects []*unstructured.Unstructured, hash string) err
 		if annotations == nil {
 			annotations = make(map[string]string)
 		}
-		annotations["claw.sandbox.redhat.com/proxy-config-hash"] = hash
+		annotations[clawv1alpha1.AnnotationKeyProxyConfigHash] = hash
 
 		if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
 			return fmt.Errorf("failed to set pod template annotations: %w", err)
@@ -889,6 +894,54 @@ func stampProxyConfigHash(objects []*unstructured.Unstructured, hash string) err
 		return nil
 	}
 	return fmt.Errorf("openclaw-proxy deployment not found for config hash stamping")
+}
+
+// stampSecretVersionAnnotation fetches each credential's referenced Secret and stamps
+// its ResourceVersion as a pod template annotation. This ensures that when Secret data
+// changes (without any Claw CR spec change), the pod template differs and Kubernetes
+// triggers a rolling update.
+func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
+	ctx context.Context,
+	objects []*unstructured.Unstructured,
+	instance *clawv1alpha1.Claw,
+) error {
+	versions := make(map[string]string)
+	for _, cred := range instance.Spec.Credentials {
+		if cred.SecretRef == nil {
+			continue
+		}
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, client.ObjectKey{
+			Namespace: instance.Namespace,
+			Name:      cred.SecretRef.Name,
+		}, secret); err != nil {
+			return fmt.Errorf("failed to get Secret %q for credential %q: %w", cred.SecretRef.Name, cred.Name, err)
+		}
+		versions[cred.Name] = secret.ResourceVersion
+	}
+
+	if len(versions) == 0 {
+		return nil
+	}
+
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+			continue
+		}
+
+		annotations, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		for credName, rv := range versions {
+			annotations[clawv1alpha1.AnnotationPrefixSecretVersion+credName+clawv1alpha1.AnnotationSuffixSecretVersion] = rv
+		}
+		if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
+			return fmt.Errorf("failed to set secret version annotations: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("openclaw-proxy deployment not found for secret version stamping")
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem
