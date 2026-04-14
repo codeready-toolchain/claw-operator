@@ -24,6 +24,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -82,6 +83,12 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 			DialContext: (&net.Dialer{
 				Timeout: 15 * time.Second,
 			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
 		},
 		certCache:   make(map[string]*certEntry),
 		stopCleanup: make(chan struct{}),
@@ -274,7 +281,10 @@ func (s *Server) proxyRequest(clientConn net.Conn, req *http.Request, route *Rou
 }
 
 func (s *Server) writeErrorResponse(conn net.Conn, status int, message string) {
-	body := fmt.Sprintf(`{"error":"%s"}`, message)
+	body, err := json.Marshal(map[string]string{"error": message})
+	if err != nil {
+		body = []byte(`{"error":"internal error"}`)
+	}
 	resp := &http.Response{
 		StatusCode: status,
 		Proto:      "HTTP/1.1",
@@ -283,7 +293,7 @@ func (s *Server) writeErrorResponse(conn net.Conn, status int, message string) {
 		Header: http.Header{
 			"Content-Type": []string{"application/json"},
 		},
-		Body: io.NopCloser(strings.NewReader(body)),
+		Body: io.NopCloser(strings.NewReader(string(body))),
 	}
 	_ = resp.Write(conn)
 }
