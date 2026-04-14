@@ -86,7 +86,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 	require.NoError(t, err, "Failed to install CRDs")
 
 	t.Log("deploying the controller-manager")
-	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage),
+		fmt.Sprintf("PROXY_IMG=%s", proxyImage))
 	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to deploy the controller-manager")
 
