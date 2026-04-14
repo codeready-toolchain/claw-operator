@@ -40,7 +40,7 @@ var (
 	projectImage = "example.com/claw-operator:v0.0.1"
 
 	// proxyImage is the credential proxy sidecar image, built and loaded alongside the operator.
-	proxyImage = "openclaw-proxy:latest"
+	proxyImage = "example.com/openclaw-proxy:latest"
 )
 
 // TestMain runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
