@@ -38,6 +38,9 @@ var (
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
 	projectImage = "example.com/openclaw-operator:v0.0.1"
+
+	// proxyImage is the credential proxy sidecar image, built and loaded alongside the operator.
+	proxyImage = "openclaw-proxy:latest"
 )
 
 // TestMain runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -47,34 +50,23 @@ var (
 func TestMain(m *testing.M) {
 	fmt.Println("Starting openclaw-operator integration test suite")
 
-	// Build the manager(Operator) image with output streamed to stdout/stderr
-	// so we can see Docker build progress (utils.Run captures output silently).
-	fmt.Println("Building manager image...")
-	if err := runStreaming("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage)); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to build the manager image: %v\n", err)
-		os.Exit(1)
-	}
-
 	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
 	// built and available before running the tests. Also, remove the following block.
-	// Load the manager(Operator) image on Kind
-	fmt.Println("Loading image into Kind cluster...")
 	kindCluster := "kind"
 	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
 		kindCluster = v
 	}
-	// Save the image to a tar file then load it into Kind
-	// (because podman and kind do not work well together with loading images from a docker registry
-	// see https://github.com/kubernetes-sigs/kind/issues/2038)
-	if err := runStreaming("make", "docker-save",
-		fmt.Sprintf("IMG=%s", projectImage),
-		"OUTPUT_FILE=tmp/projectImage.tar"); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to save image: %v\n", err)
+
+	// Build, save, and load the manager and proxy images into Kind.
+	// Images are saved to tar first because podman and kind do not work well
+	// together when loading from a docker registry.
+	// See https://github.com/kubernetes-sigs/kind/issues/2038
+	if err := buildAndLoadImage("manager", "docker-build", "IMG", projectImage, kindCluster); err != nil {
+		fmt.Fprintf(os.Stderr, "manager image setup failed: %v\n", err)
 		os.Exit(1)
 	}
-	if err := runStreaming("kind", "load", "image-archive", "tmp/projectImage.tar",
-		"--name", kindCluster); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load image into Kind: %v\n", err)
+	if err := buildAndLoadImage("proxy", "docker-build-proxy", "PROXY_IMG", proxyImage, kindCluster); err != nil {
+		fmt.Fprintf(os.Stderr, "proxy image setup failed: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -107,6 +99,31 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+// buildAndLoadImage builds a Docker image, saves it to a tar, and loads it into
+// a Kind cluster. label is a human-readable name for log messages, buildTarget
+// is the make target (e.g. "docker-build"), imgVar is the make variable that
+// receives the image name (e.g. "IMG" or "PROXY_IMG").
+func buildAndLoadImage(label, buildTarget, imgVar, image, kindCluster string) error {
+	tarFile := fmt.Sprintf("tmp/%s.tar", label)
+
+	fmt.Printf("Building %s image...\n", label)
+	if err := runStreaming("make", buildTarget, fmt.Sprintf("%s=%s", imgVar, image)); err != nil {
+		return fmt.Errorf("build %s image: %w", label, err)
+	}
+
+	fmt.Printf("Loading %s image into Kind cluster...\n", label)
+	if err := runStreaming("make", "docker-save",
+		fmt.Sprintf("IMG=%s", image),
+		fmt.Sprintf("OUTPUT_FILE=%s", tarFile)); err != nil {
+		return fmt.Errorf("save %s image: %w", label, err)
+	}
+	if err := runStreaming("kind", "load", "image-archive", tarFile,
+		"--name", kindCluster); err != nil {
+		return fmt.Errorf("load %s image into Kind: %w", label, err)
+	}
+	return nil
 }
 
 // runStreaming executes a command with stdout/stderr streamed directly to the

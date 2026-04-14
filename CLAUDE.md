@@ -48,6 +48,11 @@ make cleanup-test-e2e   # Tear down Kind cluster
 
 # Docker
 make docker-build IMG=<registry>/openclaw-operator:tag
+
+# Dev deployment (OpenShift/Kubernetes)
+make dev-setup REGISTRY=quay.io/myuser           # Build + push + deploy (one command)
+make dev-build dev-push dev-deploy REGISTRY=...   # Iterate after code changes
+make dev-cleanup                                  # Tear down
 ```
 
 ## Architecture
@@ -66,6 +71,7 @@ The operator uses a **single unified controller** that manages all resources usi
 - Automatically labels all resources with `app.kubernetes.io/name: openclaw`
 - Gracefully skips resources whose CRDs aren't registered (e.g., Route on vanilla Kubernetes)
 - Updates status conditions based on Deployment readiness after applying resources
+- Supports proxy image override via `ProxyImage` field (set from `PROXY_IMAGE` env var on the manager)
 
 **Key benefits:**
 - Simplified codebase: 1 controller managing all resources
@@ -172,6 +178,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
 - `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in ConfigMap with Route host (or localhost fallback)
 - `applyResources()` — applies list of unstructured objects using server-side apply
+- `configureProxyImage()` — overrides proxy Deployment container image if `ProxyImage` is set (from `PROXY_IMAGE` env var); no-op when empty (preserves embedded default for `make run`)
 - `configureProxyDeployment()` — modifies openclaw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
 - `stampSecretVersionAnnotation()` — adds Secret ResourceVersion annotation to pod template BEFORE applying (ensures pod template changes trigger restarts when Secret data changes, not just reference)
 - `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition

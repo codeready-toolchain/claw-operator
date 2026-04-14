@@ -64,7 +64,11 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
+        imagePullPolicy: IfNotPresent
         name: manager
+        env:
+          - name: PROXY_IMAGE
+            value: openclaw-proxy:latest
         ports: []
         securityContext:
           allowPrivilegeEscalation: false

@@ -27,3 +27,6 @@ go.work
 *.swo
 *~
 tmp
+
+# Generated deploy overlay (created by make deploy/build-installer)
+config/.deploy/

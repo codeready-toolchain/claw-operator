@@ -26,11 +26,11 @@ type CredentialSpec struct {
     Name string `json:"name"`
 
     // Type selects the credential injection mechanism
-    // +kubebuilder:validation:Enum=apiKey;bearer;gcp;pathToken;oauth2;kubernetes;none
+    // +kubebuilder:validation:Enum=apiKey;bearer;gcp;pathToken;oauth2;none
     Type CredentialType `json:"type"`
 
     // SecretRef references the Kubernetes Secret holding the credential value.
-    // Not required for types "kubernetes" (uses projected SA token) and "none".
+    // Not required for type "none" (proxy allowlist, no auth).
     // +optional
     SecretRef *SecretKeyRef `json:"secretRef,omitempty"`
 
@@ -49,7 +49,6 @@ type CredentialSpec struct {
     GCP        *GCPConfig        `json:"gcp,omitempty"`
     PathToken  *PathTokenConfig  `json:"pathToken,omitempty"`
     OAuth2     *OAuth2Config     `json:"oauth2,omitempty"`
-    Kubernetes *KubernetesConfig `json:"kubernetes,omitempty"`
     // Bearer and None need no extra config.
 }
 
@@ -61,7 +60,6 @@ const (
     CredentialTypeGCP         CredentialType = "gcp"
     CredentialTypePathToken   CredentialType = "pathToken"
     CredentialTypeOAuth2      CredentialType = "oauth2"
-    CredentialTypeKubernetes  CredentialType = "kubernetes"
     CredentialTypeNone        CredentialType = "none"        // proxy allowlist only, no credential injection — see "Proxy Allowlist" below
 )
 
@@ -95,13 +93,6 @@ type OAuth2Config struct {
     Scopes   []string `json:"scopes,omitempty"`
 }
 
-type KubernetesConfig struct {
-    // ServiceAccountName is the ServiceAccount whose token the proxy uses for
-    // Kubernetes API requests. The operator creates this SA and binds it to
-    // the appropriate roles. If empty, defaults to "openclaw-agent".
-    // +optional
-    ServiceAccountName string `json:"serviceAccountName,omitempty"`
-}
 ```
 
 ---
@@ -282,48 +273,17 @@ Jira uses `Authorization: Basic base64(email:token)`. The user pre-computes the 
 
 ---
 
-## Kubernetes API
+## Kubernetes API (Deferred — Phase 3)
 
 The gateway needs access to the Kubernetes API to manage resources in the user's namespace (deploy apps, debug workloads, etc.). The gateway pod's egress is locked to the proxy only, so Kubernetes API calls must also go through the proxy.
 
-### Kubernetes via dedicated ServiceAccount
+The `kubernetes` credential type was removed from the initial implementation because projected ServiceAccount token volumes only provide the proxy pod's own SA token, not a user-specified one. Several approaches are under consideration:
 
-The operator creates a ServiceAccount with scoped RBAC and mounts its projected token into the proxy pod. The proxy injects the SA bearer token for requests to the Kubernetes API server.
+- **TokenRequest API** — the operator mints short-lived tokens for a user-specified ServiceAccount via the Kubernetes TokenRequest API and injects them into the proxy. Requires elevated RBAC permissions for the operator.
+- **User-managed Secret** — the user provides a Secret containing a kubeconfig or long-lived token. Simpler but less secure (no automatic rotation).
+- **Projected volumes with operator-created SA** — the operator creates a dedicated ServiceAccount and configures the proxy pod to project its token. Limited to the proxy pod's own namespace.
 
-```yaml
-- name: kube-api
-  type: kubernetes
-  domain: "kubernetes.default.svc"
-  kubernetes:
-    serviceAccountName: openclaw-agent
-```
-
-**What the operator does:**
-1. Creates ServiceAccount `openclaw-agent` (if it doesn't exist)
-2. Creates RoleBinding granting appropriate permissions in the namespace
-3. Mounts a projected ServiceAccount token volume into the proxy pod
-4. Generates proxy config routing `kubernetes.default.svc` → kube-apiserver with the SA token
-
-**Proxy behavior:** Strips any client-supplied `Authorization` header, injects `Authorization: Bearer <SA-token>` from the projected volume, forwards to `https://kubernetes.default.svc:443`.
-
-**Note:** This gives the assistant the ServiceAccount's permissions, not the user's. RBAC scoping for the SA is a separate concern (see sketch Q6 — application-layer security).
-
-### Kubernetes via user token (future)
-
-If the gateway is integrated with OpenShift OAuth, the user's token could be passed through for Kubernetes API calls, giving user-level permissions. This would require the gateway to forward the user's bearer token to the proxy, and the proxy to re-inject it for kube-apiserver requests only. This is more complex and deferred — documenting the pattern here for completeness:
-
-```yaml
-- name: kube-api-user
-  type: kubernetes
-  domain: "kubernetes.default.svc"
-  kubernetes:
-    # Indicates the proxy should pass through the user's token from
-    # the gateway session, not use a ServiceAccount token.
-    # Requires OpenShift OAuth integration.
-    passThrough: true
-```
-
-This is speculative — the `passThrough` field is not part of the initial design.
+This will be designed and implemented when there is a concrete use case. See Phase 3 in the [design document](security-hardening-design.md).
 
 ---
 
@@ -395,7 +355,6 @@ The proxy passes the request through without modifying any headers. No `secretRe
 | `gcp` | SA JSON → OAuth2 token refresh + token vending → Bearer | Vertex AI, GCP APIs | `project`, `location` |
 | `pathToken` | Token inserted into URL path | Telegram | `prefix` |
 | `oauth2` | Client credentials → token exchange → Bearer | Enterprise MCP servers, corporate APIs | `clientID`, `tokenURL`, `scopes` |
-| `kubernetes` | ServiceAccount projected token → Bearer | Kubernetes API server | `serviceAccountName` |
 | `none` | No auth (proxy allowlist only) | Services with auth at another layer | — |
 
 ---
@@ -408,6 +367,5 @@ The proxy passes the request through without modifying any headers. No `secretRe
 - **Domain matching precedence:** Routes are checked in config order; first match wins. Exact matches (`api.github.com`) should be listed before suffix matches (`.googleapis.com`) to avoid unintended catches.
 - **Multiple credentials for the same domain:** Possible (e.g., two GCP projects). The proxy config should support this — route matching may need path-based disambiguation in the future.
 - **Secret ownership:** The Secrets referenced by `spec.credentials` entries are user-created and user-owned. The operator reads but does not create or modify them. Only operator-managed Secrets (`openclaw-gateway-token`, proxy config) have owner references.
-- **Kubernetes token rotation:** Projected ServiceAccount tokens are short-lived and auto-rotated by the kubelet. The proxy must re-read the token file before each request (or watch for changes) rather than caching it at startup.
 - **Injection failure:** If a route matches but credential injection fails (e.g., expired GCP SA, missing Secret), the proxy returns **502** with a descriptive error body — not a silent passthrough that would result in a confusing 401/403 from the upstream.
 - **Credential redaction:** All proxy log output redacts credential values (Secret data, tokens) as `[REDACTED]`. Debug logging of request/response headers strips auth header values.

@@ -38,8 +38,8 @@ spec:
 ---
 # NetworkPolicy 2: Proxy pod egress restricted to known API endpoints + DNS.
 # Uses CIDR 0.0.0.0/0 because LLM APIs sit behind CDNs with dynamic IPs.
-# The nginx config itself acts as the L7 allowlist — only configured
-# location blocks are forwarded; everything else returns 403.
+# The Go proxy config acts as the L7 allowlist — only configured
+# domains are forwarded; everything else returns 403.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

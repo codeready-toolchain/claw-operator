@@ -18,9 +18,7 @@ spec:
     spec:
       automountServiceAccountToken: false
       securityContext:
-        runAsUser: 65532
         runAsNonRoot: true
-        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -80,6 +78,12 @@ spec:
                 secretKeyRef:
                   name: openclaw-gateway-token
                   key: token
+            - name: HTTP_PROXY
+              value: http://openclaw-proxy:8080
+            - name: HTTPS_PROXY
+              value: http://openclaw-proxy:8080
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/proxy-ca/ca.crt
           resources:
             requests:
               memory: 512Mi
@@ -110,6 +114,9 @@ spec:
               mountPath: /home/node/.openclaw
             - name: tmp-volume
               mountPath: /tmp
+            - name: proxy-ca
+              mountPath: /etc/proxy-ca
+              readOnly: true
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -126,3 +133,9 @@ spec:
             name: openclaw-config
         - name: tmp-volume
           emptyDir: {}
+        - name: proxy-ca
+          secret:
+            secretName: openclaw-proxy-ca
+            items:
+              - key: ca.crt
+                path: ca.crt

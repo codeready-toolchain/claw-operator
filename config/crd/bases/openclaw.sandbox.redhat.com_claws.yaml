@@ -46,24 +46,141 @@ spec:
           spec:
             description: ClawSpec defines the desired state of Claw
             properties:
-              geminiAPIKey:
-                description: GeminiAPIKey is a reference to a Secret containing the
-                  Gemini API key
-                properties:
-                  key:
-                    description: Key is the key in the Secret's data map
-                    minLength: 1
-                    type: string
-                  name:
-                    description: Name is the name of the Secret
-                    minLength: 1
-                    type: string
-                required:
-                - key
-                - name
-                type: object
-            required:
-            - geminiAPIKey
+              credentials:
+                description: Credentials configures proxy credential injection per
+                  domain.
+                items:
+                  description: CredentialSpec defines a single credential entry for
+                    proxy injection.
+                  properties:
+                    apiKey:
+                      description: APIKey configures custom header injection. Required
+                        when type is "apiKey".
+                      properties:
+                        header:
+                          description: Header name where the API key is injected (e.g.,
+                            "x-goog-api-key", "x-api-key")
+                          minLength: 1
+                          type: string
+                        valuePrefix:
+                          description: |-
+                            ValuePrefix is prepended to the secret value before injection.
+                            Examples: "Bot " (Discord), "Basic " (pre-encoded basic auth).
+                          type: string
+                      required:
+                      - header
+                      type: object
+                    defaultHeaders:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        DefaultHeaders are injected on every proxied request for this credential,
+                        in addition to the credential itself (e.g., "anthropic-version: 2023-06-01").
+                      type: object
+                    domain:
+                      description: |-
+                        Domain the proxy matches against the request Host header.
+                        Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot).
+                      minLength: 1
+                      type: string
+                    gcp:
+                      description: GCP configures GCP service account credential injection.
+                        Required when type is "gcp".
+                      properties:
+                        location:
+                          description: Location is the GCP region (e.g., us-central1)
+                          minLength: 1
+                          type: string
+                        project:
+                          description: Project is the GCP project ID
+                          minLength: 1
+                          type: string
+                      required:
+                      - location
+                      - project
+                      type: object
+                    name:
+                      description: Name uniquely identifies this credential entry.
+                      minLength: 1
+                      type: string
+                    oauth2:
+                      description: OAuth2 configures client credentials token exchange.
+                        Required when type is "oauth2".
+                      properties:
+                        clientID:
+                          description: ClientID for the OAuth2 client credentials
+                            flow
+                          minLength: 1
+                          type: string
+                        scopes:
+                          description: Scopes requested during token exchange
+                          items:
+                            type: string
+                          type: array
+                        tokenURL:
+                          description: TokenURL is the OAuth2 token endpoint
+                          minLength: 1
+                          type: string
+                      required:
+                      - clientID
+                      - tokenURL
+                      type: object
+                    pathToken:
+                      description: PathToken configures URL path token injection.
+                        Required when type is "pathToken".
+                      properties:
+                        prefix:
+                          description: Prefix is prepended before the token in the
+                            URL path (e.g., "/bot" for Telegram)
+                          minLength: 1
+                          type: string
+                      required:
+                      - prefix
+                      type: object
+                    secretRef:
+                      description: |-
+                        SecretRef references the Kubernetes Secret holding the credential value.
+                        Not required for type "none" (proxy allowlist, no auth).
+                      properties:
+                        key:
+                          description: Key is the key in the Secret's data map
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name is the name of the Secret
+                          minLength: 1
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    type:
+                      description: Type selects the credential injection mechanism
+                      enum:
+                      - apiKey
+                      - bearer
+                      - gcp
+                      - pathToken
+                      - oauth2
+                      - none
+                      type: string
+                  required:
+                  - domain
+                  - name
+                  - type
+                  type: object
+                  x-kubernetes-validations:
+                  - message: apiKey config is required when type is apiKey
+                    rule: self.type != 'apiKey' || has(self.apiKey)
+                  - message: gcp config is required when type is gcp
+                    rule: self.type != 'gcp' || has(self.gcp)
+                  - message: pathToken config is required when type is pathToken
+                    rule: self.type != 'pathToken' || has(self.pathToken)
+                  - message: oauth2 config is required when type is oauth2
+                    rule: self.type != 'oauth2' || has(self.oauth2)
+                  - message: secretRef is required for this credential type
+                    rule: self.type == 'none' || has(self.secretRef)
+                type: array
             type: object
           status:
             description: ClawStatus defines the observed state of Claw
