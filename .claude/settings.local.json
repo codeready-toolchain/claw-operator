@@ -61,7 +61,11 @@
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/claw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -run TestNodePairingRequestController)",
       "Bash(KUBEBUILDER_ASSETS=\"/Users/xcoulon/code/go/src/github.com/codeready-toolchain/claw-operator/bin/k8s/1.34.1-darwin-arm64\" go test ./internal/controller -run TestNodePairingRequestApprovalController)",
       "Bash(git show:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(sed -i '' 's/OpenClaw/Claw/g' status-conditions/spec.md)",
+      "Bash(sed -i '' 's/openclaw/claw/g' status-conditions/spec.md)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)"
     ]
   }
 }
