@@ -1,4 +1,4 @@
-# openclaw-operator
+# claw-operator
 
 An operator for managing OpenClaw instances in Red Hat's OpenShift.
 
@@ -195,7 +195,7 @@ make dev-setup REGISTRY=quay.io/myuser TAG=my-branch
 **Build and push your image to the location specified by `IMG`:**
 
 ```sh
-make docker-build docker-push IMG=<some-registry>/openclaw-operator:tag
+make docker-build docker-push IMG=<some-registry>/claw-operator:tag
 ```
 
 **NOTE:** This image ought to be published in the personal registry you specified.
@@ -211,7 +211,7 @@ make install
 **Deploy the Manager to the cluster with the image specified by `IMG`:**
 
 ```sh
-make deploy IMG=<some-registry>/openclaw-operator:tag PROXY_IMG=<some-registry>/openclaw-proxy:tag
+make deploy IMG=<some-registry>/claw-operator:tag PROXY_IMG=<some-registry>/openclaw-proxy:tag
 ```
 
 > **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
@@ -235,7 +235,7 @@ After deploying the operator, create an OpenClaw instance:
 ```sh
 oc create secret generic gemini-api-key \
   --from-literal=api-key=YOUR_GEMINI_API_KEY \
-  -n openclaw-operator
+  -n claw-operator
 ```
 
 Get your API key from [Google AI Studio](https://aistudio.google.com/apikey).
@@ -243,7 +243,7 @@ Get your API key from [Google AI Studio](https://aistudio.google.com/apikey).
 **2. Create the Claw CR** (must be named `instance`):
 
 ```sh
-oc apply -f config/samples/openclaw_v1alpha1_claw.yaml -n openclaw-operator
+oc apply -f config/samples/openclaw_v1alpha1_claw.yaml -n claw-operator
 ```
 
 Or create it directly:
@@ -253,7 +253,7 @@ apiVersion: openclaw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance
-  namespace: openclaw-operator
+  namespace: claw-operator
 spec:
   credentials:
     - name: gemini
@@ -269,7 +269,7 @@ spec:
 **3. Watch the instance become ready:**
 
 ```sh
-oc get claw instance -n openclaw-operator -w
+oc get claw instance -n claw-operator -w
 ```
 
 The `Ready` column will transition from `Provisioning` to `Ready` once both the OpenClaw and proxy deployments are available.
@@ -279,13 +279,13 @@ The `Ready` column will transition from `Provisioning` to `Ready` once both the 
 On **OpenShift**, a Route is created automatically. Get the URL from the Claw status:
 
 ```sh
-oc get claw instance -n openclaw-operator -o jsonpath='{.status.url}'
+oc get claw instance -n claw-operator -o jsonpath='{.status.url}'
 ```
 
 On **vanilla Kubernetes** (no Route CRD), use port-forwarding:
 
 ```sh
-oc port-forward svc/openclaw 18789:18789 -n openclaw-operator
+oc port-forward svc/openclaw 18789:18789 -n claw-operator
 ```
 
 Then open http://localhost:18789 in your browser.
@@ -295,7 +295,7 @@ Then open http://localhost:18789 in your browser.
 The operator generates a gateway authentication token stored in a Secret. Retrieve it with:
 
 ```sh
-oc get secret openclaw-gateway-token -n openclaw-operator -o jsonpath='{.data.token}' | base64 -d
+oc get secret openclaw-gateway-token -n claw-operator -o jsonpath='{.data.token}' | base64 -d
 ```
 
 ### To Uninstall
@@ -326,7 +326,7 @@ Following the options to release and provide this solution to the users.
 1. Build the installer for the image built and published in the registry:
 
 ```sh
-make build-installer IMG=<some-registry>/openclaw-operator:tag
+make build-installer IMG=<some-registry>/claw-operator:tag
 ```
 
 **NOTE:** The makefile target mentioned above generates an 'install.yaml'
@@ -340,7 +340,7 @@ Users can just run 'oc apply -f <URL for YAML BUNDLE>' to install
 the project, i.e.:
 
 ```sh
-oc apply -f https://raw.githubusercontent.com/<org>/openclaw-operator/<tag or branch>/dist/install.yaml
+oc apply -f https://raw.githubusercontent.com/<org>/claw-operator/<tag or branch>/dist/install.yaml
 ```
 
 ### By providing a Helm Chart

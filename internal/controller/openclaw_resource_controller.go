@@ -57,8 +57,8 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/yaml"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
-	"github.com/codeready-toolchain/openclaw-operator/internal/assets"
+	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	"github.com/codeready-toolchain/claw-operator/internal/assets"
 )
 
 const (
@@ -308,7 +308,7 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 
 	for _, obj := range objects {
 		if err := r.Patch(ctx, obj, client.Apply, &client.PatchOptions{
-			FieldManager: "openclaw-operator",
+			FieldManager: "claw-operator",
 			Force:        &[]bool{true}[0],
 		}); err != nil {
 			// Skip resources whose CRDs are not registered (e.g., Route on non-OpenShift clusters)
@@ -457,7 +457,7 @@ func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, inst
 	// Apply the Secret using server-side apply
 	logger.Info("Applying gateway secret", "name", secret.Name)
 	if err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
-		FieldManager: "openclaw-operator",
+		FieldManager: "claw-operator",
 		Force:        &[]bool{true}[0],
 	}); err != nil {
 		return fmt.Errorf("failed to apply gateway secret: %w", err)
@@ -555,7 +555,7 @@ func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *ope
 	}
 
 	if err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
-		FieldManager: "openclaw-operator",
+		FieldManager: "claw-operator",
 		Force:        &[]bool{true}[0],
 	}); err != nil {
 		return fmt.Errorf("failed to apply proxy CA secret: %w", err)
@@ -723,7 +723,7 @@ func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instan
 	}
 
 	if err := r.Patch(ctx, cm, client.Apply, &client.PatchOptions{
-		FieldManager: "openclaw-operator",
+		FieldManager: "claw-operator",
 		Force:        &[]bool{true}[0],
 	}); err != nil {
 		return fmt.Errorf("failed to apply proxy config: %w", err)

@@ -31,16 +31,16 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	"github.com/codeready-toolchain/openclaw-operator/test/utils"
+	"github.com/codeready-toolchain/claw-operator/test/utils"
 )
 
 const (
-	operatorNamespace = "openclaw-operator"
+	operatorNamespace = "claw-operator"
 	userNamespace     = "default"
 
-	serviceAccountName     = "openclaw-operator-controller-manager"
-	metricsServiceName     = "openclaw-operator-controller-manager-metrics-service"
-	metricsRoleBindingName = "openclaw-operator-metrics-binding"
+	serviceAccountName     = "claw-operator-controller-manager"
+	metricsServiceName     = "claw-operator-controller-manager-metrics-service"
+	metricsRoleBindingName = "claw-operator-metrics-binding"
 
 	defaultTimeout  = 2 * time.Minute
 	pollInterval    = 1 * time.Second
@@ -230,7 +230,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
 			cmd = exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=openclaw-operator-metrics-reader",
+				"--clusterrole=claw-operator-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", operatorNamespace, serviceAccountName),
 			)
 			_, err := utils.Run(t, cmd)

@@ -39,7 +39,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
+	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 var (

@@ -8,6 +8,6 @@ layout:
 plugins:
   manifests.sdk.operatorframework.io/v2: {}
   scorecard.sdk.operatorframework.io/v2: {}
-projectName: openclaw-operator
-repo: github.com/codeready-toolchain/openclaw-operator
+projectName: claw-operator
+repo: github.com/codeready-toolchain/claw-operator
 version: "3"

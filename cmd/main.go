@@ -37,8 +37,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
-	"github.com/codeready-toolchain/openclaw-operator/internal/controller"
+	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	"github.com/codeready-toolchain/claw-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

@@ -1,6 +1,6 @@
 ## Context
 
-The openclaw-operator currently uses three separate controllers:
+The claw-operator currently uses three separate controllers:
 - `OpenClawConfigMapReconciler` - creates ConfigMap from embedded YAML
 - `OpenClawPersistentVolumeClaimReconciler` - creates PVC from embedded YAML
 - `OpenClawDeploymentReconciler` - creates Deployment with explicit ConfigMap dependency check

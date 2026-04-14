@@ -68,7 +68,7 @@ The controller already has a `getRouteURL()` helper (line 485-518 in `openclaw_r
 - Refactor `applyKustomizedResources()` to accept a filter predicate for which resources to apply
 - Phase 2 calls it with `kind == "Route"` filter
 - Phase 3 calls it with `kind != "Route"` filter (after ConfigMap injection)
-- Both phases use existing server-side apply logic with field manager `"openclaw-operator"`
+- Both phases use existing server-side apply logic with field manager `"claw-operator"`
 
 **Alternatives considered:**
 - _Separate Route application outside Kustomize_: Rejected because Route manifest still needs labels from kustomization.yaml and should remain in the same manifest directory.
