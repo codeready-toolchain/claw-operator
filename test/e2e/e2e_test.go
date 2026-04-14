@@ -453,16 +453,20 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("waiting for claw-proxy deployment")
+			var deploymentFound bool
 			deadline := time.Now().Add(2 * time.Minute)
 			for time.Now().Before(deadline) {
 				cmd := exec.Command("kubectl", "get", "deployment", "claw-proxy",
 					"-n", userNamespace)
 				_, err := utils.Run(t, cmd)
 				if err == nil {
+					deploymentFound = true
 					break
 				}
 				time.Sleep(pollInterval)
 			}
+			require.True(t, deploymentFound,
+				"timed out waiting for claw-proxy deployment in namespace %s", userNamespace)
 
 			t.Log("verifying CRED_GEMINI references the correct Secret name")
 			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
