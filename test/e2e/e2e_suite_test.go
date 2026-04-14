@@ -38,6 +38,9 @@ var (
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
 	projectImage = "example.com/openclaw-operator:v0.0.1"
+
+	// proxyImage is the credential proxy sidecar image, built and loaded alongside the operator.
+	proxyImage = "openclaw-proxy:latest"
 )
 
 // TestMain runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -75,6 +78,25 @@ func TestMain(m *testing.M) {
 	if err := runStreaming("kind", "load", "image-archive", "tmp/projectImage.tar",
 		"--name", kindCluster); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load image into Kind: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Build and load the credential proxy image
+	fmt.Println("Building proxy image...")
+	if err := runStreaming("make", "docker-build-proxy", fmt.Sprintf("PROXY_IMG=%s", proxyImage)); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to build the proxy image: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Loading proxy image into Kind cluster...")
+	if err := runStreaming("make", "docker-save",
+		fmt.Sprintf("IMG=%s", proxyImage),
+		"OUTPUT_FILE=tmp/proxyImage.tar"); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to save proxy image: %v\n", err)
+		os.Exit(1)
+	}
+	if err := runStreaming("kind", "load", "image-archive", "tmp/proxyImage.tar",
+		"--name", kindCluster); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load proxy image into Kind: %v\n", err)
 		os.Exit(1)
 	}
 

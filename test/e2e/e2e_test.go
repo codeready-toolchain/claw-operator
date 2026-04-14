@@ -334,11 +334,11 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"CRED_GEMINI should reference gemini-api-key Secret")
 
 			t.Log("verifying proxy-config ConfigMap was generated")
-			cmd = exec.Command("kubectl", "get", "configmap", "proxy-config",
+			cmd = exec.Command("kubectl", "get", "configmap", "openclaw-proxy-config",
 				"-o", "jsonpath={.data.proxy-config\\.json}",
 				"-n", userNamespace)
 			configOutput, err := utils.Run(t, cmd)
-			require.NoError(t, err, "proxy-config ConfigMap should exist")
+			require.NoError(t, err, "openclaw-proxy-config ConfigMap should exist")
 			assert.Contains(t, configOutput, ".googleapis.com",
 				"proxy config should contain the credential domain")
 
