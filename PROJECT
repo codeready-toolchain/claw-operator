@@ -2,7 +2,7 @@
 # This file is used to track the info used to scaffold your project
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
-domain: openclaw.devsandbox.openshift.com
+domain: claw.sandbox.redhat.com
 layout:
 - go.kubebuilder.io/v4
 plugins:
