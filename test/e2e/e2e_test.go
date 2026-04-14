@@ -45,6 +45,8 @@ const (
 	defaultTimeout  = 2 * time.Minute
 	pollInterval    = 1 * time.Second
 	extendedTimeout = 5 * time.Minute
+
+	podPhaseRunning = "Running"
 )
 
 // clawYAMLWithGemini returns a Claw CR YAML using spec.credentials[] with apiKey type.
@@ -210,7 +212,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 								"-n", operatorNamespace,
 							)
 							output, err := utils.Run(t, cmd)
-							if err == nil && output == "Running" {
+							if err == nil && output == podPhaseRunning {
 								return
 							}
 						}
@@ -494,7 +496,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 					"-o", "jsonpath={.items[*].status.phase}",
 					"-n", userNamespace)
 				output, err := utils.Run(t, cmd)
-				if err == nil && strings.Contains(output, "Running") {
+				if err == nil && strings.Contains(output, podPhaseRunning) {
 					break
 				}
 				time.Sleep(pollInterval)
@@ -552,7 +554,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 						"-o", "jsonpath={.items[0].status.phase}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
-					return err == nil && output == "Running", nil
+					return err == nil && output == podPhaseRunning, nil
 				})
 			require.NoError(t, err, "proxy pod did not reach Running phase")
 
@@ -622,7 +624,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 						"-o", "jsonpath={.items[0].status.phase}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
-					return err == nil && output == "Running", nil
+					return err == nil && output == podPhaseRunning, nil
 				})
 			require.NoError(t, err, "new pod did not reach Running phase")
 		})
