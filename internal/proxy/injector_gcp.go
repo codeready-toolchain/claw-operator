@@ -120,7 +120,7 @@ func hostnameOnly(hostPort string) string {
 // TokenVendingResponse returns a dummy access token for Google SDK client satisfaction.
 func TokenVendingResponse() []byte {
 	resp := map[string]any{
-		"access_token": "openclaw-proxy-vended-token",
+		"access_token": "claw-proxy-vended-token",
 		"token_type":   "Bearer",
 		"expires_in":   3600,
 	}

@@ -66,19 +66,19 @@ const (
 	ClawInstanceName = "instance"
 
 	// Core resources
-	ClawConfigMapName            = "openclaw-config"
-	ClawPVCName                  = "openclaw-home-pvc"
-	ClawNetworkPolicyName        = "openclaw-egress"
-	ClawIngressNetworkPolicyName = "openclaw-ingress"
-	ClawRouteName                = "openclaw"
-	ClawServiceName              = "openclaw"
-	ClawDeploymentName           = "openclaw"
-	ClawGatewaySecretName        = "openclaw-gateway-token"
+	ClawConfigMapName            = "claw-config"
+	ClawPVCName                  = "claw-home-pvc"
+	ClawNetworkPolicyName        = "claw-egress"
+	ClawIngressNetworkPolicyName = "claw-ingress"
+	ClawRouteName                = "claw"
+	ClawServiceName              = "claw"
+	ClawDeploymentName           = "claw"
+	ClawGatewaySecretName        = "claw-gateway-token"
 	GatewayTokenKeyName          = "token"
-	ClawProxyServiceName         = "openclaw-proxy"
-	ClawProxyConfigMapName       = "openclaw-proxy-config"
-	ClawProxyDeploymentName      = "openclaw-proxy"
-	ClawProxyCACertSecretName    = "openclaw-proxy-ca"
+	ClawProxyServiceName         = "claw-proxy"
+	ClawProxyConfigMapName       = "claw-proxy-config"
+	ClawProxyDeploymentName      = "claw-proxy"
+	ClawProxyCACertSecretName    = "claw-proxy-ca"
 	ClawProxyContainerName       = "proxy"
 	// Kubernetes resource kinds
 	RouteKind      = "Route"
@@ -404,7 +404,7 @@ func generateGatewayToken() (string, error) {
 	return hex.EncodeToString(randomBytes), nil
 }
 
-// applyGatewaySecret creates or updates the openclaw-gateway-token Secret with the gateway token
+// applyGatewaySecret creates or updates the claw-gateway-token Secret with the gateway token
 func (r *ClawResourceReconciler) applyGatewaySecret(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	logger := log.FromContext(ctx)
 
@@ -771,11 +771,11 @@ func configureProxyImage(objects []*unstructured.Unstructured, image string) err
 		}
 		return fmt.Errorf("container %q not found in proxy deployment", ClawProxyContainerName)
 	}
-	return fmt.Errorf("openclaw-proxy deployment not found in manifests")
+	return fmt.Errorf("claw-proxy deployment not found in manifests")
 }
 
 // configureProxyForCredentials adds credential env vars and volume mounts to the
-// openclaw-proxy Deployment based on spec.credentials[]. This modifies the parsed
+// claw-proxy Deployment based on spec.credentials[]. This modifies the parsed
 // kustomize objects in-place before they are applied via SSA.
 func configureProxyForCredentials(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
 	for _, obj := range objects {
@@ -871,7 +871,7 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 
 		return nil
 	}
-	return fmt.Errorf("openclaw-proxy deployment not found in manifests")
+	return fmt.Errorf("claw-proxy deployment not found in manifests")
 }
 
 // stampProxyConfigHash adds a hash annotation to the proxy pod template to trigger
@@ -893,7 +893,7 @@ func stampProxyConfigHash(objects []*unstructured.Unstructured, hash string) err
 		}
 		return nil
 	}
-	return fmt.Errorf("openclaw-proxy deployment not found for config hash stamping")
+	return fmt.Errorf("claw-proxy deployment not found for config hash stamping")
 }
 
 // stampSecretVersionAnnotation fetches each credential's referenced Secret and stamps
@@ -941,7 +941,7 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 		}
 		return nil
 	}
-	return fmt.Errorf("openclaw-proxy deployment not found for secret version stamping")
+	return fmt.Errorf("claw-proxy deployment not found for secret version stamping")
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem
@@ -1002,9 +1002,9 @@ func (r *ClawResourceReconciler) getDeploymentAvailableStatus(ctx context.Contex
 	return false, nil
 }
 
-// checkDeploymentsReady checks if both openclaw and openclaw-proxy Deployments are ready
+// checkDeploymentsReady checks if both claw and claw-proxy Deployments are ready
 func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, namespace string) (bool, []string, error) {
-	openclawReady, err := r.getDeploymentAvailableStatus(ctx, namespace, ClawDeploymentName)
+	clawReady, err := r.getDeploymentAvailableStatus(ctx, namespace, ClawDeploymentName)
 	if err != nil {
 		return false, nil, err
 	}
@@ -1015,7 +1015,7 @@ func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, name
 	}
 
 	var pending []string
-	if !openclawReady {
+	if !clawReady {
 		pending = append(pending, ClawDeploymentName)
 	}
 	if !proxyReady {
@@ -1039,11 +1039,11 @@ func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *claw
 
 	if err := r.Get(ctx, client.ObjectKey{
 		Namespace: instance.Namespace,
-		Name:      "openclaw",
+		Name:      ClawRouteName,
 	}, route); err != nil {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 			// Route not found (or CRD not registered on non-OpenShift clusters)
-			logger.Info("Route not found or CRD not registered", "name", "openclaw")
+			logger.Info("Route not found or CRD not registered", "name", ClawRouteName)
 			return "", nil
 		}
 		return "", fmt.Errorf("failed to get Route: %w", err)
@@ -1116,7 +1116,7 @@ func setReadyCondition(instance *clawv1alpha1.Claw, ready bool, pendingDeploymen
 	})
 }
 
-// getGatewayToken fetches the gateway token from the openclaw-gateway-token Secret and Base64-decodes it.
+// getGatewayToken fetches the gateway token from the claw-gateway-token Secret and Base64-decodes it.
 // Returns the token string, or empty string if the Secret cannot be read.
 func (r *ClawResourceReconciler) getGatewayToken(ctx context.Context, namespace string) string {
 	logger := log.FromContext(ctx)
@@ -1219,7 +1219,7 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 		return nil
 	}
 
-	// Skip operator-managed secrets (openclaw-gateway-token for gateway token)
+	// Skip operator-managed secrets (claw-gateway-token for gateway token)
 	if secret.Name == ClawGatewaySecretName {
 		return nil
 	}

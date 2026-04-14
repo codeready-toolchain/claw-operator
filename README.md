@@ -62,7 +62,7 @@ The controller automatically populates status conditions to track the deployment
 - `conditions` (array): Standard Kubernetes conditions following the [metav1.Condition](https://kubernetes.io/docs/reference/kubernetes-api/common-definitions/condition/) format. Currently includes:
   - **Ready**: Indicates whether the Claw instance is ready for use
     - `status: "False"`, `reason: Provisioning` — Deployments are being created or are not yet ready
-    - `status: "True"`, `reason: Ready` — Both `openclaw` and `openclaw-proxy` Deployments are available
+    - `status: "True"`, `reason: Ready` — Both `claw` and `claw-proxy` Deployments are available
   - **CredentialsResolved**: Indicates whether all credential Secrets have been validated
     - `status: "False"`, `reason: ValidationFailed` — One or more credential Secrets are missing or invalid
     - `status: "True"`, `reason: Resolved` — All credential Secrets are valid
@@ -99,10 +99,10 @@ The `oc get claw` output includes:
 
 The operator manages two categories of Secrets:
 
-#### 1. Gateway Authentication Token (`openclaw-gateway-token`)
+#### 1. Gateway Authentication Token (`claw-gateway-token`)
 
 The controller automatically generates and manages a secure authentication token for the OpenClaw gateway:
-- **Secret name:** `openclaw-gateway-token`
+- **Secret name:** `claw-gateway-token`
 - **Data entry:** `token` — A cryptographically secure 64-character hex string (256-bit entropy)
 - **Generation:** Automatically created on first reconciliation using Go's `crypto/rand` package
 - **Persistence:** Token is preserved across reconciliations (never regenerated unless the Secret is deleted)
@@ -110,7 +110,7 @@ The controller automatically generates and manages a secure authentication token
 
 **Example retrieval:**
 ```sh
-oc get secret openclaw-gateway-token -o jsonpath='{.data.token}' | base64 -d
+oc get secret claw-gateway-token -o jsonpath='{.data.token}' | base64 -d
 ```
 
 #### 2. Credential Secrets (User-Managed)
@@ -118,7 +118,7 @@ oc get secret openclaw-gateway-token -o jsonpath='{.data.token}' | base64 -d
 Each entry in `spec.credentials` references a user-managed Secret. The controller:
 1. Validates that each referenced Secret exists in the same namespace
 2. Verifies the Secret contains the specified key
-3. Configures the `openclaw-proxy` deployment to reference Secrets directly (via env vars or volume mounts depending on credential type)
+3. Configures the `claw-proxy` deployment to reference Secrets directly (via env vars or volume mounts depending on credential type)
 4. Generates a proxy config JSON with credential routing rules and applies it as a ConfigMap
 
 **How credentials are injected into the proxy:**
@@ -211,7 +211,7 @@ make install
 **Deploy the Manager to the cluster with the image specified by `IMG`:**
 
 ```sh
-make deploy IMG=<some-registry>/claw-operator:tag PROXY_IMG=<some-registry>/openclaw-proxy:tag
+make deploy IMG=<some-registry>/claw-operator:tag PROXY_IMG=<some-registry>/claw-proxy:tag
 ```
 
 > **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
@@ -285,7 +285,7 @@ oc get claw instance -n claw-operator -o jsonpath='{.status.url}'
 On **vanilla Kubernetes** (no Route CRD), use port-forwarding:
 
 ```sh
-oc port-forward svc/openclaw 18789:18789 -n claw-operator
+oc port-forward svc/claw 18789:18789 -n claw-operator
 ```
 
 Then open http://localhost:18789 in your browser.
@@ -295,7 +295,7 @@ Then open http://localhost:18789 in your browser.
 The operator generates a gateway authentication token stored in a Secret. Retrieve it with:
 
 ```sh
-oc get secret openclaw-gateway-token -n claw-operator -o jsonpath='{.data.token}' | base64 -d
+oc get secret claw-gateway-token -n claw-operator -o jsonpath='{.data.token}' | base64 -d
 ```
 
 ### To Uninstall

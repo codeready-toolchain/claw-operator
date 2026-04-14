@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: openclaw-proxy
+  name: claw-proxy
   labels:
-    app: openclaw-proxy
+    app: claw-proxy
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: openclaw-proxy
+      app: claw-proxy
   template:
     metadata:
       labels:
-        app: openclaw-proxy
+        app: claw-proxy
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -20,7 +20,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: proxy
-          image: openclaw-proxy:latest
+          image: claw-proxy:latest
           imagePullPolicy: IfNotPresent
           args:
             - --config=/etc/proxy/proxy-config.json
@@ -68,7 +68,7 @@ spec:
       volumes:
         - name: proxy-config
           configMap:
-            name: openclaw-proxy-config
+            name: claw-proxy-config
         - name: proxy-ca
           secret:
-            secretName: openclaw-proxy-ca
+            secretName: claw-proxy-ca

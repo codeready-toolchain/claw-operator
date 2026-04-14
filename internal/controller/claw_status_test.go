@@ -115,7 +115,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			}, "Ready condition should be False with Provisioning reason")
 		})
 
-		t.Run("should keep Ready condition False when only openclaw Deployment is ready", func(t *testing.T) {
+		t.Run("should keep Ready condition False when only claw Deployment is ready", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -146,7 +146,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 				return err == nil
-			}, "openclaw Deployment should be created")
+			}, "claw Deployment should be created")
 
 			deployment.Status.Conditions = []appsv1.DeploymentCondition{
 				{
@@ -172,7 +172,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			assert.Equal(t, clawv1alpha1.ConditionReasonProvisioning, condition.Reason, "Ready condition reason")
 		})
 
-		t.Run("should keep Ready condition False when only openclaw-proxy Deployment is ready", func(t *testing.T) {
+		t.Run("should keep Ready condition False when only claw-proxy Deployment is ready", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -203,7 +203,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 				return err == nil
-			}, "openclaw-proxy Deployment should be created")
+			}, "claw-proxy Deployment should be created")
 
 			proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
 				{
@@ -260,7 +260,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 				return err == nil
-			}, "openclaw Deployment should be created")
+			}, "claw Deployment should be created")
 
 			deployment.Status.Conditions = []appsv1.DeploymentCondition{
 				{
@@ -274,7 +274,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 				return err == nil
-			}, "openclaw-proxy Deployment should be created")
+			}, "claw-proxy Deployment should be created")
 
 			proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
 				{
@@ -346,7 +346,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 				return err == nil
-			}, "openclaw Deployment should be created")
+			}, "claw Deployment should be created")
 
 			deployment.Status.Conditions = []appsv1.DeploymentCondition{
 				{
@@ -360,7 +360,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 				return err == nil
-			}, "openclaw-proxy Deployment should be created")
+			}, "claw-proxy Deployment should be created")
 
 			proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
 				{
@@ -566,7 +566,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
 
-			t.Run("should keep status.url empty when only openclaw deployment is ready", func(t *testing.T) {
+			t.Run("should keep status.url empty when only claw deployment is ready", func(t *testing.T) {
 				t.Cleanup(func() {
 					deleteAndWaitAllResources(t, namespace)
 				})
@@ -597,7 +597,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 					return err == nil
-				}, "openclaw Deployment should be created")
+				}, "claw Deployment should be created")
 
 				deployment.Status.Conditions = []appsv1.DeploymentCondition{
 					{
@@ -651,7 +651,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 					return err == nil
-				}, "openclaw-proxy Deployment should be created")
+				}, "claw-proxy Deployment should be created")
 
 				proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
 					{
@@ -705,7 +705,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 					return err == nil
-				}, "openclaw Deployment should be created")
+				}, "claw Deployment should be created")
 
 				deployment.Status.Conditions = []appsv1.DeploymentCondition{
 					{
@@ -719,7 +719,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 					return err == nil
-				}, "openclaw-proxy Deployment should be created")
+				}, "claw-proxy Deployment should be created")
 
 				proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
 					{
@@ -750,7 +750,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					}
 					err = k8sClient.Status().Update(ctx, deployment)
 					return err == nil
-				}, "openclaw Deployment should be updated to Available=False")
+				}, "claw Deployment should be updated to Available=False")
 
 				_, err = reconciler.Reconcile(ctx, ctrl.Request{
 					NamespacedName: client.ObjectKey{
@@ -796,7 +796,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 					return err == nil
-				}, "openclaw Deployment should be created")
+				}, "claw Deployment should be created")
 
 				deployment.Status.Conditions = []appsv1.DeploymentCondition{
 					{
@@ -810,7 +810,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 					return err == nil
-				}, "openclaw-proxy Deployment should be created")
+				}, "claw-proxy Deployment should be created")
 
 				proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
 					{
@@ -927,15 +927,15 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					Version: "v1",
 					Kind:    "Route",
 				})
-				route.SetName("openclaw")
+				route.SetName(ClawRouteName)
 				route.SetNamespace(namespace)
 
-				routeHost := "openclaw-default.apps.example.com"
+				routeHost := "claw-default.apps.example.com"
 
 				require.NoError(t, k8sClient.Create(ctx, route), "failed to create Route")
 
 				waitFor(t, timeout, interval, func() bool {
-					return k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw", Namespace: namespace}, route) == nil
+					return k8sClient.Get(ctx, client.ObjectKey{Name: ClawRouteName, Namespace: namespace}, route) == nil
 				}, "Route should be created")
 
 				route.Object["status"] = map[string]interface{}{
@@ -955,7 +955,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 						Version: "v1",
 						Kind:    "Route",
 					})
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: "openclaw", Namespace: namespace}, createdRoute)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawRouteName, Namespace: namespace}, createdRoute)
 					if err != nil {
 						return false
 					}
@@ -975,7 +975,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 					return err == nil
-				}, "openclaw Deployment should be created")
+				}, "claw Deployment should be created")
 
 				deployment.Status.Conditions = []appsv1.DeploymentCondition{
 					{
@@ -989,7 +989,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 					return err == nil
-				}, "openclaw-proxy Deployment should be created")
+				}, "claw-proxy Deployment should be created")
 
 				proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
 					{
@@ -1126,7 +1126,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
 				return err == nil
-			}, "openclaw deployment to be created")
+			}, "claw deployment to be created")
 
 			deployment.Status.Conditions = []appsv1.DeploymentCondition{
 				{
@@ -1134,13 +1134,13 @@ func TestOpenClawURLStatusField(t *testing.T) {
 					Status: corev1.ConditionTrue,
 				},
 			}
-			require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update openclaw deployment status")
+			require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update claw deployment status")
 
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
 				return err == nil
-			}, "openclaw-proxy deployment to be created")
+			}, "claw-proxy deployment to be created")
 
 			proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
 				{
@@ -1148,7 +1148,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 					Status: corev1.ConditionTrue,
 				},
 			}
-			require.NoError(t, k8sClient.Status().Update(ctx, proxyDeployment), "failed to update openclaw-proxy deployment status")
+			require.NoError(t, k8sClient.Status().Update(ctx, proxyDeployment), "failed to update claw-proxy deployment status")
 
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
@@ -1185,7 +1185,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		}
 	}
 
-	t.Run("should retrieve and decode gateway token from openclaw-gateway-token", func(t *testing.T) {
+	t.Run("should retrieve and decode gateway token from claw-gateway-token", func(t *testing.T) {
 		setupGatewaySecretTest(t)
 		t.Cleanup(func() {
 			deleteAndWaitAllResources(t, namespace)
@@ -1281,15 +1281,15 @@ func TestURLConstructionWithTokenFragment(t *testing.T) {
 		}{
 			{
 				name:     "should append token fragment when both route and token are provided",
-				routeURL: "https://openclaw-route.apps.example.com",
+				routeURL: "https://claw-route.apps.example.com",
 				token:    "abc123def456",
-				expected: "https://openclaw-route.apps.example.com#token=abc123def456",
+				expected: "https://claw-route.apps.example.com#token=abc123def456",
 			},
 			{
 				name:     "should return route URL without fragment when token is empty",
-				routeURL: "https://openclaw-route.apps.example.com",
+				routeURL: "https://claw-route.apps.example.com",
 				token:    "",
-				expected: "https://openclaw-route.apps.example.com",
+				expected: "https://claw-route.apps.example.com",
 			},
 			{
 				name:     "should return empty string when route URL is empty",
@@ -1305,9 +1305,9 @@ func TestURLConstructionWithTokenFragment(t *testing.T) {
 			},
 			{
 				name:     "should percent-encode special characters in token",
-				routeURL: "https://openclaw-route.apps.example.com",
+				routeURL: "https://claw-route.apps.example.com",
 				token:    "token+with=special&chars#fragment",
-				expected: "https://openclaw-route.apps.example.com#token=token%2Bwith%3Dspecial%26chars%23fragment",
+				expected: "https://claw-route.apps.example.com#token=token%2Bwith%3Dspecial%26chars%23fragment",
 			},
 		}
 		for _, tt := range tests {
@@ -1319,12 +1319,12 @@ func TestURLConstructionWithTokenFragment(t *testing.T) {
 	})
 
 	t.Run("should follow format https://<route-host>#token=<gateway-token>", func(t *testing.T) {
-		routeURL := "https://openclaw-default.apps.cluster.example.com"
+		routeURL := "https://claw-default.apps.cluster.example.com"
 		token := "64chartoken1234567890abcdef64chartoken1234567890abcdef123456"
 
 		result := buildClawURL(routeURL, token)
 
-		expected := "https://openclaw-default.apps.cluster.example.com#token=64chartoken1234567890abcdef64chartoken1234567890abcdef123456"
+		expected := "https://claw-default.apps.cluster.example.com#token=64chartoken1234567890abcdef64chartoken1234567890abcdef123456"
 		assert.Equal(t, expected, result, "URL construction result")
 		assert.True(t, strings.HasPrefix(result, "https://"), "expected result to start with https://")
 		assert.Contains(t, result, "#token=")

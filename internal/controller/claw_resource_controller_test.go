@@ -243,7 +243,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      "openclaw",
+					Name:      ClawDeploymentName,
 					Namespace: namespace,
 				}, deployment)
 				return err == nil
@@ -592,7 +592,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			}
 
 			objects := []*unstructured.Unstructured{configMap}
-			routeHost := "https://example-openclaw.apps.cluster.com"
+			routeHost := "https://example-claw.apps.cluster.com"
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,

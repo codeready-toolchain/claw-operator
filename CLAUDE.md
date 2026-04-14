@@ -25,12 +25,12 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
   - `oauth2` (OAuth2Config, optional): Required when type is `oauth2`. Fields: `clientID` (minLength=1), `tokenURL` (minLength=1), `scopes` ([]string, optional)
 
 **Status Fields:**
-- `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`openclaw-gateway-token`)
+- `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`claw-gateway-token`)
 - `url` (string, optional): HTTPS URL for accessing the Claw instance
 - `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking instance state. Condition types:
   - `Ready`: Indicates whether the Claw instance is ready for use
     - `Status=False, Reason=Provisioning`: Deployments are not yet ready
-    - `Status=True, Reason=Ready`: Both `openclaw` and `openclaw-proxy` Deployments are available
+    - `Status=True, Reason=Ready`: Both `claw` and `claw-proxy` Deployments are available
   - `CredentialsResolved`: Tracks credential validation status
     - `Status=True, Reason=Resolved`: All credentials validated successfully
     - `Status=False, Reason=ValidationFailed`: Credential validation failed
@@ -112,12 +112,12 @@ The operator uses a **single unified controller** that manages all resources usi
 
 **ClawResourceReconciler** (`internal/controller/claw_resource_controller.go`):
 - Reconciles `Claw` CRs named exactly `"instance"` (skips all others)
-- Creates gateway Secret (`openclaw-gateway-token`) with randomly-generated authentication token
+- Creates gateway Secret (`claw-gateway-token`) with randomly-generated authentication token
 - Validates user-provided credentials (array of CredentialSpec in CR's `credentials` field) and referenced Secrets
-- Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (3: egress for openclaw, egress for proxy, ingress for gateway), proxy Deployment/ConfigMap, and Route (OpenShift only)
+- Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (3: egress for claw, egress for proxy, ingress for gateway), proxy Deployment/ConfigMap, and Route (OpenShift only)
 - Uses **three-phase reconciliation** to dynamically inject Route host into ConfigMap for CORS configuration
 - Uses server-side apply for idempotent, conflict-free resource management
-- Automatically labels all resources with `app.kubernetes.io/name: openclaw`
+- Automatically labels all resources with `app.kubernetes.io/name: claw`
 - Gracefully skips resources whose CRDs aren't registered (e.g., Route on vanilla Kubernetes)
 - Updates status conditions (Ready, CredentialsResolved, ProxyConfigured) based on Deployment readiness and credential validation
 - Supports proxy image override via `ProxyImage` field (set from `PROXY_IMAGE` env var on the manager)
@@ -127,7 +127,7 @@ The operator uses a **single unified controller** that manages all resources usi
 - Simplified codebase: 1 controller managing all resources
 - Dynamic CORS configuration: Route host automatically injected into ConfigMap at deployment time
 - Field ownership: server-side apply tracks which controller owns which fields
-- Consistent labeling: queryable with `kubectl get all -l app.kubernetes.io/name=openclaw`
+- Consistent labeling: queryable with `kubectl get all -l app.kubernetes.io/name=claw`
 - Graceful fallback: localhost CORS origin on vanilla Kubernetes (no Route CRD)
 - Future-proof: adding new resources only requires updating kustomization.yaml
 
@@ -144,10 +144,10 @@ Reconcile(ctx, req) called
   ↓
 PHASE 1: Gateway Secret
 3. applyGatewaySecret(ctx, instance)
-   ├─ Check if openclaw-gateway-token Secret already exists
+   ├─ Check if claw-gateway-token Secret already exists
    ├─ If exists and has token, preserve existing token
    ├─ If not exists or missing token, generate new 64-char hex token using crypto/rand
-   ├─ Create/update openclaw-gateway-token Secret with token data entry
+   ├─ Create/update claw-gateway-token Secret with token data entry
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply Secret (Patch with Apply)
   ↓
@@ -170,20 +170,20 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ Build Kustomize in-memory from embedded manifests
    ├─ Parse YAML into unstructured objects
    ├─ configureProxyDeployment(objects, instance)
-   │  ├─ Find openclaw-proxy Deployment in parsed objects
-   │  ├─ Navigate to spec.template.spec.containers[].env[]
-   │  ├─ Configure credential-specific environment variables based on instance.Spec.Credentials
-   │  ├─ Update valueFrom.secretKeyRef to point to user's Secrets (name and key from each CredentialSpec.SecretRef)
-   │  └─ Modify in-place BEFORE applying (so pod template changes trigger automatic pod restarts on Secret ref changes)
-   ├─ stampSecretVersionAnnotation(ctx, objects, instance)
-   │  ├─ Fetch user's Secrets to get their ResourceVersions
-   │  ├─ Find openclaw-proxy Deployment in parsed objects
+ │  ├─ Find claw-proxy Deployment in parsed objects
+ │  ├─ Navigate to spec.template.spec.containers[].env[]
+ │  ├─ Configure credential-specific environment variables based on instance.Spec.Credentials
+ │  ├─ Update valueFrom.secretKeyRef to point to user's Secrets (name and key from each CredentialSpec.SecretRef)
+ │  └─ Modify in-place BEFORE applying (so pod template changes trigger automatic pod restarts on Secret ref changes)
+ ├─ stampSecretVersionAnnotation(ctx, objects, instance)
+ │  ├─ Fetch user's Secrets to get their ResourceVersions
+ │  ├─ Find claw-proxy Deployment in parsed objects
    │  ├─ Add annotations to pod template: claw.sandbox.redhat.com/<credential-name>-secret-version=<ResourceVersion>
    │  └─ This triggers pod restarts when Secret data changes (ResourceVersion updates), not just Secret reference changes
    └─ Return parsed objects
   ↓
 7. injectRouteHostIntoConfigMap(objects, routeHost)
-   ├─ Find openclaw-config ConfigMap in objects
+   ├─ Find claw-config ConfigMap in objects
    ├─ Extract data["openclaw.json"] string
    ├─ Replace "OPENCLAW_ROUTE_HOST" placeholder with routeHost (https://...)
    ├─ If routeHost is empty (vanilla Kubernetes): use "http://localhost:18789" fallback
@@ -197,8 +197,8 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    └─ Server-side apply each resource (ConfigMap, Deployments, Services, NetworkPolicies)
   ↓
 11. updateStatus(ctx, instance)
-   ├─ Fetch openclaw Deployment and check Available condition
-   ├─ Fetch openclaw-proxy Deployment and check Available condition
+   ├─ Fetch claw Deployment and check Available condition
+   ├─ Fetch claw-proxy Deployment and check Available condition
    ├─ Set Claw Ready condition based on both deployment statuses
    ├─ Set GatewayTokenSecretRef to gateway Secret name
    ├─ Populate instance.Status.URL with Route URL (if available)
@@ -211,28 +211,28 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 **Route Status Polling:**
 - If Route is applied but `.status.ingress[0].host` is not yet populated, reconciliation requeues with 5-second backoff
 - OpenShift router typically populates Route status within 5-10 seconds
-- Indefinite requeue: cluster-level Route issues should be diagnosed via `kubectl describe route openclaw`
+- Indefinite requeue: cluster-level Route issues should be diagnosed via `kubectl describe route claw`
 
 **Vanilla Kubernetes Fallback:**
 - On clusters without Route CRD (vanilla Kubernetes), Route application fails with `meta.IsNoMatchError`
 - Controller logs "Route CRD not registered, using localhost fallback for CORS"
 - ConfigMap receives `http://localhost:18789` as `allowedOrigins` value
-- Control UI accessible via port-forward: `kubectl port-forward svc/openclaw 18789:18789`
+- Control UI accessible via port-forward: `kubectl port-forward svc/claw 18789:18789`
 
 **Key methods:**
 - `Reconcile()` — main entry point, orchestrates three-phase reconciliation (gateway Secret → Route → ConfigMap injection + remaining resources)
 - `generateGatewayToken()` — generates cryptographically secure 64-char hex token using crypto/rand
-- `applyGatewaySecret()` — creates/updates openclaw-gateway-token Secret with gateway token (preserves existing token)
+- `applyGatewaySecret()` — creates/updates claw-gateway-token Secret with gateway token (preserves existing token)
 - `applyRouteOnly()` — applies only Route resource from Kustomize manifests (Phase 2)
 - `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
 - `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in ConfigMap with Route host (or localhost fallback)
 - `applyResources()` — applies list of unstructured objects using server-side apply
 - `configureProxyImage()` — overrides proxy Deployment container image if `ProxyImage` is set (from `PROXY_IMAGE` env var); no-op when empty (preserves embedded default for `make run`)
-- `configureProxyDeployment()` — modifies openclaw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
+- `configureProxyDeployment()` — modifies claw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
 - `stampSecretVersionAnnotation()` — adds Secret ResourceVersion annotation to pod template BEFORE applying (ensures pod template changes trigger restarts when Secret data changes, not just reference)
 - `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition
-- `checkDeploymentsReady()` — checks if both openclaw and openclaw-proxy Deployments are ready
+- `checkDeploymentsReady()` — checks if both claw and claw-proxy Deployments are ready
 - `setReadyCondition()` — sets Ready condition on Claw based on deployment states
 - `updateStatus()` — updates Claw status conditions, GatewayTokenSecretRef, and URL field via status subresource
 - `parseYAMLToObjects()` — converts multi-doc YAML to unstructured objects
@@ -241,11 +241,11 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 
 **Shared constants** (`internal/controller/claw_resource_controller.go`):
 - `ClawInstanceName = "instance"` — only this name is reconciled
-- `ClawConfigMapName = "openclaw-config"`
-- `ClawPVCName = "openclaw-home-pvc"`
-- `ClawDeploymentName = "openclaw"`
-- `ClawGatewaySecretName = "openclaw-gateway-token"` — Secret containing gateway authentication token
-- `ClawIngressNetworkPolicyName = "openclaw-ingress"` — ingress NetworkPolicy restricting gateway access to OpenShift router
+- `ClawConfigMapName = "claw-config"`
+- `ClawPVCName = "claw-home-pvc"`
+- `ClawDeploymentName = "claw"`
+- `ClawGatewaySecretName = "claw-gateway-token"` — Secret containing gateway authentication token
+- `ClawIngressNetworkPolicyName = "claw-ingress"` — ingress NetworkPolicy restricting gateway access to OpenShift router
 - `GatewayTokenKeyName = "token"` — data key for gateway token in gateway Secret
 
 **NodePairingRequestApprovalReconciler** (`internal/controller/nodepairingrequestapproval_controller.go`):

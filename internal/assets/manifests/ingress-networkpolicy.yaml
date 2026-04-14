@@ -1,13 +1,13 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: openclaw-ingress
+  name: claw-ingress
   labels:
-    app: openclaw
+    app: claw
 spec:
   podSelector:
     matchLabels:
-      app: openclaw
+      app: claw
   policyTypes:
     - Ingress
   ingress:

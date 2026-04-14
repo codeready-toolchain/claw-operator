@@ -401,16 +401,16 @@ func TestConfigureProxyImage(t *testing.T) {
 
 	t.Run("should override proxy image when set", func(t *testing.T) {
 		objects := buildObjects(t)
-		require.NoError(t, configureProxyImage(objects, "quay.io/myuser/openclaw-proxy:v1"))
+		require.NoError(t, configureProxyImage(objects, "quay.io/myuser/claw-proxy:v1"))
 
-		assert.Equal(t, "quay.io/myuser/openclaw-proxy:v1", getProxyImage(t, objects))
+		assert.Equal(t, "quay.io/myuser/claw-proxy:v1", getProxyImage(t, objects))
 	})
 
 	t.Run("should preserve default image when empty", func(t *testing.T) {
 		objects := buildObjects(t)
 		require.NoError(t, configureProxyImage(objects, ""))
 
-		assert.Equal(t, "openclaw-proxy:latest", getProxyImage(t, objects))
+		assert.Equal(t, "claw-proxy:latest", getProxyImage(t, objects))
 	})
 }
 

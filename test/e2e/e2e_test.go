@@ -359,7 +359,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Log("verifying CRED_GEMINI env var references the user's Secret")
 			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
 				".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.name}"
-			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+			cmd = exec.Command("kubectl", "get", "deployment", "claw-proxy",
 				"-o", jp, "-n", userNamespace)
 			output, err := utils.Run(t, cmd)
 			require.NoError(t, err)
@@ -367,16 +367,16 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"CRED_GEMINI should reference gemini-api-key Secret")
 
 			t.Log("verifying proxy-config ConfigMap was generated")
-			cmd = exec.Command("kubectl", "get", "configmap", "openclaw-proxy-config",
+			cmd = exec.Command("kubectl", "get", "configmap", "claw-proxy-config",
 				"-o", "jsonpath={.data.proxy-config\\.json}",
 				"-n", userNamespace)
 			configOutput, err := utils.Run(t, cmd)
-			require.NoError(t, err, "openclaw-proxy-config ConfigMap should exist")
+			require.NoError(t, err, "claw-proxy-config ConfigMap should exist")
 			assert.Contains(t, configOutput, ".googleapis.com",
 				"proxy config should contain the credential domain")
 
 			t.Log("verifying the proxy CA Secret was created")
-			cmd = exec.Command("kubectl", "get", "secret", "openclaw-proxy-ca",
+			cmd = exec.Command("kubectl", "get", "secret", "claw-proxy-ca",
 				"-o", "jsonpath={.data.ca\\.crt}",
 				"-n", userNamespace)
 			caOutput, err := utils.Run(t, cmd)
@@ -384,13 +384,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			assert.NotEmpty(t, caOutput, "CA cert should not be empty")
 
 			t.Log("verifying the ingress NetworkPolicy exists")
-			cmd = exec.Command("kubectl", "get", "networkpolicy", "openclaw-ingress",
+			cmd = exec.Command("kubectl", "get", "networkpolicy", "claw-ingress",
 				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Ingress NetworkPolicy should exist")
 
 			t.Log("verifying the gateway Secret was created with a token")
-			cmd = exec.Command("kubectl", "get", "secret", "openclaw-gateway-token",
+			cmd = exec.Command("kubectl", "get", "secret", "claw-gateway-token",
 				"-o", "jsonpath={.data.token}",
 				"-n", userNamespace)
 			tokenOutput, err := utils.Run(t, cmd)
@@ -403,7 +403,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"-n", userNamespace)
 			secretRefOutput, err := utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "openclaw-gateway-token", secretRefOutput)
+			assert.Equal(t, "claw-gateway-token", secretRefOutput)
 
 			t.Log("verifying CredentialsResolved condition")
 			cmd = exec.Command("kubectl", "get", "claw", "instance",
@@ -452,10 +452,10 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
-			t.Log("waiting for openclaw-proxy deployment")
+			t.Log("waiting for claw-proxy deployment")
 			deadline := time.Now().Add(2 * time.Minute)
 			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+				cmd := exec.Command("kubectl", "get", "deployment", "claw-proxy",
 					"-n", userNamespace)
 				_, err := utils.Run(t, cmd)
 				if err == nil {
@@ -467,7 +467,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Log("verifying CRED_GEMINI references the correct Secret name")
 			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
 				".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.name}"
-			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+			cmd = exec.Command("kubectl", "get", "deployment", "claw-proxy",
 				"-o", jp, "-n", userNamespace)
 			output, err := utils.Run(t, cmd)
 			require.NoError(t, err)
@@ -476,14 +476,14 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Log("verifying CRED_GEMINI references the correct Secret key")
 			jp = "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
 				".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.key}"
-			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+			cmd = exec.Command("kubectl", "get", "deployment", "claw-proxy",
 				"-o", jp, "-n", userNamespace)
 			output, err = utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Equal(t, "api-key", output)
 
 			t.Log("verifying the deployment uses the proxy container")
-			cmd = exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+			cmd = exec.Command("kubectl", "get", "deployment", "claw-proxy",
 				"-o", "jsonpath={.spec.template.spec.containers[0].name}",
 				"-n", userNamespace)
 			output, err = utils.Run(t, cmd)
@@ -493,7 +493,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Log("verifying pods are running")
 			deadline = time.Now().Add(3 * time.Minute)
 			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
+				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw-proxy",
 					"-o", "jsonpath={.items[*].status.phase}",
 					"-n", userNamespace)
 				output, err := utils.Run(t, cmd)
@@ -551,7 +551,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {
 					cmd := exec.Command("kubectl", "get", "pods",
-						"-l", "app=openclaw-proxy",
+						"-l", "app=claw-proxy",
 						"-o", "jsonpath={.items[0].status.phase}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
@@ -560,7 +560,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "proxy pod did not reach Running phase")
 
 			t.Log("capturing original pod UID")
-			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
+			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=claw-proxy",
 				"-o", "jsonpath={.items[0].metadata.uid}",
 				"-n", userNamespace)
 			originalPodUID, err := utils.Run(t, cmd)
@@ -591,7 +591,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				func(ctx context.Context) (bool, error) {
 					jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
 						".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.name}"
-					cmd := exec.Command("kubectl", "get", "deployment", "openclaw-proxy",
+					cmd := exec.Command("kubectl", "get", "deployment", "claw-proxy",
 						"-o", jp, "-n", userNamespace)
 					output, err := utils.Run(t, cmd)
 					return err == nil && output == "llm-key-2", nil
@@ -603,7 +603,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {
 					cmd := exec.Command("kubectl", "get", "pods",
-						"-l", "app=openclaw-proxy",
+						"-l", "app=claw-proxy",
 						"-o", "jsonpath={.items[0].metadata.uid}",
 						"-n", userNamespace)
 					uid, err := utils.Run(t, cmd)
@@ -621,7 +621,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {
 					cmd := exec.Command("kubectl", "get", "pods",
-						"-l", "app=openclaw-proxy",
+						"-l", "app=claw-proxy",
 						"-o", "jsonpath={.items[0].status.phase}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)

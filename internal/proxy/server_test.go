@@ -234,7 +234,7 @@ func TestLeafCertGeneration(t *testing.T) {
 
 func TestTokenVendingResponse(t *testing.T) {
 	data := TokenVendingResponse()
-	assert.Contains(t, string(data), "openclaw-proxy-vended-token")
+	assert.Contains(t, string(data), "claw-proxy-vended-token")
 	assert.Contains(t, string(data), "Bearer")
 }
 

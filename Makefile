@@ -51,7 +51,7 @@ endif
 OPERATOR_SDK_VERSION ?= v1.42.0
 # Image URL to use all building/pushing image targets
 IMG ?= claw-operator:latest
-PROXY_IMG ?= openclaw-proxy:latest
+PROXY_IMG ?= claw-proxy:latest
 PLATFORM ?= linux/amd64
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
@@ -274,7 +274,7 @@ ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-build REGISTRY=quay.io/myuser)
 endif
 	$(MAKE) docker-build IMG=$(REGISTRY)/claw-operator:$(TAG)
-	$(MAKE) docker-build-proxy PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+	$(MAKE) docker-build-proxy PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
 
 .PHONY: dev-push
 dev-push: ## Push operator and proxy images for dev.
@@ -282,7 +282,7 @@ ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-push REGISTRY=quay.io/myuser)
 endif
 	$(MAKE) docker-push IMG=$(REGISTRY)/claw-operator:$(TAG)
-	$(MAKE) docker-push-proxy PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+	$(MAKE) docker-push-proxy PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
 
 .PHONY: dev-deploy
 dev-deploy: ## Install CRDs and deploy controller for dev.
@@ -290,7 +290,7 @@ ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-deploy REGISTRY=quay.io/myuser)
 endif
 	$(MAKE) install
-	$(MAKE) deploy IMG=$(REGISTRY)/claw-operator:$(TAG) PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+	$(MAKE) deploy IMG=$(REGISTRY)/claw-operator:$(TAG) PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
 
 .PHONY: dev-setup
 dev-setup: ## Full dev setup: build, push, and deploy.
