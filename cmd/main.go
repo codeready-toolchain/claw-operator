@@ -248,7 +248,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("Starting OpenClaw Operator", "version", version, "buildTime", buildTime)
+	setupLog.Info("Starting Claw Operator", "version", version, "buildTime", buildTime)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)

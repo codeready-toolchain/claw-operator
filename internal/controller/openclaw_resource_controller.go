@@ -581,7 +581,7 @@ func generateCACertificate() (certPEM, keyPEM []byte, err error) {
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization: []string{"OpenClaw Operator"},
+			Organization: []string{"Claw Operator"},
 			CommonName:   "OpenClaw Proxy CA",
 		},
 		NotBefore:             time.Now().Add(-1 * time.Hour),

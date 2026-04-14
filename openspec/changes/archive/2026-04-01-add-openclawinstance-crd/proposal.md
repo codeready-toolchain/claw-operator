@@ -1,6 +1,6 @@
 ## Why
 
-The OpenClaw operator needs a primary custom resource to represent instances of OpenClaw deployments. This establishes the foundation for managing OpenClaw lifecycle through Kubernetes-native resources and the operator reconciliation pattern.
+The Claw Operator needs a primary custom resource to represent instances of OpenClaw deployments. This establishes the foundation for managing OpenClaw lifecycle through Kubernetes-native resources and the operator reconciliation pattern.
 
 ## What Changes
 

@@ -1,6 +1,6 @@
 ## Context
 
-The OpenClaw operator currently manages a single `Claw` CRD for OpenClaw instances. This change introduces a second CRD (`NodePairingRequestApproval`) to handle node pairing request approvals. The operator uses Kubebuilder/Operator SDK framework with controller-runtime for reconciliation patterns.
+The Claw Operator currently manages a single `Claw` CRD for OpenClaw instances. This change introduces a second CRD (`NodePairingRequestApproval`) to handle node pairing request approvals. The operator uses Kubebuilder/Operator SDK framework with controller-runtime for reconciliation patterns.
 
 Current state:
 - Single CRD: `Claw` in `api/v1alpha1/`

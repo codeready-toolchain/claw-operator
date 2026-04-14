@@ -1,10 +1,10 @@
-# claw-operator
+# Claw Operator
 
 An operator for managing OpenClaw instances in Red Hat's OpenShift.
 
 ## Description
 
-The OpenClaw Operator manages the lifecycle of OpenClaw instances through Kubernetes custom resources. It provides a declarative API for creating, configuring, and managing OpenClaw deployments within Kubernetes clusters.
+The Claw Operator manages the lifecycle of OpenClaw instances through Kubernetes custom resources. It provides a declarative API for creating, configuring, and managing OpenClaw deployments within Kubernetes clusters.
 
 ## Custom Resource Definition
 
@@ -138,7 +138,7 @@ Each entry in `spec.credentials` references a user-managed Secret. The controlle
 The operator logs its version and build time during startup for troubleshooting and deployment tracking:
 
 ```
-INFO	setup	Starting OpenClaw Operator	{"version": "fc7c72b0", "buildTime": "2026-04-07T13:17:26Z"}
+INFO	setup	Starting Claw Operator	{"version": "fc7c72b0", "buildTime": "2026-04-07T13:17:26Z"}
 ```
 
 **Version fields:**
