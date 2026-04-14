@@ -182,16 +182,16 @@ The controller SHALL update the Claw instance status conditions after successful
 - **THEN** the next reconciliation SHALL re-attempt status update
 
 ### Requirement: Controller reads Deployment status conditions
-The controller SHALL read the Available condition from both claw and claw-proxy Deployment resources to determine overall readiness.
+The controller SHALL read the Available condition from both claw and openclaw-proxy Deployment resources to determine overall readiness.
 
 #### Scenario: Get claw Deployment
 - **WHEN** updating status conditions
 - **THEN** the controller SHALL fetch the Deployment resource named 'claw' in instance.Namespace
 - **THEN** if Deployment is not found, controller SHALL treat it as not ready
 
-#### Scenario: Get claw-proxy Deployment
+#### Scenario: Get openclaw-proxy Deployment
 - **WHEN** updating status conditions
-- **THEN** the controller SHALL fetch the Deployment resource named 'claw-proxy' in instance.Namespace
+- **THEN** the controller SHALL fetch the Deployment resource named 'openclaw-proxy' in instance.Namespace
 - **THEN** if Deployment is not found, controller SHALL treat it as not ready
 
 #### Scenario: Parse Available condition from Deployment
@@ -205,11 +205,11 @@ The controller SHALL set the Claw Available condition to True only when both dep
 
 #### Scenario: Both deployments ready sets Available True
 - **WHEN** claw Deployment has Available=True
-- **WHEN** claw-proxy Deployment has Available=True
+- **WHEN** openclaw-proxy Deployment has Available=True
 - **THEN** the controller SHALL set Claw Available condition with status=True, reason=Ready
 
 #### Scenario: Any deployment not ready sets Available False
-- **WHEN** either claw or claw-proxy Deployment does not have Available=True
+- **WHEN** either claw or openclaw-proxy Deployment does not have Available=True
 - **THEN** the controller SHALL set Claw Available condition with status=False, reason=Provisioning
 - **THEN** the message SHALL indicate which deployments are pending
 
