@@ -135,14 +135,15 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Logf("Failed to get Kubernetes events: %s", err)
 		}
 
-		t.Log("Fetching curl-metrics logs")
-		cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", operatorNamespace)
-		metricsOutput, err := utils.Run(t, cmd)
-		if err == nil {
-			t.Logf("Metrics logs:\n %s", metricsOutput)
-		} else {
-			t.Logf("Failed to get curl-metrics logs: %s", err)
-		}
+		// skipping curl-metrics logs for now as it is verbose and not so useful for debugging
+		// t.Log("Fetching curl-metrics logs")
+		// cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", operatorNamespace)
+		// metricsOutput, err := utils.Run(t, cmd)
+		// if err == nil {
+		// 	t.Logf("Metrics logs:\n %s", metricsOutput)
+		// } else {
+		// 	t.Logf("Failed to get curl-metrics logs: %s", err)
+		// }
 
 		t.Log("Fetching controller manager pod description")
 		cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", operatorNamespace)
@@ -339,7 +340,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 			t.Log("applying the Claw CR")
 			cmd = exec.Command("kubectl", "apply", "-f",
-				"config/samples/openclaw_v1alpha1_claw.yaml", "-n", userNamespace)
+				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
@@ -447,7 +448,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 			t.Log("applying the Claw CR")
 			cmd = exec.Command("kubectl", "apply", "-f",
-				"config/samples/openclaw_v1alpha1_claw.yaml", "-n", userNamespace)
+				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
