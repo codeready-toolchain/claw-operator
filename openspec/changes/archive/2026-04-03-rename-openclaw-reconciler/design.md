@@ -1,6 +1,6 @@
 ## Context
 
-The OpenClaw operator uses a unified Kustomize-based controller that manages multiple Kubernetes resources (ConfigMap, PVC, Deployment) atomically using server-side apply. The current naming `OpenClawReconciler` doesn't clearly indicate that this is a resource-oriented reconciler managing a set of resources.
+The Claw Operator uses a unified Kustomize-based controller that manages multiple Kubernetes resources (ConfigMap, PVC, Deployment) atomically using server-side apply. The current naming `OpenClawReconciler` doesn't clearly indicate that this is a resource-oriented reconciler managing a set of resources.
 
 The codebase follows kubebuilder/operator-sdk conventions where reconcilers are typically named after what they reconcile. Since this reconciler manages multiple Kubernetes resources as a coordinated set, `OpenClawResourceReconciler` better reflects its purpose.
 

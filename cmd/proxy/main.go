@@ -27,7 +27,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/codeready-toolchain/openclaw-operator/internal/proxy"
+	"github.com/codeready-toolchain/claw-operator/internal/proxy"
 )
 
 func main() {

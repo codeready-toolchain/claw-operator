@@ -48,7 +48,7 @@ Other hats and use cases are open for exploration.
 │                                ▼               │
 │                         Kube API Server        │
 │                                                │
-│  OpenClaw Operator (manages all instances)     │
+│  Claw Operator (manages all instances)     │
 └────────────────────────────────────────────────┘
 ```
 

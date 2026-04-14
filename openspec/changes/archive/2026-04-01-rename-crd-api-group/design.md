@@ -37,7 +37,7 @@ This is a fresh project in early development on a feature branch with no product
 
 ### Decision 2: Update Go module imports but keep package structure
 
-**Rationale:** The Go package path `github.com/codeready-toolchain/openclaw-operator/api/v1alpha1` doesn't need to change—only the Kubernetes API group constant changes. This minimizes the scope of changes while achieving the goal.
+**Rationale:** The Go package path `github.com/codeready-toolchain/claw-operator/api/v1alpha1` doesn't need to change—only the Kubernetes API group constant changes. This minimizes the scope of changes while achieving the goal.
 
 **Alternatives considered:**
 - Restructure package paths to match new domain: Rejected as unnecessary—Go packages and K8s API groups are independent concepts

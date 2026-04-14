@@ -1,6 +1,6 @@
 ## Context
 
-The openclaw-operator currently has dedicated controllers for ConfigMap and Deployment resources, each watching OpenClaw custom resources and creating their respective Kubernetes resources. The PVC manifest (`internal/manifests/pvc.yaml`) already exists but there is no controller to manage its lifecycle. This design follows the established pattern used by `OpenClawConfigMapReconciler` and `OpenClawDeploymentReconciler`.
+The claw-operator currently has dedicated controllers for ConfigMap and Deployment resources, each watching OpenClaw custom resources and creating their respective Kubernetes resources. The PVC manifest (`internal/manifests/pvc.yaml`) already exists but there is no controller to manage its lifecycle. This design follows the established pattern used by `OpenClawConfigMapReconciler` and `OpenClawDeploymentReconciler`.
 
 **Current State:**
 - PVC manifest template exists at `internal/manifests/pvc.yaml`

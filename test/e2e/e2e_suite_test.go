@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/codeready-toolchain/openclaw-operator/test/utils"
+	"github.com/codeready-toolchain/claw-operator/test/utils"
 )
 
 var (
@@ -37,7 +37,7 @@ var (
 
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
-	projectImage = "example.com/openclaw-operator:v0.0.1"
+	projectImage = "example.com/claw-operator:v0.0.1"
 
 	// proxyImage is the credential proxy sidecar image, built and loaded alongside the operator.
 	proxyImage = "openclaw-proxy:latest"
@@ -48,7 +48,7 @@ var (
 // The default setup requires Kind, builds/loads the Manager Docker image locally, and installs
 // CertManager.
 func TestMain(m *testing.M) {
-	fmt.Println("Starting openclaw-operator integration test suite")
+	fmt.Println("Starting claw-operator integration test suite")
 
 	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
 	// built and available before running the tests. Also, remove the following block.

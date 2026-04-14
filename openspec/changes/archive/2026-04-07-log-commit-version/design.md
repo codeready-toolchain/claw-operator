@@ -40,7 +40,7 @@ The operator currently has no built-in version identification mechanism. During 
 
 ### Log format
 
-**Decision:** Log version info as structured log entry before manager starts, format: `"Starting OpenClaw Operator" version=<sha> buildTime=<timestamp>`.
+**Decision:** Log version info as structured log entry before manager starts, format: `"Starting Claw Operator" version=<sha> buildTime=<timestamp>`.
 
 **Rationale:**
 - Uses existing logger from controller-runtime

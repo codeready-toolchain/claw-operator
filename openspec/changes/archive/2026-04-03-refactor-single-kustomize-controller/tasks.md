@@ -58,7 +58,7 @@
 
 - [x] 9.1 Implement server-side apply loop for each resource
 - [x] 9.2 Use client.Patch() with client.Apply patch type
-- [x] 9.3 Set PatchOptions with FieldManager: "openclaw-operator"
+- [x] 9.3 Set PatchOptions with FieldManager: "claw-operator"
 - [x] 9.4 Set ForceOwnership: true for first-time adoption
 - [x] 9.5 Add error handling and logging for apply failures
 - [x] 9.6 Log successful application with resource count

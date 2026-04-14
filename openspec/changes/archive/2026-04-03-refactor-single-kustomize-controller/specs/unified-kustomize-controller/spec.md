@@ -65,7 +65,7 @@ The controller SHALL apply all resources atomically using Kubernetes server-side
 #### Scenario: Server-side apply with field manager
 - **WHEN** applying the built resources
 - **THEN** the controller uses client.Patch() with Apply patch type
-- **THEN** the controller specifies a field manager name (e.g., "openclaw-operator")
+- **THEN** the controller specifies a field manager name (e.g., "claw-operator")
 - **THEN** Kubernetes tracks field ownership for the controller
 
 #### Scenario: Idempotent application

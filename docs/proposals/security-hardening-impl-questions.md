@@ -116,19 +116,19 @@ spec:
   install:
     spec:
       deployments:
-        - name: openclaw-operator
+        - name: claw-operator
           spec:
             template:
               spec:
                 containers:
                   - name: manager
-                    image: quay.io/example/openclaw-operator:v0.2.0
+                    image: quay.io/example/claw-operator:v0.2.0
                     env:
                       - name: PROXY_IMAGE
                         value: quay.io/example/openclaw-proxy:v0.2.0
   relatedImages:
     - name: operator
-      image: quay.io/example/openclaw-operator@sha256:abc...
+      image: quay.io/example/claw-operator@sha256:abc...
     - name: proxy
       image: quay.io/example/openclaw-proxy@sha256:def...
 ```

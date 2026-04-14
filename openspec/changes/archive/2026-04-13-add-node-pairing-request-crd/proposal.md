@@ -1,6 +1,6 @@
 ## Why
 
-The OpenClaw operator needs a mechanism to manage node pairing requests. A dedicated CRD will enable declarative management of pairing operations between nodes, allowing the system to track and reconcile pairing state through standard Kubernetes patterns.
+The Claw Operator needs a mechanism to manage node pairing requests. A dedicated CRD will enable declarative management of pairing operations between nodes, allowing the system to track and reconcile pairing state through standard Kubernetes patterns.
 
 ## What Changes
 

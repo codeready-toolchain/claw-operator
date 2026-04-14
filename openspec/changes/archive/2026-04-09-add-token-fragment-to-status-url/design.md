@@ -1,6 +1,6 @@
 ## Context
 
-The OpenClaw operator currently sets the `status.url` field to the Route HTTPS endpoint (e.g., `https://openclaw-route.example.com`). The OpenClaw web UI requires a gateway token for authentication, stored in the `openclaw-gateway-token` Secret under the `token` key. Users must manually retrieve this token via `kubectl get secret openclaw-gateway-token -o jsonpath='{.data.token}' | base64 -d` and paste it into the UI.
+The Claw Operator currently sets the `status.url` field to the Route HTTPS endpoint (e.g., `https://openclaw-route.example.com`). The OpenClaw web UI requires a gateway token for authentication, stored in the `openclaw-gateway-token` Secret under the `token` key. Users must manually retrieve this token via `kubectl get secret openclaw-gateway-token -o jsonpath='{.data.token}' | base64 -d` and paste it into the UI.
 
 The controller already generates and manages the gateway token in the `applyGatewaySecret()` method during reconciliation. The token is a cryptographically secure 64-character hex string generated using `crypto/rand`.
 

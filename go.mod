@@ -1,4 +1,4 @@
-module github.com/codeready-toolchain/openclaw-operator
+module github.com/codeready-toolchain/claw-operator
 
 go 1.25.9
 

@@ -1,10 +1,10 @@
-# Security Hardening for OpenClaw Operator
+# Security Hardening for Claw Operator
 
 **Status:** Sketch complete — ready for detailed design
 
 ## Problem
 
-The OpenClaw operator deploys a personal AI assistant into a user's Kubernetes namespace. Today, credential isolation (nginx proxy), egress NetworkPolicies, gateway token authentication, and Route host injection are in place. Several security gaps remain: the CRD carries a single hardcoded Gemini Secret reference (`spec.geminiAPIKey`), ingress is unrestricted, and the proxy can't handle OAuth-based providers like Vertex AI.
+The Claw Operator deploys a personal AI assistant into a user's Kubernetes namespace. Today, credential isolation (nginx proxy), egress NetworkPolicies, gateway token authentication, and Route host injection are in place. Several security gaps remain: the CRD carries a single hardcoded Gemini Secret reference (`spec.geminiAPIKey`), ingress is unrestricted, and the proxy can't handle OAuth-based providers like Vertex AI.
 
 **CRD rename:** The CRD Kind is renamed from `OpenClaw` to `Claw` to support potential future distributions (e.g., NemoClaw). The API group remains `openclaw.sandbox.redhat.com/v1alpha1`.
 

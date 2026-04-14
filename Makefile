@@ -28,8 +28,8 @@ BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 # This variable is used to construct full image tags for bundle and catalog images.
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# openclaw.devsandbox.openshift.com/openclaw-operator-bundle:$VERSION and openclaw.devsandbox.openshift.com/openclaw-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= openclaw.devsandbox.openshift.com/openclaw-operator
+# openclaw.devsandbox.openshift.com/claw-operator-bundle:$VERSION and openclaw.devsandbox.openshift.com/claw-operator-catalog:$VERSION.
+IMAGE_TAG_BASE ?= openclaw.devsandbox.openshift.com/claw-operator
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -50,7 +50,7 @@ endif
 # This is useful for CI or a project to utilize a specific version of the operator-sdk toolkit.
 OPERATOR_SDK_VERSION ?= v1.42.0
 # Image URL to use all building/pushing image targets
-IMG ?= openclaw-operator:latest
+IMG ?= claw-operator:latest
 PROXY_IMG ?= openclaw-proxy:latest
 PLATFORM ?= linux/amd64
 
@@ -118,7 +118,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
-KIND_CLUSTER ?= openclaw-operator-test-e2e
+KIND_CLUSTER ?= claw-operator-test-e2e
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -215,10 +215,10 @@ PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name openclaw-operator-builder
-	$(CONTAINER_TOOL) buildx use openclaw-operator-builder
+	- $(CONTAINER_TOOL) buildx create --name claw-operator-builder
+	$(CONTAINER_TOOL) buildx use claw-operator-builder
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm openclaw-operator-builder
+	- $(CONTAINER_TOOL) buildx rm claw-operator-builder
 	rm Dockerfile.cross
 
 .PHONY: build-installer
@@ -273,7 +273,7 @@ dev-build: ## Build operator and proxy images for dev.
 ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-build REGISTRY=quay.io/myuser)
 endif
-	$(MAKE) docker-build IMG=$(REGISTRY)/openclaw-operator:$(TAG)
+	$(MAKE) docker-build IMG=$(REGISTRY)/claw-operator:$(TAG)
 	$(MAKE) docker-build-proxy PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
 
 .PHONY: dev-push
@@ -281,7 +281,7 @@ dev-push: ## Push operator and proxy images for dev.
 ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-push REGISTRY=quay.io/myuser)
 endif
-	$(MAKE) docker-push IMG=$(REGISTRY)/openclaw-operator:$(TAG)
+	$(MAKE) docker-push IMG=$(REGISTRY)/claw-operator:$(TAG)
 	$(MAKE) docker-push-proxy PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
 
 .PHONY: dev-deploy
@@ -290,7 +290,7 @@ ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-deploy REGISTRY=quay.io/myuser)
 endif
 	$(MAKE) install
-	$(MAKE) deploy IMG=$(REGISTRY)/openclaw-operator:$(TAG) PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+	$(MAKE) deploy IMG=$(REGISTRY)/claw-operator:$(TAG) PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
 
 .PHONY: dev-setup
 dev-setup: ## Full dev setup: build, push, and deploy.

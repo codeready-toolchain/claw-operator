@@ -47,7 +47,7 @@ make test-e2e           # Run e2e tests
 make cleanup-test-e2e   # Tear down Kind cluster
 
 # Docker
-make docker-build IMG=<registry>/openclaw-operator:tag
+make docker-build IMG=<registry>/claw-operator:tag
 
 # Dev deployment (OpenShift/Kubernetes)
 make dev-setup REGISTRY=quay.io/myuser           # Build + push + deploy (one command)
@@ -225,7 +225,7 @@ The `internal/assets/manifests/` directory contains:
 2. Kustomize API (`krusty.MakeKustomizer`) builds resources from kustomization.yaml
 3. Labels from kustomization.yaml are applied automatically to all resources
 4. Controller sets namespace and owner references dynamically
-5. Server-side apply sends all resources to API server with field manager "openclaw-operator"
+5. Server-side apply sends all resources to API server with field manager "claw-operator"
 6. Kubernetes handles resource creation/updates idempotently
 
 ### Key directories

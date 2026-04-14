@@ -8,7 +8,7 @@
 
 ## Overview
 
-The OpenClaw operator deploys a personal AI assistant into a user's Kubernetes namespace. Today, the operator handles basic credential injection (single Gemini Secret reference on the CRD via `spec.geminiAPIKey`), egress NetworkPolicies, gateway token generation, and Route hostname injection. This design extends the security posture across five areas:
+The Claw Operator deploys a personal AI assistant into a user's Kubernetes namespace. Today, the operator handles basic credential injection (single Gemini Secret reference on the CRD via `spec.geminiAPIKey`), egress NetworkPolicies, gateway token generation, and Route hostname injection. This design extends the security posture across five areas:
 
 1. **Inline credentials** — `spec.credentials[]` array on the `Claw` CRD (renamed from `OpenClaw`) with type discriminator, replacing `spec.geminiAPIKey`
 2. **Go credential proxy** — replaces the nginx proxy with a Go credential-injecting forward proxy driven by `spec.credentials`

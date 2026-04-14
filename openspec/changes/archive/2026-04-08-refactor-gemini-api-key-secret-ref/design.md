@@ -1,6 +1,6 @@
 ## Context
 
-The OpenClaw operator currently accepts the Gemini API key as a plain string in the `OpenClawSpec.APIKey` field. The controller copies this value into the `openclaw-proxy-secrets` Secret under the `GEMINI_API_KEY` data entry, which is then mounted into the `openclaw-proxy` Deployment.
+The Claw Operator currently accepts the Gemini API key as a plain string in the `OpenClawSpec.APIKey` field. The controller copies this value into the `openclaw-proxy-secrets` Secret under the `GEMINI_API_KEY` data entry, which is then mounted into the `openclaw-proxy` Deployment.
 
 This approach has several issues:
 - API keys are visible in CR manifests stored in version control

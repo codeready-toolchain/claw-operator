@@ -1,6 +1,6 @@
 ## Context
 
-The OpenClaw operator currently creates Deployment resources for both the main application (`openclaw`) and the API proxy (`openclaw-proxy`), but provides no feedback to users about when the instance is fully provisioned and ready for use. Kubernetes users expect CRDs to expose status conditions following the standard metav1.Condition pattern used throughout the ecosystem.
+The Claw Operator currently creates Deployment resources for both the main application (`openclaw`) and the API proxy (`openclaw-proxy`), but provides no feedback to users about when the instance is fully provisioned and ready for use. Kubernetes users expect CRDs to expose status conditions following the standard metav1.Condition pattern used throughout the ecosystem.
 
 The unified Kustomize controller applies resources atomically but doesn't wait for or monitor their readiness. Users must manually check Deployment status with `kubectl get deployments` to determine if OpenClaw is usable.
 

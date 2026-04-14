@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/openclaw-operator/api/v1alpha1"
+	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 // --- Proxy CA tests ---

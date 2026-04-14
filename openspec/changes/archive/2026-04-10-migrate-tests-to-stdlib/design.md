@@ -1,6 +1,6 @@
 ## Context
 
-The openclaw-operator currently uses Ginkgo v2 and Gomega for all unit tests in `internal/controller/` and `api/v1alpha1/`. Tests use envtest (real Kubernetes API server) with shared setup in `suite_test.go`. The team's standard practice is to use Go's standard `testing` package for simplicity and reduced dependencies.
+The claw-operator currently uses Ginkgo v2 and Gomega for all unit tests in `internal/controller/` and `api/v1alpha1/`. Tests use envtest (real Kubernetes API server) with shared setup in `suite_test.go`. The team's standard practice is to use Go's standard `testing` package for simplicity and reduced dependencies.
 
 Current test structure:
 - `suite_test.go`: Boots envtest once per package using `RunSpecs()`
