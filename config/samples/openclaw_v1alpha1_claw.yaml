@@ -2,7 +2,6 @@ apiVersion: openclaw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance
-  namespace: openclaw-operator
 spec:
   credentials:
     - name: gemini

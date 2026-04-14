@@ -150,6 +150,35 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 		} else {
 			t.Log("Failed to describe controller pod")
 		}
+
+		t.Log("Fetching Claw status in user namespace")
+		cmd = exec.Command("kubectl", "get", "claw", "instance",
+			"-o", "yaml", "-n", userNamespace)
+		clawOutput, err := utils.Run(t, cmd)
+		if err == nil {
+			t.Logf("Claw status:\n%s", clawOutput)
+		}
+
+		t.Log("Fetching events in user namespace")
+		cmd = exec.Command("kubectl", "get", "events", "-n", userNamespace, "--sort-by=.lastTimestamp")
+		userEvents, err := utils.Run(t, cmd)
+		if err == nil {
+			t.Logf("User namespace events:\n%s", userEvents)
+		}
+
+		t.Log("Fetching deployments in user namespace")
+		cmd = exec.Command("kubectl", "get", "deployments", "-o", "wide", "-n", userNamespace)
+		deploymentsOutput, err := utils.Run(t, cmd)
+		if err == nil {
+			t.Logf("User namespace deployments:\n%s", deploymentsOutput)
+		}
+
+		t.Log("Fetching pods in user namespace")
+		cmd = exec.Command("kubectl", "get", "pods", "-o", "wide", "-n", userNamespace)
+		podsOutput, err := utils.Run(t, cmd)
+		if err == nil {
+			t.Logf("User namespace pods:\n%s", podsOutput)
+		}
 	}
 
 	t.Run("Manager", func(t *testing.T) {
@@ -312,17 +341,17 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
-			t.Log("waiting for Claw to become Ready")
+			t.Log("waiting for Claw ProxyConfigured condition")
 			ctx := context.Background()
-			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {
 					cmd := exec.Command("kubectl", "get", "claw", "instance",
-						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
 					return err == nil && output == "True", nil
 				})
-			require.NoError(t, err, "Claw did not become Ready within %v", extendedTimeout)
+			require.NoError(t, err, "Claw ProxyConfigured did not become True within %v", defaultTimeout)
 
 			t.Log("verifying CRED_GEMINI env var references the user's Secret")
 			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
@@ -503,17 +532,29 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
-			t.Log("waiting for Claw to become Ready")
+			t.Log("waiting for Claw ProxyConfigured condition")
 			ctx := context.Background()
-			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {
 					cmd := exec.Command("kubectl", "get", "claw", "instance",
-						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
 					return err == nil && output == "True", nil
 				})
-			require.NoError(t, err, "Claw did not become Ready within %v", extendedTimeout)
+			require.NoError(t, err, "Claw ProxyConfigured did not become True within %v", defaultTimeout)
+
+			t.Log("waiting for proxy pod to be running")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=openclaw-proxy",
+						"-o", "jsonpath={.items[0].status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == "Running", nil
+				})
+			require.NoError(t, err, "proxy pod did not reach Running phase")
 
 			t.Log("capturing original pod UID")
 			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=openclaw-proxy",
