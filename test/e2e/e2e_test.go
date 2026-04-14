@@ -51,7 +51,7 @@ const (
 
 // clawYAMLWithGemini returns a Claw CR YAML using spec.credentials[] with apiKey type.
 func clawYAMLWithGemini(secretName, secretKey string) string {
-	return fmt.Sprintf(`apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+	return fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance
@@ -423,7 +423,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Log("verifying reconciliation success in metrics")
 			metricsOutput := fetchFreshMetrics(t, "curl-metrics-reconcile")
 			assert.Contains(t, metricsOutput,
-				`controller_runtime_reconcile_total{controller="openclaw",result="success"}`)
+				`controller_runtime_reconcile_total{controller="claw",result="success"}`)
 		})
 
 		t.Run("should wire credential env var with correct Secret reference", func(t *testing.T) {

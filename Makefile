@@ -139,7 +139,7 @@ reset-test-e2e: ## Remove leftover operator resources from a previous e2e run
 	@echo "Resetting e2e test state..."
 	-$(MAKE) undeploy 2>/dev/null
 	-$(MAKE) uninstall 2>/dev/null
-	-kubectl delete ns openclaw-operator --ignore-not-found
+	-kubectl delete ns claw-operator --ignore-not-found
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet reset-test-e2e ## Run the e2e tests. Expected an isolated environment using Kind.

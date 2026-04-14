@@ -30,14 +30,14 @@ The Claw Operator deploys a personal AI assistant into a user's Kubernetes names
 
 ### CRD Rename: OpenClaw → Claw
 
-The CRD Kind is renamed from `OpenClaw` to `Claw` to support potential future distributions (e.g., NemoClaw). The API group remains `openclaw.sandbox.redhat.com/v1alpha1` (the operator project identity). Internal resource names (`openclaw-gateway-token`, `openclaw-config`, etc.) are unchanged.
+The CRD Kind is renamed from `OpenClaw` to `Claw` to support potential future distributions (e.g., NemoClaw). The API group remains `claw.sandbox.redhat.com/v1alpha1` (the operator project identity). Internal resource names (`openclaw-gateway-token`, `openclaw-config`, etc.) are unchanged.
 
 ### Inline Credentials (`spec.credentials[]`)
 
 Credentials are an array field on the `Claw` CRD spec, each with a `type` discriminator. No separate CRD — everything is in one resource:
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance

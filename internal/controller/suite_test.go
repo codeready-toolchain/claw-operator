@@ -39,7 +39,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 var (
@@ -93,7 +93,7 @@ func TestMain(m *testing.M) {
 		panic("cfg is nil")
 	}
 
-	err = openclawv1alpha1.AddToScheme(scheme.Scheme)
+	err = clawv1alpha1.AddToScheme(scheme.Scheme)
 	if err != nil {
 		panic(err)
 	}
@@ -128,7 +128,7 @@ func deleteAndWaitAllResources(t *testing.T, namespace string) {
 		obj client.Object
 		key client.ObjectKey
 	}{
-		{&openclawv1alpha1.Claw{}, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}},
+		{&clawv1alpha1.Claw{}, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}},
 		{&corev1.ConfigMap{}, client.ObjectKey{Name: ClawConfigMapName, Namespace: namespace}},
 		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: ClawNetworkPolicyName, Namespace: namespace}},
 		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: ClawIngressNetworkPolicyName, Namespace: namespace}},
@@ -237,19 +237,19 @@ func createClawInstance(t *testing.T, ctx context.Context, name, namespace strin
 	require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
 
 	// Create Claw instance with a single apiKey credential
-	instance := &openclawv1alpha1.Claw{}
+	instance := &clawv1alpha1.Claw{}
 	instance.Name = name
 	instance.Namespace = namespace
-	instance.Spec.Credentials = []openclawv1alpha1.CredentialSpec{
+	instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 		{
 			Name: "gemini",
-			Type: openclawv1alpha1.CredentialTypeAPIKey,
-			SecretRef: &openclawv1alpha1.SecretRef{
+			Type: clawv1alpha1.CredentialTypeAPIKey,
+			SecretRef: &clawv1alpha1.SecretRef{
 				Name: aiModelSecret,
 				Key:  aiModelSecretKey,
 			},
 			Domain: ".googleapis.com",
-			APIKey: &openclawv1alpha1.APIKeyConfig{
+			APIKey: &clawv1alpha1.APIKeyConfig{
 				Header: "x-goog-api-key",
 			},
 		},
@@ -258,17 +258,17 @@ func createClawInstance(t *testing.T, ctx context.Context, name, namespace strin
 }
 
 // testCredentials returns a standard credentials slice for tests.
-func testCredentials() []openclawv1alpha1.CredentialSpec {
-	return []openclawv1alpha1.CredentialSpec{
+func testCredentials() []clawv1alpha1.CredentialSpec {
+	return []clawv1alpha1.CredentialSpec{
 		{
 			Name: "gemini",
-			Type: openclawv1alpha1.CredentialTypeAPIKey,
-			SecretRef: &openclawv1alpha1.SecretRef{
+			Type: clawv1alpha1.CredentialTypeAPIKey,
+			SecretRef: &clawv1alpha1.SecretRef{
 				Name: aiModelSecret,
 				Key:  aiModelSecretKey,
 			},
 			Domain: ".googleapis.com",
-			APIKey: &openclawv1alpha1.APIKeyConfig{
+			APIKey: &clawv1alpha1.APIKeyConfig{
 				Header: "x-goog-api-key",
 			},
 		},

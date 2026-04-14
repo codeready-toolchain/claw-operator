@@ -54,7 +54,7 @@ Define a set of CRDs per credential *shape* (not per service): `APIKeyCredential
 Originally this option proposed a separate `ClawCredential` CRD. After further analysis, credentials are merged directly into the `Claw` CRD as an inline `spec.credentials[]` array with a `type` enum field and optional shape-specific config sub-structs:
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance

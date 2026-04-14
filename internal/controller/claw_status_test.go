@@ -35,13 +35,13 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 // --- Status condition tests ---
 
 func TestOpenClawStatusConditions(t *testing.T) {
-	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
+	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
 		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
@@ -50,7 +50,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
@@ -72,7 +72,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			updatedInstance := &openclawv1alpha1.Claw{}
+			updatedInstance := &clawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
 			assert.Equal(t, ClawGatewaySecretName, updatedInstance.Status.GatewayTokenSecretRef)
 		})
@@ -82,14 +82,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -105,13 +105,13 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, err, "reconcile failed")
 
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
-				return condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == openclawv1alpha1.ConditionReasonProvisioning
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
+				return condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == clawv1alpha1.ConditionReasonProvisioning
 			}, "Ready condition should be False with Provisioning reason")
 		})
 
@@ -120,14 +120,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -164,12 +164,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			updatedInstance := &openclawv1alpha1.Claw{}
+			updatedInstance := &clawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 			require.NotNil(t, condition, "Ready condition should not be nil")
 			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Ready condition status")
-			assert.Equal(t, openclawv1alpha1.ConditionReasonProvisioning, condition.Reason, "Ready condition reason")
+			assert.Equal(t, clawv1alpha1.ConditionReasonProvisioning, condition.Reason, "Ready condition reason")
 		})
 
 		t.Run("should keep Ready condition False when only openclaw-proxy Deployment is ready", func(t *testing.T) {
@@ -177,14 +177,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -221,12 +221,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			updatedInstance := &openclawv1alpha1.Claw{}
+			updatedInstance := &clawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 			require.NotNil(t, condition, "Ready condition should not be nil")
 			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Ready condition status")
-			assert.Equal(t, openclawv1alpha1.ConditionReasonProvisioning, condition.Reason, "Ready condition reason")
+			assert.Equal(t, clawv1alpha1.ConditionReasonProvisioning, condition.Reason, "Ready condition reason")
 		})
 
 		t.Run("should set Ready condition to True when both Deployments are ready", func(t *testing.T) {
@@ -234,14 +234,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -292,12 +292,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			updatedInstance := &openclawv1alpha1.Claw{}
+			updatedInstance := &clawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 			require.NotNil(t, condition, "Ready condition should not be nil")
 			assert.Equal(t, metav1.ConditionTrue, condition.Status, "Ready condition status")
-			assert.Equal(t, openclawv1alpha1.ConditionReasonReady, condition.Reason, "Ready condition reason")
+			assert.Equal(t, clawv1alpha1.ConditionReasonReady, condition.Reason, "Ready condition reason")
 		})
 
 		t.Run("should update LastTransitionTime only on status change", func(t *testing.T) {
@@ -305,14 +305,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -329,12 +329,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			var initialTransitionTime metav1.Time
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 				if condition != nil {
 					initialTransitionTime = condition.LastTransitionTime
 					return true
@@ -380,12 +380,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			var secondTransitionTime metav1.Time
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 				if condition != nil && condition.Status == metav1.ConditionTrue {
 					secondTransitionTime = condition.LastTransitionTime
 					return true
@@ -401,14 +401,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -425,12 +425,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			var initialTransitionTime metav1.Time
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 				if condition != nil && condition.Status == metav1.ConditionFalse {
 					initialTransitionTime = condition.LastTransitionTime
 					return true
@@ -446,9 +446,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			updatedInstance := &openclawv1alpha1.Claw{}
+			updatedInstance := &clawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 			require.NotNil(t, condition, "Ready condition should not be nil")
 			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Ready condition status")
 			assert.Equal(t, initialTransitionTime, condition.LastTransitionTime, "LastTransitionTime should not have changed")
@@ -459,14 +459,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -482,12 +482,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, err, "reconcile should not error even if deployments don't exist")
 
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 				return condition != nil && condition.Status == metav1.ConditionFalse
 			}, "Ready condition should be set to False when deployments are missing")
 		})
@@ -497,14 +497,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -520,12 +520,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, err, "reconcile failed")
 
 			waitFor(t, timeout, interval, func() bool {
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance)
 				if err != nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, openclawv1alpha1.ConditionTypeReady)
+				condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 				return condition != nil && condition.ObservedGeneration == updatedInstance.Generation
 			}, "ObservedGeneration should match instance generation")
 		})
@@ -539,14 +539,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					deleteAndWaitAllResources(t, namespace)
 				})
 
-				instance := &openclawv1alpha1.Claw{}
+				instance := &clawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.Credentials = testCredentials()
-				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
@@ -561,7 +561,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -571,14 +571,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					deleteAndWaitAllResources(t, namespace)
 				})
 
-				instance := &openclawv1alpha1.Claw{}
+				instance := &clawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.Credentials = testCredentials()
-				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
@@ -615,7 +615,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -625,14 +625,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					deleteAndWaitAllResources(t, namespace)
 				})
 
-				instance := &openclawv1alpha1.Claw{}
+				instance := &clawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.Credentials = testCredentials()
-				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
@@ -669,7 +669,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -679,14 +679,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					deleteAndWaitAllResources(t, namespace)
 				})
 
-				instance := &openclawv1alpha1.Claw{}
+				instance := &clawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.Credentials = testCredentials()
-				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
@@ -760,7 +760,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -770,14 +770,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					deleteAndWaitAllResources(t, namespace)
 				})
 
-				instance := &openclawv1alpha1.Claw{}
+				instance := &clawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.Credentials = testCredentials()
-				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
@@ -828,7 +828,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
 			})
@@ -840,14 +840,14 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					deleteAndWaitAllResources(t, namespace)
 				})
 
-				instance := &openclawv1alpha1.Claw{}
+				instance := &clawv1alpha1.Claw{}
 				instance.Name = resourceName
 				instance.Namespace = namespace
 				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.Credentials = testCredentials()
-				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
 					Client: k8sClient,
@@ -1007,7 +1007,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				updatedInstance := &openclawv1alpha1.Claw{}
+				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 
 				assert.NotEmpty(t, updatedInstance.Status.URL, "expected non-empty status.url")
@@ -1055,7 +1055,7 @@ func boolPtr(b bool) *bool {
 
 func TestOpenClawURLStatusField(t *testing.T) {
 
-	t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
+	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
 		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
@@ -1068,14 +1068,14 @@ func TestOpenClawURLStatusField(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -1090,8 +1090,8 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			updatedInstance := &openclawv1alpha1.Claw{}
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated OpenClaw instance")
+			updatedInstance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated Claw instance")
 			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL")
 		})
 
@@ -1100,14 +1100,14 @@ func TestOpenClawURLStatusField(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			instance := &openclawv1alpha1.Claw{}
+			instance := &clawv1alpha1.Claw{}
 			instance.Name = resourceName
 			instance.Namespace = namespace
 			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
 
 			instance.Spec.Credentials = testCredentials()
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create OpenClaw instance")
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
@@ -1158,8 +1158,8 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			updatedInstance := &openclawv1alpha1.Claw{}
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated OpenClaw instance")
+			updatedInstance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated Claw instance")
 			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL")
 		})
 

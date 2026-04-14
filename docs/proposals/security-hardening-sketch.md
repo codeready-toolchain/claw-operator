@@ -6,7 +6,7 @@
 
 The Claw Operator deploys a personal AI assistant into a user's Kubernetes namespace. Today, credential isolation (nginx proxy), egress NetworkPolicies, gateway token authentication, and Route host injection are in place. Several security gaps remain: the CRD carries a single hardcoded Gemini Secret reference (`spec.geminiAPIKey`), ingress is unrestricted, and the proxy can't handle OAuth-based providers like Vertex AI.
 
-**CRD rename:** The CRD Kind is renamed from `OpenClaw` to `Claw` to support potential future distributions (e.g., NemoClaw). The API group remains `openclaw.sandbox.redhat.com/v1alpha1`.
+**CRD rename:** The CRD Kind is renamed from `OpenClaw` to `Claw` to support potential future distributions (e.g., NemoClaw). The API group remains `claw.sandbox.redhat.com/v1alpha1`.
 
 On Dev Sandbox, each OpenClaw instance runs in a user's namespace with their permissions. A security failure here means either leaked LLM credentials (cost and privacy), unauthorized access to the assistant (abuse of the user's namespace permissions), or lateral movement from a compromised pod.
 

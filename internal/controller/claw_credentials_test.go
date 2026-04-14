@@ -28,7 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 // --- Credential validation tests ---
@@ -46,7 +46,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 	t.Run("should succeed with zero credentials", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
-		instance := &openclawv1alpha1.Claw{}
+		instance := &clawv1alpha1.Claw{}
 		instance.Name = ClawInstanceName
 		instance.Namespace = namespace
 		require.NoError(t, k8sClient.Create(ctx, instance))
@@ -58,14 +58,14 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 	t.Run("should fail when Secret does not exist", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
-		instance := &openclawv1alpha1.Claw{}
+		instance := &clawv1alpha1.Claw{}
 		instance.Name = ClawInstanceName
 		instance.Namespace = namespace
-		instance.Spec.Credentials = []openclawv1alpha1.CredentialSpec{
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
 				Name:      "bad",
-				Type:      openclawv1alpha1.CredentialTypeBearer,
-				SecretRef: &openclawv1alpha1.SecretRef{Name: "no-such-secret", Key: "key"},
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "no-such-secret", Key: "key"},
 				Domain:    "api.example.com",
 			},
 		}
@@ -91,14 +91,14 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		secret.Data = map[string][]byte{"other-key": []byte("value")}
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
-		instance := &openclawv1alpha1.Claw{}
+		instance := &clawv1alpha1.Claw{}
 		instance.Name = ClawInstanceName
 		instance.Namespace = namespace
-		instance.Spec.Credentials = []openclawv1alpha1.CredentialSpec{
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
 				Name:      "test",
-				Type:      openclawv1alpha1.CredentialTypeBearer,
-				SecretRef: &openclawv1alpha1.SecretRef{Name: "wrong-key-secret", Key: "api-key"},
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "wrong-key-secret", Key: "api-key"},
 				Domain:    "api.example.com",
 			},
 		}
@@ -115,13 +115,13 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 	t.Run("should succeed with none credential type (no secretRef required)", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
-		instance := &openclawv1alpha1.Claw{}
+		instance := &clawv1alpha1.Claw{}
 		instance.Name = ClawInstanceName
 		instance.Namespace = namespace
-		instance.Spec.Credentials = []openclawv1alpha1.CredentialSpec{
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
 				Name:   "passthrough",
-				Type:   openclawv1alpha1.CredentialTypeNone,
+				Type:   clawv1alpha1.CredentialTypeNone,
 				Domain: "example.com",
 			},
 		}
@@ -134,15 +134,15 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 	t.Run("should reject creation when secretRef is nil for apiKey type via CEL validation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
-		instance := &openclawv1alpha1.Claw{}
+		instance := &clawv1alpha1.Claw{}
 		instance.Name = ClawInstanceName
 		instance.Namespace = namespace
-		instance.Spec.Credentials = []openclawv1alpha1.CredentialSpec{
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
 				Name:   "no-ref",
-				Type:   openclawv1alpha1.CredentialTypeAPIKey,
+				Type:   clawv1alpha1.CredentialTypeAPIKey,
 				Domain: "api.example.com",
-				APIKey: &openclawv1alpha1.APIKeyConfig{Header: "x-api-key"},
+				APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-api-key"},
 			},
 		}
 		err := k8sClient.Create(ctx, instance)
@@ -153,14 +153,14 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 	t.Run("should reject creation when apiKey config is nil via CEL validation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
-		instance := &openclawv1alpha1.Claw{}
+		instance := &clawv1alpha1.Claw{}
 		instance.Name = ClawInstanceName
 		instance.Namespace = namespace
-		instance.Spec.Credentials = []openclawv1alpha1.CredentialSpec{
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
 				Name:      "no-config",
-				Type:      openclawv1alpha1.CredentialTypeAPIKey,
-				SecretRef: &openclawv1alpha1.SecretRef{Name: "some-secret", Key: "key"},
+				Type:      clawv1alpha1.CredentialTypeAPIKey,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "some-secret", Key: "key"},
 				Domain:    "api.example.com",
 			},
 		}
@@ -172,14 +172,14 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 	t.Run("should set CredentialsResolved=False when validation fails", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
-		instance := &openclawv1alpha1.Claw{}
+		instance := &clawv1alpha1.Claw{}
 		instance.Name = ClawInstanceName
 		instance.Namespace = namespace
-		instance.Spec.Credentials = []openclawv1alpha1.CredentialSpec{
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
 				Name:      "bad",
-				Type:      openclawv1alpha1.CredentialTypeBearer,
-				SecretRef: &openclawv1alpha1.SecretRef{Name: "missing", Key: "k"},
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "missing", Key: "k"},
 				Domain:    "api.example.com",
 			},
 		}
@@ -190,15 +190,15 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			NamespacedName: client.ObjectKey{Name: ClawInstanceName, Namespace: namespace},
 		})
 
-		updated := &openclawv1alpha1.Claw{}
+		updated := &clawv1alpha1.Claw{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, updated))
 
 		var found bool
 		for _, c := range updated.Status.Conditions {
-			if c.Type == openclawv1alpha1.ConditionTypeCredentialsResolved {
+			if c.Type == clawv1alpha1.ConditionTypeCredentialsResolved {
 				found = true
 				assert.Equal(t, "False", string(c.Status))
-				assert.Equal(t, openclawv1alpha1.ConditionReasonValidationFailed, c.Reason)
+				assert.Equal(t, clawv1alpha1.ConditionReasonValidationFailed, c.Reason)
 				break
 			}
 		}
@@ -211,15 +211,15 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
 
-		updatedInstance := &openclawv1alpha1.Claw{}
+		updatedInstance := &clawv1alpha1.Claw{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, updatedInstance))
 
 		var found bool
 		for _, c := range updatedInstance.Status.Conditions {
-			if c.Type == openclawv1alpha1.ConditionTypeCredentialsResolved {
+			if c.Type == clawv1alpha1.ConditionTypeCredentialsResolved {
 				found = true
 				assert.Equal(t, "True", string(c.Status))
-				assert.Equal(t, openclawv1alpha1.ConditionReasonResolved, c.Reason)
+				assert.Equal(t, clawv1alpha1.ConditionReasonResolved, c.Reason)
 				break
 			}
 		}
@@ -232,15 +232,15 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
 
-		updatedInstance := &openclawv1alpha1.Claw{}
+		updatedInstance := &clawv1alpha1.Claw{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, updatedInstance))
 
 		var found bool
 		for _, c := range updatedInstance.Status.Conditions {
-			if c.Type == openclawv1alpha1.ConditionTypeProxyConfigured {
+			if c.Type == clawv1alpha1.ConditionTypeProxyConfigured {
 				found = true
 				assert.Equal(t, "True", string(c.Status))
-				assert.Equal(t, openclawv1alpha1.ConditionReasonConfigured, c.Reason)
+				assert.Equal(t, clawv1alpha1.ConditionReasonConfigured, c.Reason)
 				break
 			}
 		}
@@ -251,7 +251,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 // --- Secret reference and proxy deployment wiring tests ---
 
 func TestOpenClawCredentialSecretReference(t *testing.T) {
-	t.Run("When reconciling OpenClaw with credential references", func(t *testing.T) {
+	t.Run("When reconciling Claw with credential references", func(t *testing.T) {
 		const resourceName = ClawInstanceName
 		ctx := context.Background()
 
@@ -309,7 +309,7 @@ func TestOpenClawCredentialSecretReference(t *testing.T) {
 				if annotations == nil {
 					return false
 				}
-				_, exists := annotations["openclaw.sandbox.redhat.com/proxy-config-hash"]
+				_, exists := annotations["claw.sandbox.redhat.com/proxy-config-hash"]
 				return exists
 			}, "pod template should have proxy-config-hash annotation")
 		})
@@ -354,13 +354,13 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 
 	t.Run("should add GCP volume and mount for gcp credential", func(t *testing.T) {
 		objects := buildObjects(t)
-		creds := []openclawv1alpha1.CredentialSpec{
+		creds := []clawv1alpha1.CredentialSpec{
 			{
 				Name:      "vertex",
-				Type:      openclawv1alpha1.CredentialTypeGCP,
-				SecretRef: &openclawv1alpha1.SecretRef{Name: "gcp-sa", Key: "sa.json"},
+				Type:      clawv1alpha1.CredentialTypeGCP,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "gcp-sa", Key: "sa.json"},
 				Domain:    ".googleapis.com",
-				GCP:       &openclawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
+				GCP:       &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
 			},
 		}
 		require.NoError(t, configureProxyForCredentials(objects, creds))
@@ -395,12 +395,12 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 
 	t.Run("should skip credentials with nil secretRef for apiKey type", func(t *testing.T) {
 		objects := buildObjects(t)
-		creds := []openclawv1alpha1.CredentialSpec{
+		creds := []clawv1alpha1.CredentialSpec{
 			{
 				Name:   "no-ref",
-				Type:   openclawv1alpha1.CredentialTypeAPIKey,
+				Type:   clawv1alpha1.CredentialTypeAPIKey,
 				Domain: "api.example.com",
-				APIKey: &openclawv1alpha1.APIKeyConfig{Header: "x-api-key"},
+				APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-api-key"},
 			},
 		}
 		require.NoError(t, configureProxyForCredentials(objects, creds))
@@ -415,18 +415,18 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 
 	t.Run("should handle multiple credential types together", func(t *testing.T) {
 		objects := buildObjects(t)
-		creds := []openclawv1alpha1.CredentialSpec{
+		creds := []clawv1alpha1.CredentialSpec{
 			{
 				Name:      "gemini",
-				Type:      openclawv1alpha1.CredentialTypeAPIKey,
-				SecretRef: &openclawv1alpha1.SecretRef{Name: "s1", Key: "k1"},
+				Type:      clawv1alpha1.CredentialTypeAPIKey,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "s1", Key: "k1"},
 				Domain:    ".googleapis.com",
-				APIKey:    &openclawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"},
+				APIKey:    &clawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"},
 			},
 			{
 				Name:      "openai",
-				Type:      openclawv1alpha1.CredentialTypeBearer,
-				SecretRef: &openclawv1alpha1.SecretRef{Name: "s2", Key: "k2"},
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "s2", Key: "k2"},
 				Domain:    "api.openai.com",
 			},
 		}

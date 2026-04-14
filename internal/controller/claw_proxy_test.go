@@ -29,12 +29,12 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	openclawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 // --- Proxy CA tests ---
 
-func TestOpenClawProxyCA(t *testing.T) {
+func TestClawProxyCA(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("should create proxy CA Secret on first reconciliation", func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestOpenClawProxyCA(t *testing.T) {
 		cert, err := x509.ParseCertificate(block.Bytes)
 		require.NoError(t, err, "ca.crt should be valid X.509")
 		assert.True(t, cert.IsCA, "certificate should be a CA")
-		assert.Equal(t, "OpenClaw Proxy CA", cert.Subject.CommonName)
+		assert.Equal(t, "Claw Proxy CA", cert.Subject.CommonName)
 	})
 
 	t.Run("should not regenerate CA on subsequent reconciliations", func(t *testing.T) {
@@ -146,16 +146,16 @@ func TestGenerateCACertificate(t *testing.T) {
 
 func TestGenerateProxyConfig(t *testing.T) {
 	t.Run("should generate config with apiKey route", func(t *testing.T) {
-		credentials := []openclawv1alpha1.CredentialSpec{
+		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "gemini",
-				Type: openclawv1alpha1.CredentialTypeAPIKey,
-				SecretRef: &openclawv1alpha1.SecretRef{
+				Type: clawv1alpha1.CredentialTypeAPIKey,
+				SecretRef: &clawv1alpha1.SecretRef{
 					Name: "secret",
 					Key:  "key",
 				},
 				Domain: "generativelanguage.googleapis.com",
-				APIKey: &openclawv1alpha1.APIKeyConfig{
+				APIKey: &clawv1alpha1.APIKeyConfig{
 					Header: "x-goog-api-key",
 				},
 			},
@@ -174,11 +174,11 @@ func TestGenerateProxyConfig(t *testing.T) {
 	})
 
 	t.Run("should generate config with bearer route", func(t *testing.T) {
-		credentials := []openclawv1alpha1.CredentialSpec{
+		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "openai",
-				Type: openclawv1alpha1.CredentialTypeBearer,
-				SecretRef: &openclawv1alpha1.SecretRef{
+				Type: clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{
 					Name: "secret",
 					Key:  "key",
 				},
@@ -201,16 +201,16 @@ func TestGenerateProxyConfig(t *testing.T) {
 	})
 
 	t.Run("should generate config with GCP route", func(t *testing.T) {
-		credentials := []openclawv1alpha1.CredentialSpec{
+		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "vertex",
-				Type: openclawv1alpha1.CredentialTypeGCP,
-				SecretRef: &openclawv1alpha1.SecretRef{
+				Type: clawv1alpha1.CredentialTypeGCP,
+				SecretRef: &clawv1alpha1.SecretRef{
 					Name: "gcp-secret",
 					Key:  "sa.json",
 				},
 				Domain: ".googleapis.com",
-				GCP: &openclawv1alpha1.GCPConfig{
+				GCP: &clawv1alpha1.GCPConfig{
 					Project:  "my-project",
 					Location: "us-central1",
 				},
@@ -229,19 +229,19 @@ func TestGenerateProxyConfig(t *testing.T) {
 	})
 
 	t.Run("should order exact matches before suffix matches", func(t *testing.T) {
-		credentials := []openclawv1alpha1.CredentialSpec{
+		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "suffix",
-				Type: openclawv1alpha1.CredentialTypeBearer,
-				SecretRef: &openclawv1alpha1.SecretRef{
+				Type: clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{
 					Name: "s", Key: "k",
 				},
 				Domain: ".example.com",
 			},
 			{
 				Name: "exact",
-				Type: openclawv1alpha1.CredentialTypeBearer,
-				SecretRef: &openclawv1alpha1.SecretRef{
+				Type: clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{
 					Name: "s", Key: "k",
 				},
 				Domain: "api.example.com",
@@ -259,10 +259,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 	})
 
 	t.Run("should generate config with none route", func(t *testing.T) {
-		credentials := []openclawv1alpha1.CredentialSpec{
+		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:   "passthrough",
-				Type:   openclawv1alpha1.CredentialTypeNone,
+				Type:   clawv1alpha1.CredentialTypeNone,
 				Domain: "internal.example.com",
 			},
 		}
@@ -279,16 +279,16 @@ func TestGenerateProxyConfig(t *testing.T) {
 	})
 
 	t.Run("should generate config with pathToken route", func(t *testing.T) {
-		credentials := []openclawv1alpha1.CredentialSpec{
+		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "telegram",
-				Type: openclawv1alpha1.CredentialTypePathToken,
-				SecretRef: &openclawv1alpha1.SecretRef{
+				Type: clawv1alpha1.CredentialTypePathToken,
+				SecretRef: &clawv1alpha1.SecretRef{
 					Name: "telegram-secret",
 					Key:  "token",
 				},
 				Domain: "api.telegram.org",
-				PathToken: &openclawv1alpha1.PathTokenConfig{
+				PathToken: &clawv1alpha1.PathTokenConfig{
 					Prefix: "/bot",
 				},
 			},
@@ -306,16 +306,16 @@ func TestGenerateProxyConfig(t *testing.T) {
 	})
 
 	t.Run("should generate config with oauth2 route", func(t *testing.T) {
-		credentials := []openclawv1alpha1.CredentialSpec{
+		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "myservice",
-				Type: openclawv1alpha1.CredentialTypeOAuth2,
-				SecretRef: &openclawv1alpha1.SecretRef{
+				Type: clawv1alpha1.CredentialTypeOAuth2,
+				SecretRef: &clawv1alpha1.SecretRef{
 					Name: "oauth-secret",
 					Key:  "client-secret",
 				},
 				Domain: "api.myservice.com",
-				OAuth2: &openclawv1alpha1.OAuth2Config{
+				OAuth2: &clawv1alpha1.OAuth2Config{
 					ClientID: "my-client-id",
 					TokenURL: "https://auth.myservice.com/token",
 					Scopes:   []string{"read", "write"},
@@ -337,16 +337,16 @@ func TestGenerateProxyConfig(t *testing.T) {
 	})
 
 	t.Run("should include all credential types together", func(t *testing.T) {
-		credentials := []openclawv1alpha1.CredentialSpec{
+		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:   "passthrough",
-				Type:   openclawv1alpha1.CredentialTypeNone,
+				Type:   clawv1alpha1.CredentialTypeNone,
 				Domain: "internal.example.com",
 			},
 			{
 				Name: "keep-me",
-				Type: openclawv1alpha1.CredentialTypeBearer,
-				SecretRef: &openclawv1alpha1.SecretRef{
+				Type: clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{
 					Name: "s", Key: "k",
 				},
 				Domain: "api.example.com",

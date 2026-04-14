@@ -1,9 +1,9 @@
 ### Requirement: NodePairingRequestApproval CRD definition
-The system SHALL provide a namespaced Custom Resource Definition named `NodePairingRequestApproval` in the API group `openclaw.sandbox.redhat.com/v1alpha1` with resource path `nodepairingrequestapprovals`.
+The system SHALL provide a namespaced Custom Resource Definition named `NodePairingRequestApproval` in the API group `claw.sandbox.redhat.com/v1alpha1` with resource path `nodepairingrequestapprovals`.
 
 #### Scenario: CRD is registered with correct metadata
 - **WHEN** the operator is installed
-- **THEN** the NodePairingRequestApproval CRD exists with API group `openclaw.sandbox.redhat.com/v1alpha1`, scope `Namespaced`, and plural `nodepairingrequestapprovals`
+- **THEN** the NodePairingRequestApproval CRD exists with API group `claw.sandbox.redhat.com/v1alpha1`, scope `Namespaced`, and plural `nodepairingrequestapprovals`
 
 ### Requirement: Spec field is required
 The NodePairingRequestApproval resource SHALL require a Spec field at the root level, enforced through CRD validation.

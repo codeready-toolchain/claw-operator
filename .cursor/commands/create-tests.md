@@ -73,7 +73,7 @@ Every controller test follows this structure:
 
 ```go
 func TestOpenClawSomething(t *testing.T) {
-    t.Run("When reconciling an OpenClaw named 'instance'", func(t *testing.T) {
+    t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
         const resourceName = ClawInstanceName
         ctx := context.Background()
 

@@ -12,11 +12,11 @@ The Claw Operator manages the lifecycle of OpenClaw instances through Kubernetes
 
 The `Claw` custom resource represents a deployment of OpenClaw in your cluster.
 
-**API Group:** `openclaw.sandbox.redhat.com/v1alpha1`
+**API Group:** `claw.sandbox.redhat.com/v1alpha1`
 
 **Example:**
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance
@@ -249,7 +249,7 @@ oc apply -f config/samples/openclaw_v1alpha1_claw.yaml -n claw-operator
 Or create it directly:
 
 ```yaml
-apiVersion: openclaw.sandbox.redhat.com/v1alpha1
+apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance
