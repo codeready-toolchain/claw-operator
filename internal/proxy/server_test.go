@@ -104,9 +104,12 @@ func TestNewServer(t *testing.T) {
 		certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 		require.NoError(t, err)
 		nonCACert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+		nonCAKeyDER, err := x509.MarshalECPrivateKey(key)
+		require.NoError(t, err)
+		nonCAKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: nonCAKeyDER})
 
 		cfg := &Config{Routes: []Route{}}
-		_, err = NewServer(cfg, nonCACert, keyPEM, logger)
+		_, err = NewServer(cfg, nonCACert, nonCAKeyPEM, logger)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "IsCA=false")
 	})
