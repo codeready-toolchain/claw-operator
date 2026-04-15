@@ -256,8 +256,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	$(call generate-deploy-overlay,$(IMG),$(PROXY_IMG))
-	$(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
-	@rm -rf config/.deploy
+	@trap 'rm -rf config/.deploy' EXIT; $(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
@@ -292,8 +291,7 @@ ifndef REGISTRY
 endif
 	$(MAKE) install
 	$(call generate-deploy-overlay,$(REGISTRY)/claw-operator:$(TAG),$(REGISTRY)/claw-proxy:$(TAG),Always)
-	$(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
-	@rm -rf config/.deploy
+	@trap 'rm -rf config/.deploy' EXIT; $(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
 
 .PHONY: dev-setup
 dev-setup: ## Full dev setup: build, push, and deploy.
