@@ -79,6 +79,8 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
+	@kubectl config current-context > tmp/.pre-e2e-context 2>/dev/null || true
+	@kubectl config use-context kind-$(KIND_CLUSTER)
 
 .PHONY: reset-test-e2e
 reset-test-e2e: ## Remove leftover operator resources from a previous e2e run
@@ -95,6 +97,14 @@ test-e2e: setup-test-e2e manifests generate fmt vet reset-test-e2e ## Run the e2
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+	@if [ -f tmp/.pre-e2e-context ]; then \
+		ctx=$$(cat tmp/.pre-e2e-context); \
+		rm -f tmp/.pre-e2e-context; \
+		if [ -n "$$ctx" ] && kubectl config get-contexts "$$ctx" >/dev/null 2>&1; then \
+			echo "Restoring kubectl context to $$ctx"; \
+			kubectl config use-context "$$ctx"; \
+		fi; \
+	fi
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
