@@ -181,7 +181,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} \
+	$(CONTAINER_TOOL) build --platform=${PLATFORM} -t ${IMG} \
 		--build-arg VERSION=$$(git rev-parse --short HEAD) \
 		--build-arg BUILD_TIME=$$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
 		-f Containerfile .
@@ -198,7 +198,7 @@ docker-push: ## Push docker image with the manager.
 
 .PHONY: docker-build-proxy
 docker-build-proxy: ## Build docker image for the credential proxy.
-	$(CONTAINER_TOOL) build -t ${PROXY_IMG} -f Containerfile.proxy .
+	$(CONTAINER_TOOL) build --platform=${PLATFORM} -t ${PROXY_IMG} -f Containerfile.proxy .
 
 .PHONY: docker-push-proxy
 docker-push-proxy: ## Push docker image for the credential proxy.
@@ -402,7 +402,7 @@ bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metada
 
 .PHONY: bundle-build
 bundle-build: ## Build the bundle image.
-	$(CONTAINER_TOOL) build -f bundle.Dockerfile -t $(BUNDLE_IMG) .
+	$(CONTAINER_TOOL) build --platform=${PLATFORM} -f bundle.Dockerfile -t $(BUNDLE_IMG) .
 
 .PHONY: bundle-push
 bundle-push: ## Push the bundle image.
