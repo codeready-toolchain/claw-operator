@@ -416,6 +416,11 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 		if _, exists := providers[cred.Provider]; exists {
 			return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
 		}
+		// PathToken uses PathPrefix for token injection in the URL path (e.g., /bot<TOKEN>/...),
+		// not for gateway routing — skip provider entry to avoid referencing a non-existent gateway route.
+		if cred.Type == clawv1alpha1.CredentialTypePathToken {
+			continue
+		}
 		info := resolveProviderInfo(cred)
 		baseURL := "http://claw-proxy:8080/" + strings.ToLower(cred.Name) + info.BasePath
 		providers[cred.Provider] = map[string]any{

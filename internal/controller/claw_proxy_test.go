@@ -723,6 +723,26 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		assert.Equal(t, float64(18789), gateway["port"])
 	})
 
+	t.Run("should skip pathToken credentials even with provider set", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "telegram",
+				Type:     clawv1alpha1.CredentialTypePathToken,
+				Provider: "telegram",
+				Domain:   "api.telegram.org",
+				PathToken: &clawv1alpha1.PathTokenConfig{
+					Prefix: "/bot",
+				},
+			},
+		}
+
+		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
+
+		providers := getProviders(t, objects)
+		assert.Empty(t, providers, "pathToken credentials should not generate provider entries")
+	})
+
 	t.Run("should reject duplicate providers", func(t *testing.T) {
 		objects := makeConfigMap(baseJSON)
 		credentials := []clawv1alpha1.CredentialSpec{

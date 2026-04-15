@@ -294,18 +294,19 @@ Reconcile(ctx, req)
  ↓
 10. getRouteURL(ctx, instance)                     ← Extract Route host
  ├─ Read Route status.ingress[0].host
- ├─ If not yet populated, requeue with 5s backoff
- └─ Route CRD is always present (OpenShift-only)
+ ├─ If Route exists but host not yet populated, requeue with 5s backoff
+ └─ If Route CRD not registered (vanilla Kubernetes), return empty (localhost fallback)
  ↓
-11. injectRouteHostIntoConfigMap(objects, routeURL) ← Inject CORS origin (requires resolved Route host)
+11. injectRouteHostIntoConfigMap(objects, routeURL) ← Inject CORS origin (uses routeURL or localhost fallback)
  ↓
-12. injectProvidersIntoConfigMap(objects, credentials) ← Dynamic provider generation (runs after Route host resolved)
- ├─ For each credential with `provider` set, generate a provider entry in openclaw.json
+12. injectProvidersIntoConfigMap(objects, credentials) ← Dynamic provider generation
+ ├─ For each credential with `provider` set (excluding pathToken), generate a provider entry
+ ├─ Parse openclaw.json, write provider entries directly into models.providers
  ├─ Provider entry includes `baseUrl` (e.g., http://claw-proxy:8080/gemini/v1beta) and dummy apiKey
  ├─ Google + apiKey → Gemini REST upstream and basePath
  ├─ Google + gcp → Vertex AI upstream and basePath (derived from project/location)
  ├─ All other providers → domain-based upstream, no basePath
- └─ Replace PROVIDERS_PLACEHOLDER in openclaw.json with generated entries
+ └─ Filter agents.defaults.models to match available providers
  ↓
 13. applyResources(ctx, remainingObjects)           ← Apply non-Route resources via SSA
  ↓
