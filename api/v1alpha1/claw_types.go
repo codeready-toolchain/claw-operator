@@ -159,6 +159,12 @@ type CredentialSpec struct {
 	// OAuth2 configures client credentials token exchange. Required when type is "oauth2".
 	// +optional
 	OAuth2 *OAuth2Config `json:"oauth2,omitempty"`
+
+	// Provider maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter").
+	// When set, the controller configures gateway routing and generates the provider entry in openclaw.json.
+	// When omitted, the credential is used for MITM forward proxy only (no provider entry).
+	// +optional
+	Provider string `json:"provider,omitempty"`
 }
 
 // ClawSpec defines the desired state of Claw

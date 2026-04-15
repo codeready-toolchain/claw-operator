@@ -50,6 +50,12 @@ type CredentialSpec struct {
     PathToken  *PathTokenConfig  `json:"pathToken,omitempty"`
     OAuth2     *OAuth2Config     `json:"oauth2,omitempty"`
     // Bearer and None need no extra config.
+
+    // Provider maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter").
+    // When set, the controller configures gateway routing and generates the provider entry in openclaw.json.
+    // When omitted, the credential is used for MITM forward proxy only (no provider entry).
+    // +optional
+    Provider string `json:"provider,omitempty"`
 }
 
 type CredentialType string
@@ -110,6 +116,8 @@ type OAuth2Config struct {
   domain: "generativelanguage.googleapis.com"
   apiKey:
     header: "x-goog-api-key"
+  provider: google  # Enables gateway mode + generates provider entry in openclaw.json
+                    # baseUrl → http://claw-proxy:8080/gemini/v1beta
 ```
 
 ### Anthropic (API key + default headers)
@@ -127,6 +135,7 @@ Anthropic requires an `anthropic-version` header on every request. Use `defaultH
     anthropic-version: "2023-06-01"
   apiKey:
     header: "x-api-key"
+  provider: anthropic  # Gateway mode: baseUrl → http://claw-proxy:8080/anthropic
 ```
 
 ### OpenAI (Bearer token)
@@ -138,6 +147,7 @@ Anthropic requires an `anthropic-version` header on every request. Use `defaultH
     name: llm-keys
     key: OPENAI_API_KEY
   domain: "api.openai.com"
+  provider: openai  # Gateway mode: baseUrl → http://claw-proxy:8080/openai
 ```
 
 ### OpenRouter (Bearer token, OpenAI-compatible)
@@ -149,6 +159,7 @@ Anthropic requires an `anthropic-version` header on every request. Use `defaultH
     name: llm-keys
     key: OPENROUTER_API_KEY
   domain: "openrouter.ai"
+  provider: openrouter  # Gateway mode: baseUrl → http://claw-proxy:8080/openrouter
 ```
 
 ---
@@ -171,13 +182,21 @@ The proxy loads the service account JSON, obtains a short-lived OAuth2 access to
   gcp:
     project: my-gcp-project
     location: us-central1
+  provider: google  # Gateway mode: baseUrl → http://claw-proxy:8080/vertex-ai/v1/projects/my-gcp-project/locations/us-central1/publishers/google
+                    # Upstream → https://us-central1-aiplatform.googleapis.com
 ```
 
 **Domain:** `.googleapis.com` (suffix match) covers `aiplatform.googleapis.com`, `generativelanguage.googleapis.com`, and the token endpoint `oauth2.googleapis.com`.
 
+**Provider resolution for Google:** When `provider: "google"` is set:
+- With `type: gcp`, the controller resolves the Vertex AI upstream URL from `gcp.project` and `gcp.location` (e.g., `https://us-central1-aiplatform.googleapis.com`) and generates the appropriate base path
+- With `type: apiKey`, the controller uses the Gemini REST API upstream (`https://generativelanguage.googleapis.com`) with base path `/v1beta`
+
 ---
 
 ## Channel Integrations
+
+Channel integrations and platform APIs typically do not set `provider` — they use MITM forward proxy mode only, since they are not LLM providers that need `openclaw.json` entries.
 
 ### Telegram Bot (path token injection)
 
@@ -348,14 +367,16 @@ The proxy passes the request through without modifying any headers. No `secretRe
 
 ## Shape Summary
 
-| Type | Injection mechanism | Services | Extra config |
-|------|-------------------|----------|--------------|
-| `apiKey` | Custom header with secret value | Gemini, Anthropic, Discord, Jira, MCP servers | `header`, `valuePrefix`, `defaultHeaders` |
-| `bearer` | `Authorization: Bearer <token>` | OpenAI, OpenRouter, GitHub, Slack, WhatsApp, MCP servers | `defaultHeaders` |
-| `gcp` | SA JSON → OAuth2 token refresh + token vending → Bearer | Vertex AI, GCP APIs | `project`, `location` |
-| `pathToken` | Token inserted into URL path | Telegram | `prefix` |
-| `oauth2` | Client credentials → token exchange → Bearer | Enterprise MCP servers, corporate APIs | `clientID`, `tokenURL`, `scopes` |
-| `none` | No auth (proxy allowlist only) | Services with auth at another layer | — |
+| Type | Injection mechanism | Services | Extra config | `provider` |
+|------|-------------------|----------|--------------|------------|
+| `apiKey` | Custom header with secret value | Gemini, Anthropic, Discord, Jira, MCP servers | `header`, `valuePrefix`, `defaultHeaders` | LLM providers: `google`, `anthropic`, etc. |
+| `bearer` | `Authorization: Bearer <token>` | OpenAI, OpenRouter, GitHub, Slack, WhatsApp, MCP servers | `defaultHeaders` | LLM providers: `openai`, `openrouter`, etc. |
+| `gcp` | SA JSON → OAuth2 token refresh + token vending → Bearer | Vertex AI, GCP APIs | `project`, `location` | `google` (Vertex AI) |
+| `pathToken` | Token inserted into URL path | Telegram | `prefix` | Typically not set |
+| `oauth2` | Client credentials → token exchange → Bearer | Enterprise MCP servers, corporate APIs | `clientID`, `tokenURL`, `scopes` | Optional |
+| `none` | No auth (proxy allowlist only) | Services with auth at another layer | — | N/A |
+
+When `provider` is set, the proxy uses **gateway mode** (path-prefix routing, dynamic `openclaw.json` generation). When omitted, the proxy uses **MITM forward proxy mode** only.
 
 ---
 

@@ -137,6 +137,12 @@ spec:
                       required:
                       - prefix
                       type: object
+                    provider:
+                      description: |-
+                        Provider maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter").
+                        When set, the controller configures gateway routing and generates the provider entry in openclaw.json.
+                        When omitted, the credential is used for MITM forward proxy only (no provider entry).
+                      type: string
                     secretRef:
                       description: |-
                         SecretRef references the Kubernetes Secret holding the credential value.

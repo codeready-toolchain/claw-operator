@@ -242,8 +242,9 @@ func createClawInstance(t *testing.T, ctx context.Context, name, namespace strin
 	instance.Namespace = namespace
 	instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 		{
-			Name: "gemini",
-			Type: clawv1alpha1.CredentialTypeAPIKey,
+			Name:     "gemini",
+			Type:     clawv1alpha1.CredentialTypeAPIKey,
+			Provider: "google",
 			SecretRef: &clawv1alpha1.SecretRef{
 				Name: aiModelSecret,
 				Key:  aiModelSecretKey,
@@ -257,8 +258,41 @@ func createClawInstance(t *testing.T, ctx context.Context, name, namespace strin
 	require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 }
 
-// testCredentials returns a standard credentials slice for tests.
+// createClawInstanceMITMOnly creates a Claw instance without Provider (MITM-only proxy path).
+func createClawInstanceMITMOnly(t *testing.T, ctx context.Context, name, namespace string) {
+	t.Helper()
+
+	secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+	require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
+
+	instance := &clawv1alpha1.Claw{}
+	instance.Name = name
+	instance.Namespace = namespace
+	instance.Spec.Credentials = testCredentialsMITMOnly()
+	require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+}
+
+// testCredentials returns a standard credentials slice for tests (gateway mode with provider set).
 func testCredentials() []clawv1alpha1.CredentialSpec {
+	return []clawv1alpha1.CredentialSpec{
+		{
+			Name:     "gemini",
+			Type:     clawv1alpha1.CredentialTypeAPIKey,
+			Provider: "google",
+			SecretRef: &clawv1alpha1.SecretRef{
+				Name: aiModelSecret,
+				Key:  aiModelSecretKey,
+			},
+			Domain: ".googleapis.com",
+			APIKey: &clawv1alpha1.APIKeyConfig{
+				Header: "x-goog-api-key",
+			},
+		},
+	}
+}
+
+// testCredentialsMITMOnly returns credentials without Provider set, exercising the MITM-only path.
+func testCredentialsMITMOnly() []clawv1alpha1.CredentialSpec {
 	return []clawv1alpha1.CredentialSpec{
 		{
 			Name: "gemini",

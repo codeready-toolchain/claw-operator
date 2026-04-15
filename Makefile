@@ -236,7 +236,7 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 define generate-deploy-overlay
 	@rm -rf config/.deploy && mkdir -p config/.deploy
 	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- ../default\nimages:\n- name: controller\n  newName: $(shell echo $(1) | cut -d: -f1)\n  newTag: $(shell echo $(1) | cut -d: -f2)\npatches:\n- path: proxy_image_patch.yaml\n  target:\n    kind: Deployment\n' > config/.deploy/kustomization.yaml
-	@printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: controller-manager\nspec:\n  template:\n    spec:\n      containers:\n      - name: manager\n        imagePullPolicy: $(or $(3),IfNotPresent)\n        env:\n        - name: PROXY_IMAGE\n          value: "$(2)"\n' > config/.deploy/proxy_image_patch.yaml
+	@printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: controller-manager\nspec:\n  template:\n    spec:\n      containers:\n      - name: manager\n        imagePullPolicy: $(or $(3),IfNotPresent)\n        env:\n        - name: PROXY_IMAGE\n          value: "$(2)"\n        - name: IMAGE_PULL_POLICY\n          value: "$(or $(3),)"\n' > config/.deploy/proxy_image_patch.yaml
 endef
 
 ##@ Deployment
@@ -292,6 +292,7 @@ endif
 	$(MAKE) install
 	$(call generate-deploy-overlay,$(REGISTRY)/claw-operator:$(TAG),$(REGISTRY)/claw-proxy:$(TAG),Always)
 	@trap 'rm -rf config/.deploy' EXIT; $(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
+	@$(KUBECTL) rollout restart deployment -n claw-operator claw-operator-controller-manager || { echo "ERROR: rollout restart failed" >&2; false; }
 
 .PHONY: dev-setup
 dev-setup: ## Full dev setup: build, push, and deploy.

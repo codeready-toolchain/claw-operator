@@ -27,9 +27,10 @@ spec:
       secretRef:
         name: gemini-api-key
         key: api-key
-      domain: ".googleapis.com"
+      domain: "generativelanguage.googleapis.com"
       apiKey:
         header: x-goog-api-key
+      provider: google
 ```
 
 #### Spec Fields
@@ -54,6 +55,7 @@ spec:
     - `clientID` (string): OAuth2 client ID
     - `tokenURL` (string): OAuth2 token endpoint
     - `scopes` ([]string, optional): Scopes requested during token exchange
+  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., `google`, `anthropic`, `openai`, `openrouter`). When set, the controller configures the proxy's gateway mode for this credential and dynamically generates the provider entry in `openclaw.json` with a `baseUrl` pointing to the proxy. When omitted, the credential is used for MITM forward proxy only (no provider entry generated).
 
 #### Status Fields
 
@@ -262,9 +264,10 @@ spec:
       secretRef:
         name: gemini-api-key
         key: api-key
-      domain: ".googleapis.com"
+      domain: "generativelanguage.googleapis.com"
       apiKey:
         header: x-goog-api-key
+      provider: google
 EOF
 ```
 
@@ -303,7 +306,7 @@ With the browser tab open (so the pairing request stays active), list pending re
 oc exec -n claw-operator deployment/claw -- \
   node /app/dist/index.js devices list
 
-# Approve by request ID (copy from the Pending table above)
+# Approve by request ID (replace <requestId> with the ID from the Pending table above)
 oc exec -n claw-operator deployment/claw -- \
   node /app/dist/index.js devices approve <requestId>
 ```

@@ -19,19 +19,9 @@ package controller
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
-	"errors"
 	"fmt"
-	"math/big"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -43,8 +33,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -89,8 +79,9 @@ const (
 // ClawResourceReconciler reconciles all resources for Claw
 type ClawResourceReconciler struct {
 	client.Client
-	Scheme     *runtime.Scheme
-	ProxyImage string
+	Scheme          *runtime.Scheme
+	ProxyImage      string
+	ImagePullPolicy string
 }
 
 // +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws,verbs=get;list;watch
@@ -180,14 +171,9 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Override proxy image if configured (set via PROXY_IMAGE env var)
-	if err := configureProxyImage(objects, r.ProxyImage); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to configure proxy image: %w", err)
-	}
-
-	// Configure proxy deployment with credential env vars and volume mounts
-	if err := configureProxyForCredentials(objects, instance.Spec.Credentials); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
+	// Apply deployment overrides (proxy image, pull policy, credentials)
+	if err := r.configureDeployments(objects, instance); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Stamp proxy config hash to trigger rollout on config changes
@@ -232,6 +218,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
 	}
 
+	// Inject LLM providers into ConfigMap based on credentials with Provider set
+	if err := injectProvidersIntoConfigMap(objects, instance.Spec.Credentials); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
+	}
+
 	// Filter out Route (applied in phase above) and proxy ConfigMap (controller-managed)
 	remainingObjects := []*unstructured.Unstructured{}
 	for _, obj := range objects {
@@ -265,7 +256,23 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{}, nil
 }
 
-// buildKustomizedObjects builds Kustomize manifests and returns parsed unstructured objects
+// configureDeployments applies deployment overrides (proxy image, pull policy, credentials)
+func (r *ClawResourceReconciler) configureDeployments(
+	objects []*unstructured.Unstructured,
+	instance *clawv1alpha1.Claw,
+) error {
+	if err := configureProxyImage(objects, r.ProxyImage); err != nil {
+		return fmt.Errorf("failed to configure proxy image: %w", err)
+	}
+	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
+		return fmt.Errorf("failed to configure image pull policy: %w", err)
+	}
+	if err := configureProxyForCredentials(objects, instance.Spec.Credentials); err != nil {
+		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
+	}
+	return nil
+}
+
 func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstructured, error) {
 	// Write all manifest files (including kustomization.yaml) to in-memory filesystem
 	fs := filesys.MakeFsInMemory()
@@ -317,7 +324,7 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 	for _, obj := range objects {
 		if err := r.Patch(ctx, obj, client.Apply, &client.PatchOptions{
 			FieldManager: "claw-operator",
-			Force:        &[]bool{true}[0],
+			Force:        ptr.To(true),
 		}); err != nil {
 			// Skip resources whose CRDs are not registered (e.g., Route on non-OpenShift clusters)
 			if meta.IsNoMatchError(err) {
@@ -397,554 +404,111 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
 }
 
-// generateGatewayToken generates a cryptographically secure random token
-// using crypto/rand. Returns a 64-character hex string (32 random bytes).
-func generateGatewayToken() (string, error) {
-	randomBytes := make([]byte, 32)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(randomBytes), nil
-}
-
-// applyGatewaySecret creates or updates the claw-gateway-token Secret with the gateway token
-func (r *ClawResourceReconciler) applyGatewaySecret(ctx context.Context, instance *clawv1alpha1.Claw) error {
-	logger := log.FromContext(ctx)
-
-	// check if the secret already exists
-	existingSecret := &corev1.Secret{}
-	secretKey := client.ObjectKey{
-		Namespace: instance.Namespace,
-		Name:      ClawGatewaySecretName,
-	}
-	if err := r.Get(ctx, secretKey, existingSecret); err == nil {
-		// Secret exists - check if it has the token entry
-		if existingToken, exists := existingSecret.Data[GatewayTokenKeyName]; exists && len(existingToken) > 0 {
-			logger.Info("Gateway secret already exists with token, skipping generation", "name", ClawGatewaySecretName)
-			// no need to generate new token, just ensure owner reference is set
-			return r.doCreateGatewaySecret(ctx, instance, string(existingToken))
-		} else {
-			// Secret exists but missing or empty token - generate new one
-			logger.Info("Gateway secret exists but missing token, generating new one")
-			token, err := generateGatewayToken()
-			if err != nil {
-				return fmt.Errorf("failed to generate gateway token: %w", err)
-			}
-			return r.doCreateGatewaySecret(ctx, instance, token)
-		}
-	} else if apierrors.IsNotFound(err) {
-		// Secret doesn't exist - generate new token
-		logger.Info("Gateway secret does not exist, generating new token")
-		token, err := generateGatewayToken()
-		if err != nil {
-			return fmt.Errorf("failed to generate gateway token: %w", err)
-		}
-		return r.doCreateGatewaySecret(ctx, instance, token)
-	} else {
-		// Error fetching secret
-		return fmt.Errorf("failed to check for existing gateway secret: %w", err)
-	}
-}
-
-func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, instance *clawv1alpha1.Claw, token string) error {
-	logger := log.FromContext(ctx)
-	// Create the Secret object
-	secret := &corev1.Secret{}
-	secret.SetName(ClawGatewaySecretName)
-	secret.SetNamespace(instance.Namespace)
-	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
-	secret.Data = map[string][]byte{
-		GatewayTokenKeyName: []byte(token),
-	}
-
-	// Set owner reference for garbage collection
-	if err := controllerutil.SetControllerReference(instance, secret, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set controller reference on gateway secret: %w", err)
-	}
-
-	// Apply the Secret using server-side apply
-	logger.Info("Applying gateway secret", "name", secret.Name)
-	if err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
-		FieldManager: "claw-operator",
-		Force:        &[]bool{true}[0],
-	}); err != nil {
-		return fmt.Errorf("failed to apply gateway secret: %w", err)
-	}
-
-	logger.Info("Successfully applied gateway secret")
-	return nil
-}
-
-// validateCredentials validates all credential entries: checks that referenced Secrets exist
-// and that type-specific configuration is present. Returns an error describing all failures.
-func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instance *clawv1alpha1.Claw) error {
-	var errs []error
-
-	for _, cred := range instance.Spec.Credentials {
-		// Validate SecretRef exists for types that require it
-		if cred.Type != clawv1alpha1.CredentialTypeNone {
-			if cred.SecretRef == nil {
-				errs = append(errs, fmt.Errorf("credential %q (type %s): secretRef is required", cred.Name, cred.Type))
-				continue
-			}
-			secret := &corev1.Secret{}
-			if err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: cred.SecretRef.Name}, secret); err != nil {
-				if apierrors.IsNotFound(err) {
-					errs = append(errs, fmt.Errorf("credential %q: Secret %q not found", cred.Name, cred.SecretRef.Name))
-				} else {
-					errs = append(errs, fmt.Errorf("credential %q: failed to get Secret %q: %w", cred.Name, cred.SecretRef.Name, err))
-				}
-				continue
-			}
-			if _, ok := secret.Data[cred.SecretRef.Key]; !ok {
-				errs = append(errs, fmt.Errorf("credential %q: key %q not found in Secret %q", cred.Name, cred.SecretRef.Key, cred.SecretRef.Name))
-			}
-		}
-
-		// Type-specific validation (defense-in-depth beyond CEL)
-		switch cred.Type {
-		case clawv1alpha1.CredentialTypeAPIKey:
-			if cred.APIKey == nil {
-				errs = append(errs, fmt.Errorf("credential %q: apiKey config is required for type apiKey", cred.Name))
-			}
-		case clawv1alpha1.CredentialTypeGCP:
-			if cred.GCP == nil {
-				errs = append(errs, fmt.Errorf("credential %q: gcp config is required for type gcp", cred.Name))
-			}
-		case clawv1alpha1.CredentialTypePathToken:
-			if cred.PathToken == nil {
-				errs = append(errs, fmt.Errorf("credential %q: pathToken config is required for type pathToken", cred.Name))
-			}
-		case clawv1alpha1.CredentialTypeOAuth2:
-			if cred.OAuth2 == nil {
-				errs = append(errs, fmt.Errorf("credential %q: oauth2 config is required for type oauth2", cred.Name))
-			}
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("credential validation failed: %w", errors.Join(errs...))
-	}
-	return nil
-}
-
-// applyProxyCA ensures the proxy CA Secret exists with a valid CA certificate and key.
-// If the Secret is missing or lacks valid data, a new P-256 ECDSA CA is generated.
-func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *clawv1alpha1.Claw) error {
-	logger := log.FromContext(ctx)
-
-	existing := &corev1.Secret{}
-	err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: ClawProxyCACertSecretName}, existing)
-	if err == nil {
-		if len(existing.Data["ca.crt"]) > 0 && len(existing.Data["ca.key"]) > 0 {
-			logger.Info("Proxy CA secret already exists, skipping generation")
-			return nil
-		}
-	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to check for existing proxy CA secret: %w", err)
-	}
-
-	certPEM, keyPEM, err := generateCACertificate()
-	if err != nil {
-		return fmt.Errorf("failed to generate proxy CA: %w", err)
-	}
-
-	secret := &corev1.Secret{}
-	secret.SetName(ClawProxyCACertSecretName)
-	secret.SetNamespace(instance.Namespace)
-	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
-	secret.Data = map[string][]byte{
-		"ca.crt": certPEM,
-		"ca.key": keyPEM,
-	}
-
-	if err := controllerutil.SetControllerReference(instance, secret, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set controller reference on proxy CA secret: %w", err)
-	}
-
-	if err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
-		FieldManager: "claw-operator",
-		Force:        &[]bool{true}[0],
-	}); err != nil {
-		return fmt.Errorf("failed to apply proxy CA secret: %w", err)
-	}
-
-	logger.Info("Generated and applied proxy CA secret")
-	return nil
-}
-
-// generateCACertificate creates a self-signed CA certificate and private key.
-// Returns PEM-encoded cert and key bytes.
-func generateCACertificate() (certPEM, keyPEM []byte, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate CA key: %w", err)
-	}
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate serial number: %w", err)
-	}
-
-	template := &x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			Organization: []string{"Claw Operator"},
-			CommonName:   "Claw Proxy CA",
-		},
-		NotBefore:             time.Now().Add(-1 * time.Hour),
-		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            0,
-		MaxPathLenZero:        true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create CA certificate: %w", err)
-	}
-
-	certBuf := &bytes.Buffer{}
-	if err := pem.Encode(certBuf, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
-		return nil, nil, fmt.Errorf("failed to PEM-encode certificate: %w", err)
-	}
-
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal CA key: %w", err)
-	}
-	keyBuf := &bytes.Buffer{}
-	if err := pem.Encode(keyBuf, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
-		return nil, nil, fmt.Errorf("failed to PEM-encode key: %w", err)
-	}
-
-	return certBuf.Bytes(), keyBuf.Bytes(), nil
-}
-
-// proxyRoute is a single route entry in the proxy config JSON.
-type proxyRoute struct {
-	Domain         string            `json:"domain"`
-	Injector       string            `json:"injector"`
-	Header         string            `json:"header,omitempty"`
-	ValuePrefix    string            `json:"valuePrefix,omitempty"`
-	EnvVar         string            `json:"envVar,omitempty"`
-	SAFilePath     string            `json:"saFilePath,omitempty"`
-	GCPProject     string            `json:"gcpProject,omitempty"`
-	GCPLocation    string            `json:"gcpLocation,omitempty"`
-	PathPrefix     string            `json:"pathPrefix,omitempty"`
-	ClientID       string            `json:"clientID,omitempty"`
-	TokenURL       string            `json:"tokenURL,omitempty"`
-	Scopes         []string          `json:"scopes,omitempty"`
-	DefaultHeaders map[string]string `json:"defaultHeaders,omitempty"`
-}
-
-// proxyConfig is the top-level proxy configuration JSON.
-type proxyConfig struct {
-	Routes []proxyRoute `json:"routes"`
-}
-
-// credEnvVarName derives the proxy env var name from a credential entry name.
-// e.g., "gemini" -> "CRED_GEMINI", "vertex-ai" -> "CRED_VERTEX_AI"
-func credEnvVarName(credName string) string {
-	upper := strings.ToUpper(credName)
-	return "CRED_" + strings.ReplaceAll(upper, "-", "_")
-}
-
-// generateProxyConfig builds the proxy config JSON from spec.credentials[].
-// Exact-match domains are emitted before suffix-match domains for predictable matching.
-func generateProxyConfig(credentials []clawv1alpha1.CredentialSpec) ([]byte, error) {
-	var exact, suffix []proxyRoute
-
+// injectProvidersIntoConfigMap dynamically builds the models.providers section of openclaw.json
+// from credentials that have Provider set. Each provider entry gets a baseUrl pointing to the
+// proxy's gateway path and a dummy apiKey (real credentials are injected by the proxy).
+func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
+	providers := map[string]any{}
 	for _, cred := range credentials {
-		route := proxyRoute{
-			Domain:         cred.Domain,
-			DefaultHeaders: cred.DefaultHeaders,
+		if cred.Provider == "" {
+			continue
 		}
-
-		switch cred.Type {
-		case clawv1alpha1.CredentialTypeAPIKey:
-			route.Injector = "api_key"
-			route.EnvVar = credEnvVarName(cred.Name)
-			if cred.APIKey != nil {
-				route.Header = cred.APIKey.Header
-				route.ValuePrefix = cred.APIKey.ValuePrefix
-			}
-		case clawv1alpha1.CredentialTypeBearer:
-			route.Injector = "bearer"
-			route.EnvVar = credEnvVarName(cred.Name)
-		case clawv1alpha1.CredentialTypeGCP:
-			route.Injector = "gcp"
-			route.SAFilePath = "/etc/proxy/credentials/" + cred.Name + "/sa-key.json"
-			if cred.GCP != nil {
-				route.GCPProject = cred.GCP.Project
-				route.GCPLocation = cred.GCP.Location
-			}
-		case clawv1alpha1.CredentialTypeNone:
-			route.Injector = "none"
-		case clawv1alpha1.CredentialTypePathToken:
-			route.Injector = "path_token"
-			route.EnvVar = credEnvVarName(cred.Name)
-			if cred.PathToken != nil {
-				route.PathPrefix = cred.PathToken.Prefix
-			}
-		case clawv1alpha1.CredentialTypeOAuth2:
-			route.Injector = "oauth2"
-			route.EnvVar = credEnvVarName(cred.Name)
-			if cred.OAuth2 != nil {
-				route.ClientID = cred.OAuth2.ClientID
-				route.TokenURL = cred.OAuth2.TokenURL
-				route.Scopes = cred.OAuth2.Scopes
-			}
+		if _, exists := providers[cred.Provider]; exists {
+			return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
 		}
-
-		if strings.HasPrefix(cred.Domain, ".") {
-			suffix = append(suffix, route)
-		} else {
-			exact = append(exact, route)
+		// PathToken uses PathPrefix for token injection in the URL path (e.g., /bot<TOKEN>/...),
+		// not for gateway routing — skip provider entry to avoid referencing a non-existent gateway route.
+		if cred.Type == clawv1alpha1.CredentialTypePathToken {
+			continue
 		}
-	}
-
-	// Stable ordering: exact before suffix, alphabetical within each group
-	sort.Slice(exact, func(i, j int) bool { return exact[i].Domain < exact[j].Domain })
-	sort.Slice(suffix, func(i, j int) bool { return suffix[i].Domain < suffix[j].Domain })
-
-	cfg := proxyConfig{Routes: append(exact, suffix...)}
-	return json.Marshal(cfg)
-}
-
-// applyProxyConfigMap creates or updates the proxy config ConfigMap with the precomputed JSON.
-func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instance *clawv1alpha1.Claw, configJSON []byte) error {
-	logger := log.FromContext(ctx)
-
-	cm := &corev1.ConfigMap{}
-	cm.SetName(ClawProxyConfigMapName)
-	cm.SetNamespace(instance.Namespace)
-	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
-	cm.Data = map[string]string{
-		"proxy-config.json": string(configJSON),
-	}
-
-	if err := controllerutil.SetControllerReference(instance, cm, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set controller reference on proxy config: %w", err)
-	}
-
-	if err := r.Patch(ctx, cm, client.Apply, &client.PatchOptions{
-		FieldManager: "claw-operator",
-		Force:        &[]bool{true}[0],
-	}); err != nil {
-		return fmt.Errorf("failed to apply proxy config: %w", err)
-	}
-
-	logger.Info("Applied proxy config ConfigMap")
-	return nil
-}
-
-// configureProxyImage overrides the proxy Deployment's container image.
-// If image is empty, the embedded default is preserved.
-func configureProxyImage(objects []*unstructured.Unstructured, image string) error {
-	if image == "" {
-		return nil
+		info := resolveProviderInfo(cred)
+		baseURL := "http://claw-proxy:8080/" + strings.ToLower(cred.Name) + info.BasePath
+		providers[cred.Provider] = map[string]any{
+			"baseUrl": baseURL,
+			"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
+			"models":  []any{},
+		}
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+		if obj.GetKind() != ConfigMapKind || obj.GetName() != ClawConfigMapName {
 			continue
 		}
 
-		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		openclawJSON, found, err := unstructured.NestedString(obj.Object, "data", "openclaw.json")
 		if err != nil {
-			return fmt.Errorf("failed to get containers from proxy deployment: %w", err)
+			return fmt.Errorf("failed to extract openclaw.json from ConfigMap: %w", err)
 		}
 		if !found {
-			return fmt.Errorf("containers field not found in proxy deployment")
+			return fmt.Errorf("openclaw.json not found in ConfigMap data")
 		}
 
-		for i, c := range containers {
-			cm, ok := c.(map[string]any)
-			if !ok {
-				continue
-			}
-			if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawProxyContainerName {
-				cm["image"] = image
-				containers[i] = cm
-				return unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers")
-			}
-		}
-		return fmt.Errorf("container %q not found in proxy deployment", ClawProxyContainerName)
-	}
-	return fmt.Errorf("claw-proxy deployment not found in manifests")
-}
-
-// configureProxyForCredentials adds credential env vars and volume mounts to the
-// claw-proxy Deployment based on spec.credentials[]. This modifies the parsed
-// kustomize objects in-place before they are applied via SSA.
-func configureProxyForCredentials(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
-	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
-			continue
+		var config map[string]any
+		if err := json.Unmarshal([]byte(openclawJSON), &config); err != nil {
+			return fmt.Errorf("failed to parse openclaw.json: %w", err)
 		}
 
-		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		models, _ := config["models"].(map[string]any)
+		if models == nil {
+			models = map[string]any{}
+			config["models"] = models
+		}
+		models["providers"] = providers
+
+		filterAgentDefaultsForProviders(config, providers)
+
+		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 		if err != nil {
-			return fmt.Errorf("failed to get containers from proxy deployment: %w", err)
-		}
-		if !found {
-			return fmt.Errorf("containers field not found in proxy deployment")
+			return fmt.Errorf("failed to marshal openclaw.json: %w", err)
 		}
 
-		containerIdx := -1
-		var container map[string]any
-		for i, c := range containers {
-			cm, ok := c.(map[string]any)
-			if !ok {
-				continue
-			}
-			if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawProxyContainerName {
-				containerIdx = i
-				container = cm
-				break
-			}
+		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "openclaw.json"); err != nil {
+			return fmt.Errorf("failed to set updated openclaw.json in ConfigMap: %w", err)
 		}
-		if containerIdx < 0 {
-			return fmt.Errorf("container %q not found in proxy deployment", ClawProxyContainerName)
-		}
-
-		envVars, _, _ := unstructured.NestedSlice(container, "env")
-		volumeMounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
-		volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
-
-		for _, cred := range credentials {
-			switch cred.Type {
-			case clawv1alpha1.CredentialTypeAPIKey, clawv1alpha1.CredentialTypeBearer,
-				clawv1alpha1.CredentialTypePathToken, clawv1alpha1.CredentialTypeOAuth2:
-				if cred.SecretRef == nil {
-					continue
-				}
-				envVars = append(envVars, map[string]any{
-					"name": credEnvVarName(cred.Name),
-					"valueFrom": map[string]any{
-						"secretKeyRef": map[string]any{
-							"name": cred.SecretRef.Name,
-							"key":  cred.SecretRef.Key,
-						},
-					},
-				})
-
-			case clawv1alpha1.CredentialTypeGCP:
-				if cred.SecretRef == nil {
-					continue
-				}
-				volName := "cred-" + cred.Name
-				volumes = append(volumes, map[string]any{
-					"name": volName,
-					"secret": map[string]any{
-						"secretName": cred.SecretRef.Name,
-						"items": []any{
-							map[string]any{
-								"key":  cred.SecretRef.Key,
-								"path": "sa-key.json",
-							},
-						},
-					},
-				})
-				volumeMounts = append(volumeMounts, map[string]any{
-					"name":      volName,
-					"mountPath": "/etc/proxy/credentials/" + cred.Name,
-					"readOnly":  true,
-				})
-
-			}
-		}
-
-		if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
-			return fmt.Errorf("failed to set env vars: %w", err)
-		}
-		if err := unstructured.SetNestedSlice(container, volumeMounts, "volumeMounts"); err != nil {
-			return fmt.Errorf("failed to set volume mounts: %w", err)
-		}
-		containers[containerIdx] = container
-		if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
-			return fmt.Errorf("failed to set containers: %w", err)
-		}
-		if err := unstructured.SetNestedSlice(obj.Object, volumes, "spec", "template", "spec", "volumes"); err != nil {
-			return fmt.Errorf("failed to set volumes: %w", err)
-		}
-
 		return nil
 	}
-	return fmt.Errorf("claw-proxy deployment not found in manifests")
+
+	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
 }
 
-// stampProxyConfigHash adds a hash annotation to the proxy pod template to trigger
-// rollouts when the proxy config changes.
-func stampProxyConfigHash(objects []*unstructured.Unstructured, hash string) error {
-	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
-			continue
-		}
-
-		annotations, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
-		if annotations == nil {
-			annotations = make(map[string]string)
-		}
-		annotations[clawv1alpha1.AnnotationKeyProxyConfigHash] = hash
-
-		if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
-			return fmt.Errorf("failed to set pod template annotations: %w", err)
-		}
-		return nil
+// filterAgentDefaultsForProviders removes model entries from agents.defaults whose
+// provider (the part before "/" in the model name) is not in the injected providers map,
+// and clears agents.defaults.model.primary if its provider is not available.
+func filterAgentDefaultsForProviders(config map[string]any, providers map[string]any) {
+	agents, _ := config["agents"].(map[string]any)
+	if agents == nil {
+		return
 	}
-	return fmt.Errorf("claw-proxy deployment not found for config hash stamping")
-}
-
-// stampSecretVersionAnnotation fetches each credential's referenced Secret and stamps
-// its ResourceVersion as a pod template annotation. This ensures that when Secret data
-// changes (without any Claw CR spec change), the pod template differs and Kubernetes
-// triggers a rolling update.
-func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
-	ctx context.Context,
-	objects []*unstructured.Unstructured,
-	instance *clawv1alpha1.Claw,
-) error {
-	versions := make(map[string]string)
-	for _, cred := range instance.Spec.Credentials {
-		if cred.SecretRef == nil {
-			continue
-		}
-		secret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{
-			Namespace: instance.Namespace,
-			Name:      cred.SecretRef.Name,
-		}, secret); err != nil {
-			return fmt.Errorf("failed to get Secret %q for credential %q: %w", cred.SecretRef.Name, cred.Name, err)
-		}
-		versions[cred.Name] = secret.ResourceVersion
+	defaults, _ := agents["defaults"].(map[string]any)
+	if defaults == nil {
+		return
 	}
 
-	if len(versions) == 0 {
-		return nil
-	}
+	if modelMap, ok := defaults["models"].(map[string]any); ok {
+		var available []string
+		for modelName := range modelMap {
+			providerKey, _, _ := strings.Cut(modelName, "/")
+			if _, exists := providers[providerKey]; !exists {
+				delete(modelMap, modelName)
+			} else {
+				available = append(available, modelName)
+			}
+		}
+		sort.Strings(available)
 
-	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
-			continue
+		if primary, _ := defaults["model"].(map[string]any); primary != nil {
+			if primaryName, _ := primary["primary"].(string); primaryName != "" {
+				providerKey, _, _ := strings.Cut(primaryName, "/")
+				if _, exists := providers[providerKey]; !exists {
+					if len(available) > 0 {
+						primary["primary"] = available[0]
+					} else {
+						primary["primary"] = ""
+					}
+				}
+			}
 		}
-
-		annotations, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
-		if annotations == nil {
-			annotations = make(map[string]string)
-		}
-		for credName, rv := range versions {
-			annotations[clawv1alpha1.AnnotationPrefixSecretVersion+credName+clawv1alpha1.AnnotationSuffixSecretVersion] = rv
-		}
-		if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
-			return fmt.Errorf("failed to set secret version annotations: %w", err)
-		}
-		return nil
 	}
-	return fmt.Errorf("claw-proxy deployment not found for secret version stamping")
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem
@@ -979,223 +543,6 @@ func parseYAMLToObjects(yamlData []byte) ([]*unstructured.Unstructured, error) {
 	}
 
 	return objects, nil
-}
-
-// getDeploymentAvailableStatus fetches a Deployment and returns whether its Available condition is True
-func (r *ClawResourceReconciler) getDeploymentAvailableStatus(ctx context.Context, namespace, name string) (bool, error) {
-	logger := log.FromContext(ctx)
-	deployment := &appsv1.Deployment{}
-	err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("Deployment not found", "name", name)
-			return false, nil
-		}
-		return false, err
-	}
-
-	// check for Available condition
-	for _, condition := range deployment.Status.Conditions {
-		if condition.Type == appsv1.DeploymentAvailable {
-			return condition.Status == corev1.ConditionTrue, nil
-		}
-	}
-
-	// No Available condition found
-	return false, nil
-}
-
-// checkDeploymentsReady checks if both claw and claw-proxy Deployments are ready
-func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, namespace string) (bool, []string, error) {
-	clawReady, err := r.getDeploymentAvailableStatus(ctx, namespace, ClawDeploymentName)
-	if err != nil {
-		return false, nil, err
-	}
-
-	proxyReady, err := r.getDeploymentAvailableStatus(ctx, namespace, ClawProxyDeploymentName)
-	if err != nil {
-		return false, nil, err
-	}
-
-	var pending []string
-	if !clawReady {
-		pending = append(pending, ClawDeploymentName)
-	}
-	if !proxyReady {
-		pending = append(pending, ClawProxyDeploymentName)
-	}
-
-	return len(pending) == 0, pending, nil
-}
-
-// getRouteURL fetches the Route and returns the HTTPS URL, or empty string if not found
-func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *clawv1alpha1.Claw) (string, error) {
-	logger := log.FromContext(ctx)
-
-	// Create an unstructured object to fetch the Route (OpenShift-specific resource)
-	route := &unstructured.Unstructured{}
-	route.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "route.openshift.io",
-		Version: "v1",
-		Kind:    RouteKind,
-	})
-
-	if err := r.Get(ctx, client.ObjectKey{
-		Namespace: instance.Namespace,
-		Name:      ClawRouteName,
-	}, route); err != nil {
-		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
-			// Route not found (or CRD not registered on non-OpenShift clusters)
-			logger.Info("Route not found or CRD not registered", "name", ClawRouteName)
-			return "", nil
-		}
-		return "", fmt.Errorf("failed to get Route: %w", err)
-	}
-
-	// Extract host from Route.Status.Ingress[0].Host (authoritative source)
-	ingress, found, err := unstructured.NestedSlice(route.Object, "status", "ingress")
-	if err != nil {
-		return "", fmt.Errorf("failed to extract ingress from Route status: %w", err)
-	}
-	if !found || len(ingress) == 0 {
-		// Route exists but status not yet populated by OpenShift router
-		return "", nil
-	}
-
-	// Get first ingress entry (primary router)
-	firstIngress, ok := ingress[0].(map[string]any)
-	if !ok {
-		return "", fmt.Errorf("failed to parse ingress entry")
-	}
-
-	host, found, err := unstructured.NestedString(firstIngress, "host")
-	if err != nil {
-		return "", fmt.Errorf("failed to extract host from ingress: %w", err)
-	}
-	if !found || host == "" {
-		// Ingress entry exists but host not yet populated
-		return "", nil
-	}
-
-	return "https://" + host, nil
-}
-
-// setCondition is a generic helper to set a condition on the Claw instance.
-func setCondition(instance *clawv1alpha1.Claw, condType string, status metav1.ConditionStatus, reason, message string) {
-	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-		Type:               condType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: instance.Generation,
-	})
-}
-
-// setReadyCondition sets the Ready condition on the Claw instance based on deployment readiness
-func setReadyCondition(instance *clawv1alpha1.Claw, ready bool, pendingDeployments []string) {
-	var status metav1.ConditionStatus
-	var reason, message string
-
-	if ready {
-		status = metav1.ConditionTrue
-		reason = clawv1alpha1.ConditionReasonReady
-		message = "Claw instance is ready"
-	} else {
-		status = metav1.ConditionFalse
-		reason = clawv1alpha1.ConditionReasonProvisioning
-		if len(pendingDeployments) > 0 {
-			message = "Waiting for deployments to become ready"
-		} else {
-			message = "Provisioning in progress"
-		}
-	}
-
-	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-		Type:               clawv1alpha1.ConditionTypeReady,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: instance.Generation,
-	})
-}
-
-// getGatewayToken fetches the gateway token from the claw-gateway-token Secret and Base64-decodes it.
-// Returns the token string, or empty string if the Secret cannot be read.
-func (r *ClawResourceReconciler) getGatewayToken(ctx context.Context, namespace string) string {
-	logger := log.FromContext(ctx)
-
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{
-		Namespace: namespace,
-		Name:      ClawGatewaySecretName,
-	}, secret); err != nil {
-		logger.Error(err, "Failed to get gateway secret for status URL", "secret", ClawGatewaySecretName)
-		return ""
-	}
-
-	tokenBytes, exists := secret.Data[GatewayTokenKeyName]
-	if !exists || len(tokenBytes) == 0 {
-		logger.Info("Gateway token not found in secret", "secret", ClawGatewaySecretName, "key", GatewayTokenKeyName)
-		return ""
-	}
-
-	// Secret data is already raw bytes (not Base64-encoded in the Data field)
-	// Kubernetes automatically handles Base64 decoding when accessing Secret.Data
-	return string(tokenBytes)
-}
-
-// encodeFragmentValue percent-encodes a string for safe use in a URL fragment.
-// This ensures special characters don't break URL parsing.
-func encodeFragmentValue(v string) string {
-	return url.QueryEscape(v)
-}
-
-// buildClawURL constructs the Claw status URL by appending the gateway token
-// as a URL fragment if both routeURL and token are provided.
-// Returns empty string if routeURL is empty.
-func buildClawURL(routeURL, token string) string {
-	if routeURL == "" {
-		return ""
-	}
-	if token == "" {
-		return routeURL
-	}
-	return routeURL + "#token=" + encodeFragmentValue(token)
-}
-
-// updateStatus updates the Claw status with current deployment conditions
-func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *clawv1alpha1.Claw) error {
-	// check deployment readiness
-	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace)
-	if err != nil {
-		return fmt.Errorf("failed to check deployment readiness: %w", err)
-	}
-
-	// Set Ready condition
-	setReadyCondition(instance, ready, pending)
-
-	// Expose gateway secret name in status
-	instance.Status.GatewayTokenSecretRef = ClawGatewaySecretName
-
-	// Populate URL field only when both deployments are ready
-	if ready {
-		routeURL, err := r.getRouteURL(ctx, instance)
-		if err != nil {
-			return fmt.Errorf("failed to get Route URL: %w", err)
-		}
-
-		token := r.getGatewayToken(ctx, instance.Namespace)
-		instance.Status.URL = buildClawURL(routeURL, token)
-	} else {
-		// Clear URL when deployments are not ready
-		instance.Status.URL = ""
-	}
-
-	// Update status subresource
-	if err := r.Status().Update(ctx, instance); err != nil {
-		return fmt.Errorf("failed to update Claw status: %w", err)
-	}
-	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

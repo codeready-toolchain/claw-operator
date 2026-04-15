@@ -34,6 +34,7 @@ type Route struct {
 	GCPProject     string            `json:"gcpProject,omitempty"`
 	GCPLocation    string            `json:"gcpLocation,omitempty"`
 	PathPrefix     string            `json:"pathPrefix,omitempty"`
+	Upstream       string            `json:"upstream,omitempty"`
 	ClientID       string            `json:"clientID,omitempty"`
 	TokenURL       string            `json:"tokenURL,omitempty"`
 	Scopes         []string          `json:"scopes,omitempty"`
@@ -79,4 +80,22 @@ func (c *Config) MatchRoute(host string) *Route {
 		}
 	}
 	return nil
+}
+
+// MatchRouteByPath finds the first gateway route whose PathPrefix matches the request path.
+// Returns the matched route and the path with the prefix stripped.
+func (c *Config) MatchRouteByPath(path string) (*Route, string) {
+	for i := range c.Routes {
+		prefix := c.Routes[i].PathPrefix
+		if prefix == "" || c.Routes[i].Upstream == "" {
+			continue
+		}
+		if strings.HasPrefix(path, prefix+"/") {
+			return &c.Routes[i], strings.TrimPrefix(path, prefix)
+		}
+		if path == prefix {
+			return &c.Routes[i], "/"
+		}
+	}
+	return nil, ""
 }

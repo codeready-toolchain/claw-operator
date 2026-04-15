@@ -46,29 +46,43 @@ Adding a new service with an existing auth shape is a new entry in `spec.credent
 
 See [credential-examples.md](security-hardening-credential-examples.md) for complete YAML examples of each type.
 
-### 3. Credential Injection — Go MITM Proxy (Q7, Q12)
+### 3. Credential Injection — Hybrid Go Proxy (Q7, Q12)
 
-Replace the nginx proxy with a purpose-built Go credential-injecting MITM forward proxy. The gateway uses standard `HTTP_PROXY`/`HTTPS_PROXY` environment variables with real `https://` API URLs. The proxy intercepts CONNECT tunnels, terminates TLS with an operator-managed CA, injects credentials based on the target domain, and forwards as HTTPS to upstream APIs. This is the same proven pattern used by all reference projects (paude-proxy, OpenShell, onecli). The operator manages the CA lifecycle: generates cert+key at first reconciliation, stores in a Secret, mounts into both pods. On OpenShift, the proxy's outbound trust store uses `config.openshift.io/inject-trusted-cabundle` for corporate proxy CA support.
+Replace the nginx proxy with a purpose-built Go credential-injecting proxy operating in **two modes**, built on `github.com/elazarl/goproxy`:
+
+1. **Gateway mode (API gateway):** For LLM provider calls where the credential has `provider` set. OpenClaw is configured with `baseUrl` pointing to `http://claw-proxy:8080/<cred-name>/...`. The proxy strips the path prefix, injects credentials, and forwards to the upstream LLM API over HTTPS. This avoids the Google ADK JS SDK `thought_signature` bug that occurs with MITM/`env-proxy` on streamed responses.
+
+2. **MITM forward proxy mode:** For general egress traffic (web_fetch, npm, OTEL, etc.). The gateway uses `HTTP_PROXY`/`HTTPS_PROXY` env vars. The proxy intercepts CONNECT tunnels, terminates TLS with an operator-managed CA, injects credentials for allowed domains, and forwards as HTTPS.
+
+The operator manages the CA lifecycle: generates cert+key at first reconciliation, stores in a Secret, mounts into both pods. On OpenShift, the proxy's outbound trust store uses `config.openshift.io/inject-trusted-cabundle` for corporate proxy CA support.
 
 ```
-Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM) ──HTTPS──▶ LLM APIs / External Services
+# Gateway mode (LLM providers with provider set):
+Claw Gateway ──HTTP──▶ Go Proxy (strip prefix, inject creds) ──HTTPS──▶ LLM APIs
+  baseUrl: http://claw-proxy:8080/gemini/v1beta
+
+# MITM forward proxy mode (general egress):
+Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM) ──HTTPS──▶ External Services
+  HTTP_PROXY=http://claw-proxy:8080
                       │
-                      ├─ CONNECT + MITM (operator-managed CA, leaf certs per domain)
-                      ├─ HTTP_PROXY/HTTPS_PROXY env vars on gateway (real https:// URLs)
-                      ├─ Config derived from spec.credentials[]
-                      ├─ Domain → injector routing (CONNECT target host)
-                      ├─ Pluggable injectors: apiKey, bearer, gcp, pathToken, oauth2, kubernetes, none
+                      ├─ Built on github.com/elazarl/goproxy
+                      ├─ Gateway mode: path-prefix routing for LLM providers
+                      ├─ MITM mode: CONNECT + TLS termination (operator-managed CA)
+                      ├─ Config derived from spec.credentials[] (with provider field)
+                      ├─ Dynamic openclaw.json generation from credentials with provider set
+                      ├─ Pluggable injectors: apiKey, bearer, gcp, pathToken, oauth2, none
                       ├─ Strips ALL client auth headers before injection (defense in depth)
                       ├─ Default headers per credential (e.g., anthropic-version)
                       ├─ GCP token vending — intercepts oauth2 token requests for SDK compat
                       ├─ Injection failure → 502 (clear signal, not passthrough)
                       ├─ Credential values redacted in all log output
                       ├─ Domain matching: exact ("api.github.com") or suffix (".googleapis.com")
+                      ├─ NO_PROXY=localhost,127.0.0.1,claw-proxy (prevents circular proxying)
                       ├─ Health endpoint (/healthz)
                       └─ Unknown/disallowed domains → 403
 ```
 
-Port paude-proxy's credential injection layer (~500 LOC, MIT-licensed) as a starting point. The proxy derives its routing configuration from `spec.credentials` — the operator reads the credential entries and generates the proxy's config. Estimated ~800-1000 LOC for the full component.
+The proxy derives its routing configuration from `spec.credentials` — the operator reads the credential entries and generates both the proxy's config JSON and the OpenClaw `openclaw.json` dynamically.
 
 ### 4. Network Isolation (Q3)
 
@@ -93,51 +107,61 @@ Document the threat model (prompt injection, excessive agency) and recommended m
 ## Target Architecture
 
 ```
-                    ┌─────────────────────────────────────────────┐
-                    │               User's Namespace              │
-                    │                                             │
-  User ──HTTPS──▶ Route ──▶ Claw Gateway (port 18789)             │
-                    │           │                                 │
-                    │    ┌──────┴──────┐                          │
-                    │    │ Ingress NP: │                          │
-                    │    │ router only │                          │
-                    │    └──────┬──────┘                          │
-                    │           │                                 │
-                    │    ┌──────┴──────┐                          │
-                    │    │ Egress NP:  │                          │
-                    │    │ proxy only  │                          │
-                    │    └──────┬──────┘                          │
-                    │           ▼                                 │
-                    │    Go MITM Credential Proxy (operator CA)   │
-                    │    ┌──────────────────────────────┐         │
-                    │    │ CONNECT + TLS termination    │         │
-                    │    │ Config from spec.credentials │         │
-                    │    │ Strip ALL client auth headers│         │
-                    │    │ Inject real credentials      │         │
-                    │    │ Default headers per provider │         │
-                    │    │ Injection failure → 502      │         │
-                    │    │ GCP token vending endpoint   │         │
-                    │    │ Credential redaction in logs │         │
-                    │    │ Unknown domains → 403        │         │
-                    │    └──────┬───────────────────────┘         │
-                    │           │                                 │
-                    │    ┌──────┴──────┐                          │
-                    │    │ Egress NP:  │                          │
-                    │    │ TCP 443+DNS │                          │
-                    │    └──────┬──────┘                          │
-                    │           │                                 │
-                    └───────────┼─────────────────────────────────┘
+                    ┌──────────────────────────────────────────────────┐
+                    │               User's Namespace                   │
+                    │                                                  │
+  User ──HTTPS──▶ Route ──▶ Claw Gateway (port 18789)                  │
+                    │           │                                      │
+                    │    ┌──────┴──────┐                               │
+                    │    │ Ingress NP: │                               │
+                    │    │ router only │                               │
+                    │    └──────┬──────┘                               │
+                    │           │                                      │
+                    │    ┌──────┴──────┐                               │
+                    │    │ Egress NP:  │                               │
+                    │    │ proxy only  │                               │
+                    │    └──┬───────┬──┘                               │
+                    │       │       │                                  │
+                    │  [Gateway]  [MITM]                               │
+                    │   baseUrl    CONNECT                             │
+                    │       │       │                                  │
+                    │       ▼       ▼                                  │
+                    │    Hybrid Go Credential Proxy (goproxy)          │
+                    │    ┌────────────────────────────────────┐        │
+                    │    │ Gateway mode: path-prefix routing  │        │
+                    │    │   for LLM providers (provider set) │        │
+                    │    │ MITM mode: CONNECT + TLS termination│       │
+                    │    │   for general egress (HTTP_PROXY)  │        │
+                    │    │ Config from spec.credentials[]     │        │
+                    │    │ Dynamic openclaw.json generation   │        │
+                    │    │ Strip ALL client auth headers      │        │
+                    │    │ Inject real credentials            │        │
+                    │    │ Default headers per provider       │        │
+                    │    │ Injection failure → 502            │        │
+                    │    │ GCP token vending endpoint         │        │
+                    │    │ Credential redaction in logs       │        │
+                    │    │ Unknown domains → 403              │        │
+                    │    └──────┬─────────────────────────────┘        │
+                    │           │                                      │
+                    │    ┌──────┴──────┐                               │
+                    │    │ Egress NP:  │                               │
+                    │    │ TCP 443+DNS │                               │
+                    │    └──────┬──────┘                               │
+                    │           │                                      │
+                    └───────────┼──────────────────────────────────────┘
                                 ▼
                     LLM APIs, GitHub, Telegram, etc.
 
 
   Resources in namespace:
 
-  Claw (instance)               ← spec.credentials[] with all credential entries inline
-  Secret (openclaw-gateway-token)     ← auto-generated gateway token
-  Secret (openclaw-proxy-ca)    ← auto-generated MITM CA cert+key (operator-managed)
-  Secret (llm-keys)             ← user-created, referenced by spec.credentials entries
-  Secret (gcp-sa)               ← user-created, referenced by spec.credentials entries
+  Claw (instance)                      ← spec.credentials[] with provider field for gateway routing
+  ConfigMap (claw-config)              ← openclaw.json with dynamically generated providers
+  ConfigMap (claw-proxy-config)        ← proxy config JSON (routes, injectors, gateway/MITM)
+  Secret (claw-gateway-token)          ← auto-generated gateway token
+  Secret (claw-proxy-ca)               ← auto-generated MITM CA cert+key (operator-managed)
+  Secret (llm-keys)                    ← user-created, referenced by spec.credentials entries
+  Secret (gcp-sa)                      ← user-created, referenced by spec.credentials entries
 ```
 
 ## Out of Scope
