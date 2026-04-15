@@ -22,6 +22,44 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        - name: patch-proxy
+          image: ghcr.io/openclaw/openclaw:slim
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - sh
+            - -c
+            - |
+              cp -a /app/dist/. /patched-dist/
+              patched=0
+              for file in $(grep -rl 'fetchWithWebToolsNetworkGuard({' /patched-dist --include='*.js' 2>/dev/null); do
+                if ! grep -q 'useEnvProxy:true' "$file" 2>/dev/null; then
+                  sed -i 's|fetchWithWebToolsNetworkGuard({|fetchWithWebToolsNetworkGuard({useEnvProxy:true,|g' "$file"
+                  echo "[proxy-patch] Patched: $file"
+                  patched=$((patched + 1))
+                fi
+              done
+              if [ "$patched" -eq 0 ]; then
+                echo "[proxy-patch] No files needed patching"
+              fi
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi
+              cpu: 500m
+          volumeMounts:
+            - name: patched-dist
+              mountPath: /patched-dist
         - name: init-config
           image: mirror.gcr.io/library/busybox:1.37
           imagePullPolicy: IfNotPresent
@@ -82,7 +120,25 @@ spec:
               value: http://claw-proxy:8080
             - name: HTTPS_PROXY
               value: http://claw-proxy:8080
+            - name: http_proxy
+              value: http://claw-proxy:8080
+            - name: https_proxy
+              value: http://claw-proxy:8080
+            - name: NO_PROXY
+              value: localhost,127.0.0.1
+            - name: no_proxy
+              value: localhost,127.0.0.1
+            - name: NODE_USE_ENV_PROXY
+              value: "1"
             - name: NODE_EXTRA_CA_CERTS
+              value: /etc/proxy-ca/ca.crt
+            - name: SSL_CERT_FILE
+              value: /etc/proxy-ca/ca.crt
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/proxy-ca/ca.crt
+            - name: CURL_CA_BUNDLE
+              value: /etc/proxy-ca/ca.crt
+            - name: GIT_SSL_CAINFO
               value: /etc/proxy-ca/ca.crt
           resources:
             requests:
@@ -110,6 +166,8 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
           volumeMounts:
+            - name: patched-dist
+              mountPath: /app/dist
             - name: claw-home
               mountPath: /home/node/.openclaw
             - name: tmp-volume
@@ -125,6 +183,8 @@ spec:
               drop:
                 - ALL
       volumes:
+        - name: patched-dist
+          emptyDir: {}
         - name: claw-home
           persistentVolumeClaim:
             claimName: claw-home-pvc

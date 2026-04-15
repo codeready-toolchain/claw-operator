@@ -16,7 +16,10 @@ require (
 	sigs.k8s.io/yaml v1.6.0
 )
 
-require golang.org/x/oauth2 v0.36.0
+require (
+	github.com/elazarl/goproxy v1.8.3
+	golang.org/x/oauth2 v0.36.0
+)
 
 require (
 	cel.dev/expr v0.25.1 // indirect

@@ -17,43 +17,24 @@ limitations under the License.
 package proxy
 
 import (
-	"bufio"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"log/slog"
-	"math/big"
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/elazarl/goproxy"
 )
 
-type certEntry struct {
-	cert   *tls.Certificate
-	expiry time.Time
-}
-
-// Server is the CONNECT/MITM credential-injecting forward proxy.
+// Server is a MITM credential-injecting forward proxy backed by goproxy.
 type Server struct {
-	config    *Config
-	caCert    *x509.Certificate
-	caKey     *ecdsa.PrivateKey
-	injectors map[string]Injector // domain -> injector
-	logger    *slog.Logger
-	transport *http.Transport
-
-	certCache   map[string]*certEntry
-	certCacheMu sync.RWMutex
-	stopCleanup chan struct{}
+	proxy  *goproxy.ProxyHttpServer
+	logger *slog.Logger
 }
 
 // NewServer creates a proxy server from the given config and CA materials.
@@ -72,54 +53,116 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 		injectors[cfg.Routes[i].Domain] = inj
 	}
 
-	s := &Server{
-		config:    cfg,
-		caCert:    caCert,
-		caKey:     caKey,
-		injectors: injectors,
-		logger:    logger,
-		transport: &http.Transport{
-			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-			DialContext: (&net.Dialer{
-				Timeout: 15 * time.Second,
-			}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
-			IdleConnTimeout:       90 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   10,
-		},
-		certCache:   make(map[string]*certEntry),
-		stopCleanup: make(chan struct{}),
+	proxy := goproxy.NewProxyHttpServer()
+
+	// Override goproxy's default transport which uses InsecureSkipVerify: true.
+	// We MUST verify upstream server TLS certificates to prevent credential theft via MITM.
+	proxy.Tr = &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		DialContext: (&net.Dialer{
+			Timeout: 15 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 300 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
 	}
-	go s.certCacheCleanup()
-	return s, nil
-}
 
-// Close stops background goroutines. Call on server shutdown.
-func (s *Server) Close() {
-	close(s.stopCleanup)
-}
+	tlsCert := tls.Certificate{
+		Certificate: [][]byte{caCert.Raw},
+		PrivateKey:  caKey,
+		Leaf:        caCert,
+	}
+	tlsCfg := goproxy.TLSConfigFromCA(&tlsCert)
+	mitmConnect := &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsCfg}
+	rejectConnect := &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: tlsCfg}
 
-func (s *Server) certCacheCleanup() {
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-s.stopCleanup:
-			return
-		case <-ticker.C:
-			now := time.Now()
-			s.certCacheMu.Lock()
-			for host, entry := range s.certCache {
-				if now.After(entry.expiry) {
-					delete(s.certCache, host)
-				}
+	proxy.OnRequest().HandleConnectFunc(
+		func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+			hostname := stripPort(host)
+			route := cfg.MatchRoute(hostname)
+			if route == nil {
+				logger.Warn("blocked CONNECT to unknown domain", "host", hostname)
+				ctx.Resp = goproxy.NewResponse(
+					ctx.Req, goproxy.ContentTypeText, http.StatusForbidden,
+					`{"error":"domain not allowed"}`,
+				)
+				return rejectConnect, host
 			}
-			s.certCacheMu.Unlock()
+			logger.Debug("CONNECT allowed", "host", hostname)
+			return mitmConnect, host
+		},
+	)
+
+	proxy.OnRequest().DoFunc(
+		func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+			hostname := stripPort(req.URL.Host)
+			route := cfg.MatchRoute(hostname)
+			if route == nil {
+				logger.Warn("blocked request to unknown domain", "host", hostname)
+				return req, goproxy.NewResponse(
+					req, goproxy.ContentTypeText, http.StatusForbidden,
+					`{"error":"domain not allowed"}`,
+				)
+			}
+
+			StripAuthHeaders(req)
+
+			// GCP token vending: Google's SDK tries to fetch its own OAuth2 token
+			// from oauth2.googleapis.com/token before each API call. We intercept
+			// this and return a dummy token because the GCP injector already handles
+			// real token acquisition and injection on the actual API request. This
+			// must happen here (not in the injector) because we need to short-circuit
+			// the entire request and return a synthetic response.
+			if route.Injector == "gcp" && isTokenVendingRequest(req) {
+				return req, goproxy.NewResponse(
+					req, "application/json", http.StatusOK,
+					string(TokenVendingResponse()),
+				)
+			}
+
+			inj := injectors[route.Domain]
+			if inj == nil {
+				logger.Error("no injector for matched route", "domain", route.Domain)
+				return req, goproxy.NewResponse(
+					req, goproxy.ContentTypeText, http.StatusBadGateway,
+					`{"error":"credential injection failed"}`,
+				)
+			}
+
+			if err := inj.Inject(req); err != nil {
+				logger.Error("credential injection failed", "domain", route.Domain, "error", "[REDACTED]")
+				return req, goproxy.NewResponse(
+					req, goproxy.ContentTypeText, http.StatusBadGateway,
+					`{"error":"credential injection failed"}`,
+				)
+			}
+
+			req.Header.Del("Via")
+			req.Header.Del("X-Forwarded-For")
+
+			return req, nil
+		},
+	)
+
+	return &Server{proxy: proxy, logger: logger}, nil
+}
+
+// Close is a no-op retained for API compatibility.
+func (s *Server) Close() {}
+
+// Handler returns an http.Handler for the proxy server.
+func (s *Server) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect && r.URL.Path == "/healthz" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok\n"))
+			return
 		}
-	}
+		s.proxy.ServeHTTP(w, r)
+	})
 }
 
 func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, error) {
@@ -161,228 +204,10 @@ func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, erro
 	return cert, key, nil
 }
 
-// Handler returns an http.Handler for the proxy server.
-func (s *Server) Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodConnect {
-			s.handleConnect(w, r)
-			return
-		}
-
-		// Plain HTTP: health endpoint
-		if r.URL.Path == "/healthz" {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ok\n"))
-			return
-		}
-
-		http.Error(w, `{"error":"proxy accepts CONNECT or /healthz only"}`, http.StatusMethodNotAllowed)
-	})
-}
-
-func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
-	host := r.Host
-	if !strings.Contains(host, ":") {
-		host += ":443"
-	}
-	hostOnly := strings.Split(host, ":")[0]
-
-	route := s.config.MatchRoute(hostOnly)
-	if route == nil {
-		s.logger.Warn("blocked CONNECT to unknown domain", "host", hostOnly)
-		http.Error(w, `{"error":"domain not allowed"}`, http.StatusForbidden)
-		return
-	}
-
-	// Hijack the connection
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "hijack not supported", http.StatusInternalServerError)
-		return
-	}
-
-	clientConn, _, err := hijacker.Hijack()
+func stripPort(hostPort string) string {
+	host, _, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		s.logger.Error("hijack failed", "error", err)
-		return
+		return strings.ToLower(hostPort)
 	}
-	defer func() { _ = clientConn.Close() }()
-
-	// Send 200 Connection Established
-	_, _ = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-
-	// Generate leaf cert for the target domain
-	leafCert, err := s.getOrCreateLeafCert(hostOnly)
-	if err != nil {
-		s.logger.Error("leaf cert generation failed", "host", hostOnly, "error", err)
-		return
-	}
-
-	// TLS-terminate the client side
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{*leafCert},
-		MinVersion:   tls.VersionTLS12,
-	}
-	tlsConn := tls.Server(clientConn, tlsConfig)
-	_ = clientConn.SetDeadline(time.Now().Add(10 * time.Second))
-	if err := tlsConn.Handshake(); err != nil {
-		s.logger.Error("TLS handshake with client failed", "host", hostOnly, "error", err)
-		return
-	}
-	_ = clientConn.SetDeadline(time.Time{})
-	defer func() { _ = tlsConn.Close() }()
-
-	reader := bufio.NewReader(tlsConn)
-	for {
-		_ = tlsConn.SetReadDeadline(time.Now().Add(30 * time.Second))
-		req, err := http.ReadRequest(reader)
-		if err != nil {
-			if err == io.EOF {
-				return
-			}
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				return
-			}
-			s.logger.Error("read request from client failed", "error", err)
-			return
-		}
-
-		s.proxyRequest(tlsConn, req, route, host)
-	}
-}
-
-func (s *Server) proxyRequest(clientConn net.Conn, req *http.Request, route *Route, targetHost string) {
-	defer func() {
-		if req.Body != nil {
-			_, _ = io.Copy(io.Discard, req.Body)
-			_ = req.Body.Close()
-		}
-	}()
-
-	// Strip all client-supplied auth headers (defense in depth)
-	StripAuthHeaders(req)
-
-	// Token vending for GCP: intercept token endpoint requests
-	if route.Injector == "gcp" && isTokenVendingRequest(req) {
-		resp := &http.Response{
-			StatusCode: http.StatusOK,
-			Proto:      "HTTP/1.1",
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(string(TokenVendingResponse()))),
-		}
-		_ = resp.Write(clientConn)
-		return
-	}
-
-	// Look up injector and inject credentials
-	inj := s.injectors[route.Domain]
-	if inj == nil {
-		s.logger.Error("no injector for matched route", "domain", route.Domain)
-		s.writeErrorResponse(clientConn, http.StatusBadGateway, "credential injection failed")
-		return
-	}
-
-	if err := inj.Inject(req); err != nil {
-		s.logger.Error("credential injection failed", "domain", route.Domain, "error", "[REDACTED]")
-		s.writeErrorResponse(clientConn, http.StatusBadGateway, "credential injection failed")
-		return
-	}
-
-	// Set the full URL for the upstream request
-	req.URL.Scheme = "https"
-	req.URL.Host = targetHost
-	req.RequestURI = ""
-
-	resp, err := s.transport.RoundTrip(req)
-	if err != nil {
-		s.logger.Error("upstream request failed", "host", targetHost, "error", err)
-		s.writeErrorResponse(clientConn, http.StatusBadGateway, "upstream connection failed")
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	_ = resp.Write(clientConn)
-}
-
-func (s *Server) writeErrorResponse(conn net.Conn, status int, message string) {
-	body, err := json.Marshal(map[string]string{"error": message})
-	if err != nil {
-		body = []byte(`{"error":"internal error"}`)
-	}
-	resp := &http.Response{
-		StatusCode: status,
-		Proto:      "HTTP/1.1",
-		ProtoMajor: 1,
-		ProtoMinor: 1,
-		Header: http.Header{
-			"Content-Type": []string{"application/json"},
-		},
-		Body: io.NopCloser(strings.NewReader(string(body))),
-	}
-	_ = resp.Write(conn)
-}
-
-func (s *Server) getOrCreateLeafCert(host string) (*tls.Certificate, error) {
-	now := time.Now()
-
-	s.certCacheMu.RLock()
-	if entry, ok := s.certCache[host]; ok && now.Before(entry.expiry) {
-		s.certCacheMu.RUnlock()
-		return entry.cert, nil
-	}
-	s.certCacheMu.RUnlock()
-
-	s.certCacheMu.Lock()
-	defer s.certCacheMu.Unlock()
-
-	if entry, ok := s.certCache[host]; ok && now.Before(entry.expiry) {
-		return entry.cert, nil
-	}
-
-	cert, expiry, err := s.generateLeafCert(host)
-	if err != nil {
-		return nil, err
-	}
-	s.certCache[host] = &certEntry{cert: cert, expiry: expiry}
-	return cert, nil
-}
-
-func (s *Server) generateLeafCert(host string) (*tls.Certificate, time.Time, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("generate leaf key: %w", err)
-	}
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("generate serial: %w", err)
-	}
-
-	notAfter := time.Now().Add(24 * time.Hour)
-	template := &x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName: host,
-		},
-		DNSNames:  []string{host},
-		NotBefore: time.Now().Add(-1 * time.Hour),
-		NotAfter:  notAfter,
-		KeyUsage:  x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
-		},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, s.caCert, &key.PublicKey, s.caKey)
-	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("sign leaf cert: %w", err)
-	}
-
-	cert := &tls.Certificate{
-		Certificate: [][]byte{certDER},
-		PrivateKey:  key,
-	}
-	return cert, notAfter, nil
+	return strings.ToLower(host)
 }

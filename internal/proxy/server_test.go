@@ -17,15 +17,19 @@ limitations under the License.
 package proxy
 
 import (
+	"bufio"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -73,7 +77,7 @@ func TestNewServer(t *testing.T) {
 		srv, err := NewServer(cfg, certPEM, keyPEM, logger)
 		require.NoError(t, err)
 		require.NotNil(t, srv)
-		assert.Len(t, srv.injectors, 1)
+		assert.NotNil(t, srv.proxy)
 	})
 
 	t.Run("should fail with invalid CA cert PEM", func(t *testing.T) {
@@ -142,7 +146,7 @@ func TestNewServer(t *testing.T) {
 		cfg := &Config{Routes: []Route{}}
 		srv, err := NewServer(cfg, certPEM, keyPEM, logger)
 		require.NoError(t, err)
-		assert.Empty(t, srv.injectors)
+		assert.NotNil(t, srv.proxy)
 	})
 }
 
@@ -162,24 +166,6 @@ func TestServerHealthz(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "ok\n", rr.Body.String())
 	})
-
-	t.Run("should return 405 on non-CONNECT non-healthz", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/other", nil)
-		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
-	})
-
-	t.Run("should return 405 on POST /some-path", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/some-path", nil)
-		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
-		body, _ := io.ReadAll(rr.Body)
-		assert.Contains(t, string(body), "proxy accepts CONNECT or /healthz only")
-	})
 }
 
 func TestServerConnectBlocksUnknownDomain(t *testing.T) {
@@ -192,44 +178,122 @@ func TestServerConnectBlocksUnknownDomain(t *testing.T) {
 	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
 	require.NoError(t, err)
 
-	handler := srv.Handler()
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
 
-	req := httptest.NewRequest(http.MethodConnect, "unknown.evil.com:443", nil)
-	req.Host = "unknown.evil.com:443"
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
+	conn, err := net.Dial("tcp", ts.Listener.Addr().String())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
 
-	assert.Equal(t, http.StatusForbidden, rr.Code)
-	body, _ := io.ReadAll(rr.Body)
+	_, err = fmt.Fprintf(conn, "CONNECT unknown.evil.com:443 HTTP/1.1\r\nHost: unknown.evil.com:443\r\n\r\n")
+	require.NoError(t, err)
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
 	assert.Contains(t, string(body), "domain not allowed")
 }
 
-func TestLeafCertGeneration(t *testing.T) {
+func TestServerConnectAllowsKnownDomain(t *testing.T) {
 	certPEM, keyPEM := generateTestCA(t)
-	cfg := &Config{Routes: []Route{}}
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "api.allowed.com", Injector: "bearer", EnvVar: "CRED_TEST"},
+		},
+	}
 	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
 	require.NoError(t, err)
 
-	cert, err := srv.getOrCreateLeafCert("api.example.com")
-	require.NoError(t, err)
-	require.NotNil(t, cert)
-	require.Len(t, cert.Certificate, 1)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
 
-	parsed, err := x509.ParseCertificate(cert.Certificate[0])
+	conn, err := net.Dial("tcp", ts.Listener.Addr().String())
 	require.NoError(t, err)
-	assert.Equal(t, "api.example.com", parsed.Subject.CommonName)
-	assert.Contains(t, parsed.DNSNames, "api.example.com")
+	defer func() { _ = conn.Close() }()
 
-	// Verify caching: second call returns the same cert
-	cert2, err := srv.getOrCreateLeafCert("api.example.com")
+	_, err = fmt.Fprintf(conn, "CONNECT api.allowed.com:443 HTTP/1.1\r\nHost: api.allowed.com:443\r\n\r\n")
 	require.NoError(t, err)
-	assert.Equal(t, cert, cert2, "cached cert should be returned")
 
-	// Different host gets a different cert
-	cert3, err := srv.getOrCreateLeafCert("other.example.com")
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	require.NoError(t, err)
-	require.NotNil(t, cert3)
-	assert.NotEqual(t, cert, cert3)
+	defer func() { _ = resp.Body.Close() }()
+
+	// 200 means CONNECT was accepted and MITM is set up
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestServerMITMCredentialInjection(t *testing.T) {
+	certPEM, keyPEM := generateTestCA(t)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"auth":"%s"}`, r.Header.Get("Authorization"))
+	}))
+	defer upstream.Close()
+
+	t.Setenv("CRED_BEARER_TEST", "test-token-12345")
+
+	host, port, err := net.SplitHostPort(upstream.Listener.Addr().String())
+	require.NoError(t, err)
+	_ = host
+
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "127.0.0.1", Injector: "bearer", EnvVar: "CRED_BEARER_TEST"},
+		},
+	}
+	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
+	require.NoError(t, err)
+
+	// Point the proxy's transport at the upstream's CA so it trusts the test server
+	srv.proxy.Tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // test only
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	conn, err := net.Dial("tcp", ts.Listener.Addr().String())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	target := fmt.Sprintf("127.0.0.1:%s", port)
+	_, err = fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	require.NoError(t, err)
+
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Parse the CA to build a TLS client that trusts MITM certs
+	certBlock, _ := pem.Decode(certPEM)
+	require.NotNil(t, certBlock)
+	caCert, err := x509.ParseCertificate(certBlock.Bytes)
+	require.NoError(t, err)
+	caPool := x509.NewCertPool()
+	caPool.AddCert(caCert)
+
+	tlsConn := tls.Client(conn, &tls.Config{
+		RootCAs:    caPool,
+		ServerName: "127.0.0.1",
+		MinVersion: tls.VersionTLS12,
+	})
+	require.NoError(t, tlsConn.Handshake())
+
+	req, err := http.NewRequest(http.MethodGet, "https://127.0.0.1/test", nil)
+	require.NoError(t, err)
+	require.NoError(t, req.Write(tlsConn))
+
+	resp, err = http.ReadResponse(bufio.NewReader(tlsConn), req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(body), "Bearer test-token-12345")
 }
 
 func TestTokenVendingResponse(t *testing.T) {

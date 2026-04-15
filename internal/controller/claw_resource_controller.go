@@ -89,8 +89,9 @@ const (
 // ClawResourceReconciler reconciles all resources for Claw
 type ClawResourceReconciler struct {
 	client.Client
-	Scheme     *runtime.Scheme
-	ProxyImage string
+	Scheme          *runtime.Scheme
+	ProxyImage      string
+	ImagePullPolicy string
 }
 
 // +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws,verbs=get;list;watch
@@ -180,14 +181,9 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Override proxy image if configured (set via PROXY_IMAGE env var)
-	if err := configureProxyImage(objects, r.ProxyImage); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to configure proxy image: %w", err)
-	}
-
-	// Configure proxy deployment with credential env vars and volume mounts
-	if err := configureProxyForCredentials(objects, instance.Spec.Credentials); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
+	// Apply deployment overrides (proxy image, pull policy, credentials)
+	if err := r.configureDeployments(objects, instance); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Stamp proxy config hash to trigger rollout on config changes
@@ -266,6 +262,22 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 }
 
 // buildKustomizedObjects builds Kustomize manifests and returns parsed unstructured objects
+func (r *ClawResourceReconciler) configureDeployments(
+	objects []*unstructured.Unstructured,
+	instance *clawv1alpha1.Claw,
+) error {
+	if err := configureProxyImage(objects, r.ProxyImage); err != nil {
+		return fmt.Errorf("failed to configure proxy image: %w", err)
+	}
+	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
+		return fmt.Errorf("failed to configure image pull policy: %w", err)
+	}
+	if err := configureProxyForCredentials(objects, instance.Spec.Credentials); err != nil {
+		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
+	}
+	return nil
+}
+
 func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstructured, error) {
 	// Write all manifest files (including kustomization.yaml) to in-memory filesystem
 	fs := filesys.MakeFsInMemory()
@@ -775,6 +787,46 @@ func configureProxyImage(objects []*unstructured.Unstructured, image string) err
 		return fmt.Errorf("container %q not found in proxy deployment", ClawProxyContainerName)
 	}
 	return fmt.Errorf("claw-proxy deployment not found in manifests")
+}
+
+// configureImagePullPolicy overrides imagePullPolicy on all containers in all
+// Deployment objects. If policy is empty, the embedded defaults are preserved.
+func configureImagePullPolicy(objects []*unstructured.Unstructured, policy string) error {
+	if policy == "" {
+		return nil
+	}
+
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind {
+			continue
+		}
+
+		for _, path := range [][]string{
+			{"spec", "template", "spec", "containers"},
+			{"spec", "template", "spec", "initContainers"},
+		} {
+			containers, found, err := unstructured.NestedSlice(obj.Object, path...)
+			if err != nil {
+				return fmt.Errorf("failed to get %s from %s: %w", path[len(path)-1], obj.GetName(), err)
+			}
+			if !found {
+				continue
+			}
+
+			for i, c := range containers {
+				cm, ok := c.(map[string]any)
+				if !ok {
+					continue
+				}
+				cm["imagePullPolicy"] = policy
+				containers[i] = cm
+			}
+			if err := unstructured.SetNestedSlice(obj.Object, containers, path...); err != nil {
+				return fmt.Errorf("failed to set %s in %s: %w", path[len(path)-1], obj.GetName(), err)
+			}
+		}
+	}
+	return nil
 }
 
 // configureProxyForCredentials adds credential env vars and volume mounts to the
