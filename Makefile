@@ -28,8 +28,8 @@ BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 # This variable is used to construct full image tags for bundle and catalog images.
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# openclaw.devsandbox.openshift.com/claw-operator-bundle:$VERSION and openclaw.devsandbox.openshift.com/claw-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= openclaw.devsandbox.openshift.com/claw-operator
+# claw.sandbox.redhat.com/claw-operator-bundle:$VERSION and claw.sandbox.redhat.com/claw-operator-catalog:$VERSION.
+IMAGE_TAG_BASE ?= claw.sandbox.redhat.com/claw-operator
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -51,7 +51,7 @@ endif
 OPERATOR_SDK_VERSION ?= v1.42.0
 # Image URL to use all building/pushing image targets
 IMG ?= claw-operator:latest
-PROXY_IMG ?= openclaw-proxy:latest
+PROXY_IMG ?= claw-proxy:latest
 PLATFORM ?= linux/amd64
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
@@ -274,7 +274,7 @@ ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-build REGISTRY=quay.io/myuser)
 endif
 	$(MAKE) docker-build IMG=$(REGISTRY)/claw-operator:$(TAG)
-	$(MAKE) docker-build-proxy PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+	$(MAKE) docker-build-proxy PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
 
 .PHONY: dev-push
 dev-push: ## Push operator and proxy images for dev.
@@ -282,7 +282,7 @@ ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-push REGISTRY=quay.io/myuser)
 endif
 	$(MAKE) docker-push IMG=$(REGISTRY)/claw-operator:$(TAG)
-	$(MAKE) docker-push-proxy PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+	$(MAKE) docker-push-proxy PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
 
 .PHONY: dev-deploy
 dev-deploy: ## Install CRDs and deploy controller for dev.
@@ -290,7 +290,7 @@ ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-deploy REGISTRY=quay.io/myuser)
 endif
 	$(MAKE) install
-	$(MAKE) deploy IMG=$(REGISTRY)/claw-operator:$(TAG) PROXY_IMG=$(REGISTRY)/openclaw-proxy:$(TAG)
+	$(MAKE) deploy IMG=$(REGISTRY)/claw-operator:$(TAG) PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
 
 .PHONY: dev-setup
 dev-setup: ## Full dev setup: build, push, and deploy.

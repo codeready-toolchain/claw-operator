@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: openclaw
+  name: claw
   labels:
-    app: openclaw
+    app: claw
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: openclaw
+      app: claw
   strategy:
     type: Recreate
   template:
     metadata:
       labels:
-        app: openclaw
+        app: claw
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -51,7 +51,7 @@ spec:
               memory: 64Mi
               cpu: 100m
           volumeMounts:
-            - name: openclaw-home
+            - name: claw-home
               mountPath: /home/node/.openclaw
             - name: config
               mountPath: /config
@@ -78,12 +78,12 @@ spec:
             - name: OPENCLAW_GATEWAY_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: openclaw-gateway-token
+                  name: claw-gateway-token
                   key: token
             - name: HTTP_PROXY
-              value: http://openclaw-proxy:8080
+              value: http://claw-proxy:8080
             - name: HTTPS_PROXY
-              value: http://openclaw-proxy:8080
+              value: http://claw-proxy:8080
             - name: NODE_EXTRA_CA_CERTS
               value: /etc/proxy-ca/ca.crt
           resources:
@@ -112,7 +112,7 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
           volumeMounts:
-            - name: openclaw-home
+            - name: claw-home
               mountPath: /home/node/.openclaw
             - name: tmp-volume
               mountPath: /tmp
@@ -127,17 +127,17 @@ spec:
               drop:
                 - ALL
       volumes:
-        - name: openclaw-home
+        - name: claw-home
           persistentVolumeClaim:
-            claimName: openclaw-home-pvc
+            claimName: claw-home-pvc
         - name: config
           configMap:
-            name: openclaw-config
+            name: claw-config
         - name: tmp-volume
           emptyDir: {}
         - name: proxy-ca
           secret:
-            secretName: openclaw-proxy-ca
+            secretName: claw-proxy-ca
             items:
               - key: ca.crt
                 path: ca.crt

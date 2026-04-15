@@ -68,7 +68,7 @@ spec:
         name: manager
         env:
           - name: PROXY_IMAGE
-            value: openclaw-proxy:latest
+            value: claw-proxy:latest
         ports: []
         securityContext:
           allowPrivilegeEscalation: false

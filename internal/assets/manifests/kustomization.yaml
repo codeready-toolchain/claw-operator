@@ -3,7 +3,7 @@ kind: Kustomization
 
 labels:
   - pairs:
-      app.kubernetes.io/name: openclaw
+      app.kubernetes.io/name: claw
 
 resources:
   - pvc.yaml
