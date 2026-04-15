@@ -231,11 +231,12 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 # generate-deploy-overlay creates a temporary kustomize overlay at config/.deploy/
 # that wraps config/default with image and PROXY_IMAGE overrides.
 # This avoids mutating committed files (manager.yaml, kustomization.yaml).
-# Usage: $(call generate-deploy-overlay,<controller-image>,<proxy-image>)
+# Usage: $(call generate-deploy-overlay,<controller-image>,<proxy-image>[,<pull-policy>])
+# pull-policy defaults to IfNotPresent; dev-deploy passes Always to force re-pulls.
 define generate-deploy-overlay
 	@rm -rf config/.deploy && mkdir -p config/.deploy
 	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- ../default\nimages:\n- name: controller\n  newName: $(shell echo $(1) | cut -d: -f1)\n  newTag: $(shell echo $(1) | cut -d: -f2)\npatches:\n- path: proxy_image_patch.yaml\n  target:\n    kind: Deployment\n' > config/.deploy/kustomization.yaml
-	@printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: controller-manager\nspec:\n  template:\n    spec:\n      containers:\n      - name: manager\n        env:\n        - name: PROXY_IMAGE\n          value: "$(2)"\n' > config/.deploy/proxy_image_patch.yaml
+	@printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: controller-manager\nspec:\n  template:\n    spec:\n      containers:\n      - name: manager\n        imagePullPolicy: $(or $(3),IfNotPresent)\n        env:\n        - name: PROXY_IMAGE\n          value: "$(2)"\n' > config/.deploy/proxy_image_patch.yaml
 endef
 
 ##@ Deployment
@@ -255,8 +256,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	$(call generate-deploy-overlay,$(IMG),$(PROXY_IMG))
-	$(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
-	@rm -rf config/.deploy
+	@trap 'rm -rf config/.deploy' EXIT; $(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
@@ -285,12 +285,13 @@ endif
 	$(MAKE) docker-push-proxy PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
 
 .PHONY: dev-deploy
-dev-deploy: ## Install CRDs and deploy controller for dev.
+dev-deploy: manifests kustomize ## Install CRDs and deploy controller for dev (uses Always pull policy).
 ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-deploy REGISTRY=quay.io/myuser)
 endif
 	$(MAKE) install
-	$(MAKE) deploy IMG=$(REGISTRY)/claw-operator:$(TAG) PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
+	$(call generate-deploy-overlay,$(REGISTRY)/claw-operator:$(TAG),$(REGISTRY)/claw-proxy:$(TAG),Always)
+	@trap 'rm -rf config/.deploy' EXIT; $(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
 
 .PHONY: dev-setup
 dev-setup: ## Full dev setup: build, push, and deploy.

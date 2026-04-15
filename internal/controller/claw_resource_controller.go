@@ -137,6 +137,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.validateCredentials(ctx, instance); err != nil {
 		logger.Error(err, "Credential validation failed")
 		setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after credential validation failure")
 		}
@@ -155,6 +156,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		logger.Error(err, "Failed to generate proxy config")
 		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after proxy config failure")
 		}
@@ -164,6 +166,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.applyProxyConfigMap(ctx, instance, proxyConfigJSON); err != nil {
 		logger.Error(err, "Failed to apply proxy config")
 		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after proxy config failure")
 		}

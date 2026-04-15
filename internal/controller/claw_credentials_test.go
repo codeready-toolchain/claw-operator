@@ -194,16 +194,22 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		updated := &clawv1alpha1.Claw{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, updated))
 
-		var found bool
+		var credFound, readyFound bool
 		for _, c := range updated.Status.Conditions {
 			if c.Type == clawv1alpha1.ConditionTypeCredentialsResolved {
-				found = true
+				credFound = true
 				assert.Equal(t, "False", string(c.Status))
 				assert.Equal(t, clawv1alpha1.ConditionReasonValidationFailed, c.Reason)
-				break
+			}
+			if c.Type == clawv1alpha1.ConditionTypeReady {
+				readyFound = true
+				assert.Equal(t, "False", string(c.Status))
+				assert.Equal(t, clawv1alpha1.ConditionReasonValidationFailed, c.Reason)
+				assert.Contains(t, c.Message, "Secret \"missing\" not found")
 			}
 		}
-		assert.True(t, found, "CredentialsResolved=False condition should be set on validation failure")
+		assert.True(t, credFound, "CredentialsResolved=False condition should be set on validation failure")
+		assert.True(t, readyFound, "Ready=False condition should be set on validation failure")
 	})
 
 	t.Run("should set CredentialsResolved condition", func(t *testing.T) {
