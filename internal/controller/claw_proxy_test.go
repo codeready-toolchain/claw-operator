@@ -722,6 +722,60 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		gateway := config["gateway"].(map[string]any)
 		assert.Equal(t, float64(18789), gateway["port"])
 	})
+
+	t.Run("should reject duplicate providers", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini-1", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+			{Name: "gemini-2", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+		}
+
+		err := injectProvidersIntoConfigMap(objects, credentials)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate provider")
+		assert.Contains(t, err.Error(), "google")
+	})
+
+	t.Run("should filter model aliases and pick deterministic fallback primary", func(t *testing.T) {
+		configJSON := `{
+			"models": {"providers": {}},
+			"agents": {
+				"defaults": {
+					"model": {"primary": "missing/model-a"},
+					"models": {
+						"anthropic/claude-sonnet": {"alias": "Sonnet"},
+						"google/gemini-flash": {"alias": "Flash"},
+						"missing/model-a": {"alias": "Missing A"},
+						"anthropic/claude-haiku": {"alias": "Haiku"}
+					}
+				}
+			}
+		}`
+		objects := makeConfigMap(configJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
+		}
+
+		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
+
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "openclaw.json")
+		require.NoError(t, err)
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(raw), &config))
+
+		agents := config["agents"].(map[string]any)
+		defaults := agents["defaults"].(map[string]any)
+		modelAliases := defaults["models"].(map[string]any)
+
+		assert.NotContains(t, modelAliases, "missing/model-a", "missing provider model should be removed")
+		assert.Contains(t, modelAliases, "google/gemini-flash")
+		assert.Contains(t, modelAliases, "anthropic/claude-sonnet")
+		assert.Contains(t, modelAliases, "anthropic/claude-haiku")
+
+		primary := defaults["model"].(map[string]any)
+		assert.Equal(t, "anthropic/claude-haiku", primary["primary"], "fallback should be lexicographically first available model")
+	})
 }
 
 func TestCredEnvVarName(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -412,6 +413,9 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 		if cred.Provider == "" {
 			continue
 		}
+		if _, exists := providers[cred.Provider]; exists {
+			return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
+		}
 		info := resolveProviderInfo(cred)
 		baseURL := "http://claw-proxy:8080/" + strings.ToLower(cred.Name) + info.BasePath
 		providers[cred.Provider] = map[string]any{
@@ -476,21 +480,26 @@ func filterAgentDefaultsForProviders(config map[string]any, providers map[string
 	}
 
 	if modelMap, ok := defaults["models"].(map[string]any); ok {
-		var firstAvailable string
+		var available []string
 		for modelName := range modelMap {
 			providerKey, _, _ := strings.Cut(modelName, "/")
 			if _, exists := providers[providerKey]; !exists {
 				delete(modelMap, modelName)
-			} else if firstAvailable == "" {
-				firstAvailable = modelName
+			} else {
+				available = append(available, modelName)
 			}
 		}
+		sort.Strings(available)
 
 		if primary, _ := defaults["model"].(map[string]any); primary != nil {
 			if primaryName, _ := primary["primary"].(string); primaryName != "" {
 				providerKey, _, _ := strings.Cut(primaryName, "/")
 				if _, exists := providers[providerKey]; !exists {
-					primary["primary"] = firstAvailable
+					if len(available) > 0 {
+						primary["primary"] = available[0]
+					} else {
+						primary["primary"] = ""
+					}
 				}
 			}
 		}

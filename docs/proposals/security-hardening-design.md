@@ -284,22 +284,22 @@ Reconcile(ctx, req)
  ├─ Create/update ConfigMap with generated proxy config
  └─ SSA apply
  ↓
-8. applyRouteOnly(ctx, instance)                  ← Route application (Phase 2 of three-phase reconciliation)
- ↓
-9. getRouteURL(ctx, instance)                      ← Extract Route host
- ├─ Read Route status.ingress[0].host
- ├─ If not yet populated, requeue with 5s backoff
- └─ Route CRD is always present (OpenShift-only)
- ↓
-10. buildKustomizedObjects(ctx, instance)           ← Build Kustomize manifests
+8. buildKustomizedObjects(ctx, instance)           ← Build Kustomize manifests
  ├─ Build from embedded manifests
  ├─ configureDeployments (proxy image, pull policy, credentials)
  ├─ stampProxyConfigHash (SHA-256 of proxy config JSON → annotation)
  └─ stampSecretVersionAnnotation (Secret ResourceVersions → annotations)
  ↓
-11. injectRouteHostIntoConfigMap(objects, routeURL) ← Inject CORS origin
+9. applyRouteOnly(ctx, instance)                   ← Route application (Phase 2 of three-phase reconciliation)
  ↓
-12. injectProvidersIntoConfigMap(objects, credentials) ← NEW: Dynamic provider generation
+10. getRouteURL(ctx, instance)                     ← Extract Route host
+ ├─ Read Route status.ingress[0].host
+ ├─ If not yet populated, requeue with 5s backoff
+ └─ Route CRD is always present (OpenShift-only)
+ ↓
+11. injectRouteHostIntoConfigMap(objects, routeURL) ← Inject CORS origin (requires resolved Route host)
+ ↓
+12. injectProvidersIntoConfigMap(objects, credentials) ← Dynamic provider generation (runs after Route host resolved)
  ├─ For each credential with `provider` set, generate a provider entry in openclaw.json
  ├─ Provider entry includes `baseUrl` (e.g., http://claw-proxy:8080/gemini/v1beta) and dummy apiKey
  ├─ Google + apiKey → Gemini REST upstream and basePath

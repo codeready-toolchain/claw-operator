@@ -39,7 +39,7 @@ spec:
             - -c
             - |
               set -e
-              cp -a /app/dist/. /patched-dist/
+              cp -r /app/dist/. /patched-dist/
               candidates=$(grep -rl 'fetchWithWebToolsNetworkGuard({' /patched-dist --include='*.js' 2>/dev/null || true)
               if [ -z "$candidates" ]; then
                 echo "[proxy-patch] ERROR: no files contain fetchWithWebToolsNetworkGuard({ — upstream may have changed" >&2
