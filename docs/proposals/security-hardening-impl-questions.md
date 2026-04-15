@@ -295,39 +295,47 @@ The proxy needs to intercept the gateway's outbound HTTP(S) requests, inspect th
 
 **Research:** Common pattern: `HTTP_PROXY`/`HTTPS_PROXY` environment variables → HTTP CONNECT tunneling → MITM TLS interception with an operator-managed CA. OpenClaw (the current gateway software) supports `request.proxy: { mode: "env-proxy" }` per provider, which activates undici's `EnvHttpProxyAgent`. Node.js native `fetch` does not honor `HTTP_PROXY` by default, but OpenClaw's guarded fetch paths use undici dispatchers explicitly.
 
-**Decision:** Option A — CONNECT + MITM with operator-managed CA. The same proven pattern used by paude-proxy, OpenShell, and onecli.
+**Decision (revised):** Hybrid approach — gateway mode for LLM providers + MITM forward proxy for general egress. The original decision was pure MITM (Option A), but during implementation we discovered the Google ADK JS SDK strips the `thought_signature` field from function call parts when running in `env-proxy` mode with streamed responses, causing 400 errors from the Gemini API after tool use. The hybrid approach uses `baseUrl`-based gateway routing for LLM providers (avoiding the SDK bug) while retaining MITM for general egress.
 
-**Mechanism:**
+**Mechanism (gateway mode — LLM providers with `provider` set):**
 
-1. The operator sets `HTTP_PROXY=http://openclaw-proxy-svc:8080` and `HTTPS_PROXY=http://openclaw-proxy-svc:8080` on the gateway Deployment
-2. The operator generates a CA cert+key pair, stores it in a Secret (`openclaw-proxy-ca`)
+1. The operator dynamically generates `openclaw.json` with `baseUrl` entries pointing to the proxy: `http://claw-proxy:8080/<cred-name>/<basePath>` (e.g., `http://claw-proxy:8080/gemini/v1beta`)
+2. `NO_PROXY=localhost,127.0.0.1,claw-proxy` prevents these requests from being routed through `HTTP_PROXY` (avoids circular proxying)
+3. OpenClaw sends plain HTTP requests to the proxy's gateway path
+4. The proxy matches the path prefix, strips it, injects credentials, and forwards as HTTPS to the resolved upstream (e.g., `https://generativelanguage.googleapis.com`)
+5. The proxy uses `httputil.ReverseProxy` for gateway mode forwarding
+
+**Mechanism (MITM mode — general egress):**
+
+1. The operator sets `HTTP_PROXY=http://claw-proxy:8080` and `HTTPS_PROXY=http://claw-proxy:8080` on the gateway Deployment
+2. The operator generates a CA cert+key pair, stores it in a Secret (`claw-proxy-ca`)
 3. The CA cert is mounted into the gateway pod; `NODE_EXTRA_CA_CERTS` points to it (additive — supplements system CAs)
-4. The gateway uses real `https://` API URLs (e.g., `https://generativelanguage.googleapis.com`) — the standard SDK defaults
-5. The HTTP client (undici `EnvHttpProxyAgent`) sends `CONNECT generativelanguage.googleapis.com:443` to the proxy
-6. The proxy accepts the CONNECT, generates a leaf cert for the target domain signed by its CA, TLS-terminates the client side
-7. On the decrypted stream, the proxy reads the HTTP request, matches the Host header against configured domain patterns, strips auth headers, injects credentials
-8. The proxy opens an HTTPS connection to the real upstream and forwards the request
-9. NetworkPolicy prevents the gateway from reaching the internet directly (even if `HTTP_PROXY` were somehow bypassed)
+4. The HTTP client (undici `EnvHttpProxyAgent`) sends `CONNECT host:443` to the proxy
+5. The proxy accepts the CONNECT, generates a leaf cert for the target domain signed by its CA, TLS-terminates the client side
+6. On the decrypted stream, the proxy reads the HTTP request, matches the Host header against configured domain patterns, strips auth headers, injects credentials
+7. The proxy opens an HTTPS connection to the real upstream and forwards the request
+8. NetworkPolicy prevents the gateway from reaching the internet directly (even if `HTTP_PROXY` were somehow bypassed)
 
 **CA lifecycle:**
 - Generated once at first reconciliation (~30 LOC using Go's `crypto/x509` + `crypto/ecdsa`)
-- Stored in Secret `openclaw-proxy-ca` with owner reference
+- Stored in Secret `claw-proxy-ca` with owner reference
 - CA cert+key mounted into proxy pod (for signing leaf certs)
 - CA cert only mounted into gateway pod + `NODE_EXTRA_CA_CERTS`
 - Long validity (5 years) — cluster-internal only, not externally trusted
 - Operator checks expiry during reconciliation, regenerates if nearing expiration
 - On OpenShift, the proxy's outbound trust store uses `config.openshift.io/inject-trusted-cabundle` to handle corporate proxy CAs
 
-**Gateway configuration changes:**
-- `models.providers.*.baseUrl` uses real API URLs (e.g., `https://generativelanguage.googleapis.com/v1beta`) — no path-prefix routing
-- `models.providers.*.apiKey` uses placeholder values (proxy replaces them)
-- `models.providers.*.request.proxy.mode: "env-proxy"` activates undici's proxy agent for the guarded model fetch paths
-- The operator generates this config from `spec.credentials`
+**Gateway configuration — dynamic generation from credentials:**
+- For credentials with `provider` set, the controller dynamically generates the `models.providers` section of `openclaw.json`
+- Each provider entry gets a `baseUrl` pointing to the proxy's gateway path (e.g., `http://claw-proxy:8080/gemini/v1beta`) and a dummy `apiKey`
+- Provider resolution is intelligent: `provider: "google"` + `type: apiKey` → Gemini REST API upstream; `provider: "google"` + `type: gcp` → Vertex AI upstream (derived from `gcp.project`/`gcp.location`)
+- For non-Google providers, the upstream is derived from the credential's `domain` field
+- `HTTP_PROXY`/`HTTPS_PROXY` + `NO_PROXY` env vars are set on the gateway for MITM mode egress
 
-**Why MITM, not plain HTTP:**
-- MITM lets OpenClaw use real `https://` URLs — standard SDK defaults work unchanged
-- Without MITM, the client would need `http://` URLs (non-standard, some SDKs warn/reject) or path-based routing (tight coupling between proxy config and OpenClaw config)
-- The CONNECT target host gives the proxy clean domain-based routing — no path prefixes, no custom headers, no coupling
-- Proven by all reference projects; paude specifically ships patches for OpenClaw to work with this pattern
+**Why hybrid, not pure MITM:**
+- The Google ADK JS SDK has a bug where it strips `thought_signature` from function call parts when running in `env-proxy` mode with streaming. This causes Gemini API to return 400 errors after tool use.
+- Gateway mode (`baseUrl`) bypasses the SDK's `env-proxy` code path entirely, sending plain HTTP to the proxy
+- MITM is retained for general egress (web_fetch, npm, OTEL) where the SDK bug doesn't apply
+- The hybrid approach gives the best of both: reliable LLM calls (gateway) + transparent egress proxying (MITM)
 
-_Considered and rejected: Option B — `HTTP_PROXY` with `http://` URLs (no MITM, but non-standard `http://` URLs for API endpoints, some SDKs may reject, and the `env-proxy` path in OpenClaw is less exercised than standard HTTPS+CONNECT), Option C — path-based routing via base URL override (current PoC model, tight coupling between proxy and OpenClaw config, path prefix management complexity with dynamic credentials), Option D — Host header override (fragile, HTTP clients overwrite Host from URL authority)_
+_Original Option A (pure MITM) was revised to this hybrid approach due to the SDK bug. Considered and rejected: Option B — `HTTP_PROXY` with `http://` URLs (no MITM, but non-standard `http://` URLs for API endpoints, some SDKs may reject), Option D — Host header override (fragile, HTTP clients overwrite Host from URL authority)_

@@ -46,22 +46,32 @@ spec:
     - name: gemini
       type: apiKey
       secretRef: { name: llm-keys, key: GEMINI_API_KEY }
-      domain: ".googleapis.com"
+      domain: "generativelanguage.googleapis.com"
       apiKey: { header: x-goog-api-key }
+      provider: google  # Enables gateway mode + generates provider entry in openclaw.json
     - name: github
       type: bearer
       secretRef: { name: platform-tokens, key: GITHUB_TOKEN }
       domain: api.github.com
+      # No provider — uses MITM forward proxy only
 ```
 
 | Type | Shape | Key fields |
 |------|-------|------------|
-| `apiKey` | Custom header with secret value | `secretRef`, `domain`, `apiKey.header`, `apiKey.valuePrefix`, `defaultHeaders` |
-| `bearer` | `Authorization: Bearer <token>` | `secretRef`, `domain`, `defaultHeaders` |
-| `gcp` | GCP SA JSON → OAuth2 token + token vending | `secretRef`, `domain`, `gcp.project`, `gcp.location` |
+| `apiKey` | Custom header with secret value | `secretRef`, `domain`, `apiKey.header`, `apiKey.valuePrefix`, `defaultHeaders`, `provider` |
+| `bearer` | `Authorization: Bearer <token>` | `secretRef`, `domain`, `defaultHeaders`, `provider` |
+| `gcp` | GCP SA JSON → OAuth2 token + token vending | `secretRef`, `domain`, `gcp.project`, `gcp.location`, `provider` |
 | `pathToken` | Token in URL path | `secretRef`, `domain`, `pathToken.prefix` |
-| `oauth2` | Client credentials → token exchange | `secretRef`, `domain`, `oauth2.clientID`, `oauth2.tokenURL`, `oauth2.scopes` |
+| `oauth2` | Client credentials → token exchange | `secretRef`, `domain`, `oauth2.clientID`, `oauth2.tokenURL`, `oauth2.scopes`, `provider` |
 | `none` | Proxy allowlist (no auth) | `domain` |
+
+**Provider field:** When `provider` is set (e.g., `"google"`, `"anthropic"`, `"openai"`), the controller:
+1. Configures the proxy with a gateway route (PathPrefix + Upstream) for this credential
+2. Dynamically generates the provider entry in `openclaw.json` with a `baseUrl` pointing to the proxy's gateway path and a dummy `apiKey` (real credentials are injected by the proxy)
+
+When `provider` is omitted, the credential is used for MITM forward proxy only — no provider entry is generated in `openclaw.json`.
+
+For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses the Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
 
 **Domain format:** exact match (`api.github.com`) or suffix match (`.googleapis.com`, leading dot). See [credential-examples.md](security-hardening-credential-examples.md) for syntax details.
 
@@ -73,37 +83,55 @@ spec:
 
 **Type definitions** live in `api/v1alpha1/openclaw_types.go` alongside the existing `Claw` types. The `CredentialSpec` struct is used as the array element type for `ClawSpec.Credentials`. See [credential-examples.md](security-hardening-credential-examples.md) for the full Go types and YAML examples for each type.
 
-### Go Credential Proxy
+### Hybrid Go Credential Proxy
 
-A credential-injecting MITM forward proxy replacing the nginx proxy. The Claw gateway uses standard `HTTP_PROXY`/`HTTPS_PROXY` environment variables with real `https://` API URLs. The proxy intercepts CONNECT tunnels, terminates TLS with an operator-managed CA, injects credentials based on the target domain, and forwards as HTTPS to upstream APIs. This is the same proven architecture used by all reference projects (paude-proxy, OpenShell, onecli). See [Q12](security-hardening-impl-questions.md) for full rationale.
+A credential-injecting proxy replacing the nginx proxy, operating in **two modes**:
+
+1. **Gateway mode (API gateway):** For LLM provider calls where the credential has `provider` set. OpenClaw is configured with `baseUrl` pointing to `http://claw-proxy:8080/<cred-name>/...`. The proxy strips the path prefix, injects credentials, and forwards to the upstream LLM API over HTTPS. This mode avoids the Google ADK JS SDK `thought_signature` bug that occurs with `env-proxy` mode on streamed responses.
+
+2. **MITM forward proxy mode:** For general egress traffic (web_fetch tools, npm, OTEL, etc.) where OpenClaw uses standard `HTTP_PROXY`/`HTTPS_PROXY` env vars. The proxy intercepts CONNECT tunnels, terminates TLS with an operator-managed CA, injects credentials for allowed domains, and forwards as HTTPS to upstream APIs.
+
+The proxy is built on `github.com/elazarl/goproxy` and dispatches between modes using a top-level HTTP `Handler()`: requests matching a configured `PathPrefix` are handled in gateway mode; `CONNECT` requests are handled in forward proxy mode; `GET /healthz` returns 200.
 
 **Traffic flow ([Q12](security-hardening-impl-questions.md)):**
 
 ```
+# Gateway mode (LLM providers with Provider set):
+Claw Gateway ──HTTP──▶ Go Proxy (strip path prefix, inject creds) ──HTTPS──▶ upstream LLM API
+  baseUrl: http://claw-proxy:8080/gemini/v1beta
+
+# MITM forward proxy mode (general egress):
 Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inject creds) ──HTTPS──▶ upstream API
+  HTTP_PROXY=http://claw-proxy:8080
 ```
 
 1. The operator sets `HTTP_PROXY`/`HTTPS_PROXY` env vars on the gateway Deployment pointing to the proxy Service
-2. The gateway's HTTP clients (undici `EnvHttpProxyAgent`) send `CONNECT api.anthropic.com:443` to the proxy
-3. The proxy accepts the CONNECT, generates a leaf cert for the target domain signed by its CA, TLS-terminates the client side
-4. On the decrypted stream, the proxy reads HTTP requests and applies credential injection
+2. The operator sets `NO_PROXY=localhost,127.0.0.1,claw-proxy` to prevent circular proxying for gateway mode requests
+3. For LLM providers with `provider` set, the operator dynamically generates `openclaw.json` with `baseUrl` entries pointing to the proxy's gateway paths (e.g., `http://claw-proxy:8080/gemini/v1beta`)
+4. For MITM mode, the gateway's HTTP clients send `CONNECT host:443` to the proxy, which generates a leaf cert, TLS-terminates, and injects credentials
 5. NetworkPolicy prevents the gateway from reaching the internet directly (enforcement layer)
 
 **CA management:** The operator generates a CA cert+key pair at first reconciliation, stores it in Secret `openclaw-proxy-ca`. The CA cert+key is mounted into the proxy pod (for signing leaf certs). The CA cert only is mounted into the gateway pod with `NODE_EXTRA_CA_CERTS` pointing to it (additive — supplements system CAs). On OpenShift, the proxy's outbound trust store uses `config.openshift.io/inject-trusted-cabundle` to handle corporate proxy CAs transparently.
 
-**Source location ([Q2](security-hardening-impl-questions.md)):** Same repo — `cmd/proxy/main.go` + `internal/proxy/`. Proxy can import `api/v1alpha1` types directly. CRD type changes, proxy config format, and manifests land in one PR.
+**Source location ([Q2](security-hardening-impl-questions.md)):** Same repo — `cmd/proxy/main.go` + `internal/proxy/`. Proxy can import `api/v1alpha1` types directly. CRD type changes, proxy config format, and manifests land in one PR. Built on `github.com/elazarl/goproxy`.
 
-**Core request flow (per CONNECT tunnel):**
-1. Read config (JSON) from a mounted ConfigMap
-2. Accept `CONNECT host:port` from client, check domain against allowlist
-3. Generate leaf cert for target domain, TLS-terminate client side
-4. On decrypted HTTP: match `Host` header against configured domain patterns (exact match or `.suffix` wildcard — e.g., `.googleapis.com` matches `aiplatform.googleapis.com`)
-5. **Strip all client-supplied auth headers** (`Authorization`, `x-api-key`, `x-goog-api-key`, etc.) — defense in depth, not just overwrite (pattern from OpenShell's two-layer stripping)
-6. Look up the injector for the matched domain
-7. Inject real credentials and any default headers for the provider
-8. Open HTTPS connection to real upstream, forward request
-9. If route matches but injection **fails** (e.g., GCP token refresh error) → **502** with `"credential injection failed"` (pattern from paude-proxy — clear signal vs. confusing 401 from upstream)
-10. Unknown/disallowed domains → **403**
+**Core request flow — gateway mode (LLM providers with `provider` set):**
+1. HTTP request arrives at proxy with path matching a configured `PathPrefix` (e.g., `/gemini/v1beta/...`)
+2. Proxy strips the path prefix, resolves the upstream (e.g., `https://generativelanguage.googleapis.com`)
+3. **Strip all client-supplied auth headers** — defense in depth
+4. Look up the injector for the route, inject real credentials and default headers
+5. Forward as HTTPS to the upstream API via `httputil.ReverseProxy`
+6. Injection failure → **502**
+
+**Core request flow — MITM forward proxy mode (general egress):**
+1. Accept `CONNECT host:port` from client, check domain against allowlist
+2. Generate leaf cert for target domain, TLS-terminate client side
+3. On decrypted HTTP: match `Host` header against configured domain patterns (exact match or `.suffix` wildcard — e.g., `.googleapis.com` matches `aiplatform.googleapis.com`)
+4. **Strip all client-supplied auth headers** (`Authorization`, `x-api-key`, `x-goog-api-key`, etc.) — defense in depth (pattern from OpenShell's two-layer stripping)
+5. Look up the injector for the matched domain, inject real credentials and default headers
+6. Open HTTPS connection to real upstream, forward request
+7. If route matches but injection **fails** → **502** (clear signal vs. confusing 401 from upstream)
+8. Unknown/disallowed domains → **403**
 
 **Injector types** (one per credential entry's `type`):
 - `apiKey` — sets a configured header to the secret value (with optional value prefix); injects optional `defaultHeaders` (e.g., `anthropic-version: 2023-06-01`)
@@ -124,23 +152,27 @@ Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inje
 - **Auth header stripping before injection** — explicit `Del` on all known auth headers before `Set`, not relying on overwrite semantics alone
 - **502 on injection failure** — matched route + failed injection → 502, not silent passthrough
 
-**Configuration format ([Q3](security-hardening-impl-questions.md)):** JSON ConfigMap with hybrid secret delivery. API keys and tokens use environment variables; GCP SA JSON uses a mounted volume. The operator generates the JSON config from `spec.credentials` entries. ConfigMap changes trigger a Deployment rollout via annotation hash. Example:
+**Configuration format ([Q3](security-hardening-impl-questions.md)):** JSON ConfigMap with hybrid secret delivery. API keys and tokens use environment variables; GCP SA JSON uses a mounted volume. The operator generates the JSON config from `spec.credentials` entries. ConfigMap changes trigger a Deployment rollout via annotation hash (SHA-256 of the proxy config JSON). Example:
 
 ```json
 {
   "routes": [
     {
-      "domain": ".googleapis.com",
+      "domain": "generativelanguage.googleapis.com",
       "injector": "api_key",
       "header": "x-goog-api-key",
-      "envVar": "CRED_GEMINI"
+      "envVar": "CRED_GEMINI",
+      "pathPrefix": "/gemini",
+      "upstream": "https://generativelanguage.googleapis.com"
     },
     {
       "domain": "api.anthropic.com",
       "injector": "api_key",
       "header": "x-api-key",
       "envVar": "CRED_ANTHROPIC",
-      "defaultHeaders": { "anthropic-version": "2023-06-01" }
+      "defaultHeaders": { "anthropic-version": "2023-06-01" },
+      "pathPrefix": "/anthropic",
+      "upstream": "https://api.anthropic.com"
     },
     {
       "domain": "api.github.com",
@@ -149,6 +181,9 @@ Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inje
     }
   ]
 }
+```
+
+Routes with `pathPrefix` and `upstream` are used in gateway mode (proxy acts as an API gateway). Routes without these fields are used in MITM forward proxy mode only. The `pathPrefix` is derived from the credential's `name` field (e.g., `/gemini`), and the `upstream` is resolved by the controller based on the `provider` and `type` fields.
 ```
 
 **Secret delivery — how credentials reach the proxy:**
@@ -207,6 +242,8 @@ Proxy at runtime:
 
 The actual secret bytes never pass through the operator or the ConfigMap.
 
+**Why hybrid instead of pure MITM:** The original design specified pure MITM for all traffic. During implementation, we discovered that the Google ADK JS SDK strips the `thought_signature` field from function call parts when running in `env-proxy` mode with streamed responses. This caused 400 errors from the Gemini API after tool use. The gateway mode bypasses this SDK bug by using `baseUrl` instead of `env-proxy`, sending plain HTTP to the proxy (which then adds credentials and forwards as HTTPS). MITM is retained for general egress (web_fetch, npm, OTEL) where no SDK bug applies.
+
 **Health endpoint:** `GET /healthz` returns 200.
 
 **Image:** Custom Go binary, built as a distroless container image.
@@ -245,22 +282,46 @@ Reconcile(ctx, req)
  ├─ Create/update ConfigMap with generated proxy config
  └─ SSA apply
  ↓
-8. applyKustomizedResources (updated manifests)
+8. applyRouteOnly(ctx, instance)                  ← Route application (Phase 2 of three-phase reconciliation)
  ↓
-9. resolveRouteHostname(ctx, instance)          ← EXISTS (two-pass already implemented: applyRouteOnly → getRouteURL → injectRouteHostIntoConfigMap)
+9. getRouteURL(ctx, instance)                      ← Extract Route host
  ├─ Read Route status.ingress[0].host
- ├─ If hostname available and changed, patch ConfigMap allowedOrigins
- ├─ If hostname not yet available, requeue (Ready=False)
+ ├─ If not yet populated, requeue with 5s backoff
  └─ Route CRD is always present (OpenShift-only)
  ↓
-10. updateStatus(ctx, instance)                 ← EXISTS (extend with gatewayTokenSecretRef + new conditions)
+10. buildKustomizedObjects(ctx, instance)           ← Build Kustomize manifests
+ ├─ Build from embedded manifests
+ ├─ configureDeployments (proxy image, pull policy, credentials)
+ ├─ stampProxyConfigHash (SHA-256 of proxy config JSON → annotation)
+ └─ stampSecretVersionAnnotation (Secret ResourceVersions → annotations)
+ ↓
+11. injectRouteHostIntoConfigMap(objects, routeURL) ← Inject CORS origin
+ ↓
+12. injectProvidersIntoConfigMap(objects, credentials) ← NEW: Dynamic provider generation
+ ├─ For each credential with `provider` set, generate a provider entry in openclaw.json
+ ├─ Provider entry includes `baseUrl` (e.g., http://claw-proxy:8080/gemini/v1beta) and dummy apiKey
+ ├─ Google + apiKey → Gemini REST upstream and basePath
+ ├─ Google + gcp → Vertex AI upstream and basePath (derived from project/location)
+ ├─ All other providers → domain-based upstream, no basePath
+ └─ Replace PROVIDERS_PLACEHOLDER in openclaw.json with generated entries
+ ↓
+13. applyResources(ctx, remainingObjects)           ← Apply non-Route resources via SSA
+ ↓
+14. updateStatus(ctx, instance)                     ← Update status conditions and fields
   ├─ Set gatewayTokenSecretRef
-  └─ Set conditions (Ready, CredentialsResolved, ProxyConfigured) — replacing existing Available condition
+  ├─ Set URL from Route
+  └─ Set conditions (Ready, CredentialsResolved, ProxyConfigured)
   ↓
-11. Return success
+15. Return success
 ```
 
-**Gemini credential wiring removal:** The existing `configureProxyDeployment()` method (which patches the proxy Deployment's `GEMINI_API_KEY` env var to reference the user's Secret via `secretKeyRef`) and `stampSecretVersionAnnotation()` (which triggers rollouts on Secret changes) are removed, along with `spec.geminiAPIKey` on the Claw CRD. Credentials flow exclusively through `spec.credentials[]` → proxy config. See [Q5](security-hardening-impl-questions.md) for rationale.
+**Gemini credential wiring removal:** The existing `configureProxyDeployment()` method (which patches the proxy Deployment's `GEMINI_API_KEY` env var to reference the user's Secret via `secretKeyRef`) is replaced by the generic credential wiring in `configureProxyForCredentials()`, and `spec.geminiAPIKey` is replaced by `spec.credentials[]`. Credentials flow through `spec.credentials[]` → proxy config JSON + env var wiring on the proxy Deployment. `stampSecretVersionAnnotation()` is retained to trigger rollouts when Secret data changes. See [Q5](security-hardening-impl-questions.md) for rationale.
+
+**Dynamic OpenClaw configuration:** The controller dynamically generates the `models.providers` section of `openclaw.json` from credentials that have `provider` set. For each such credential, a provider entry is created with:
+- `baseUrl` pointing to the proxy's gateway path (e.g., `http://claw-proxy:8080/gemini/v1beta`)
+- A dummy `apiKey` (the proxy injects the real credentials)
+
+This means adding a new LLM provider is a new entry in `spec.credentials` with `provider` set — no manual `openclaw.json` editing.
 
 **Status fields ([Q6](security-hardening-impl-questions.md)):**
 
@@ -382,4 +443,4 @@ All implementation questions are resolved. See [security-hardening-impl-question
 | Q9 | Implementation phasing | Phase 1 (quick wins + CRD rename) → Phase 2 (inline credentials + Go proxy) → Phase 3 (remaining types + cleanup) |
 | Q10 | Credential validation | CEL validation rules on `spec.credentials[]` items + controller defense-in-depth |
 | Q11 | Phase 2 credential types | `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `none` (6 types implemented; `kubernetes` deferred to Phase 3) |
-| Q12 | Proxy traffic routing | CONNECT + MITM with operator-managed CA; `HTTP_PROXY`/`HTTPS_PROXY` env vars |
+| Q12 | Proxy traffic routing | Hybrid: gateway mode (path-based, for LLM providers with `provider`) + MITM forward proxy (CONNECT, for general egress); `HTTP_PROXY`/`HTTPS_PROXY` + `NO_PROXY=claw-proxy`; dynamic `openclaw.json` generation |

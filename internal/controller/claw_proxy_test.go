@@ -401,6 +401,91 @@ func TestGenerateProxyConfig(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &cfg))
 		assert.Nil(t, cfg.Routes)
 	})
+
+	t.Run("should preserve pathToken prefix and skip gateway routing when provider is set", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "telegram",
+				Type:     clawv1alpha1.CredentialTypePathToken,
+				Provider: "custom",
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "telegram-secret",
+					Key:  "token",
+				},
+				Domain: "api.telegram.org",
+				PathToken: &clawv1alpha1.PathTokenConfig{
+					Prefix: "/bot",
+				},
+			},
+		}
+
+		data, err := generateProxyConfig(credentials)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		require.Len(t, cfg.Routes, 1)
+		assert.Equal(t, "/bot", cfg.Routes[0].PathPrefix, "pathToken prefix should be preserved")
+		assert.Empty(t, cfg.Routes[0].Upstream, "pathToken should not get gateway upstream even with provider set")
+	})
+
+	t.Run("should set gateway fields for bearer credential when provider is set", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "claude",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "anthropic",
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "anthropic-secret",
+					Key:  "api-key",
+				},
+				Domain: "api.anthropic.com",
+				DefaultHeaders: map[string]string{
+					"anthropic-version": "2023-06-01",
+				},
+			},
+		}
+
+		data, err := generateProxyConfig(credentials)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		require.Len(t, cfg.Routes, 1)
+		assert.Equal(t, "/claude", cfg.Routes[0].PathPrefix)
+		assert.Equal(t, "https://api.anthropic.com", cfg.Routes[0].Upstream)
+		assert.Equal(t, "bearer", cfg.Routes[0].Injector)
+		assert.Equal(t, "2023-06-01", cfg.Routes[0].DefaultHeaders["anthropic-version"])
+	})
+
+	t.Run("should set gateway fields for oauth2 credential when provider is set", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "myservice",
+				Type:     clawv1alpha1.CredentialTypeOAuth2,
+				Provider: "myservice",
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "oauth-secret",
+					Key:  "client-secret",
+				},
+				Domain: "api.myservice.com",
+				OAuth2: &clawv1alpha1.OAuth2Config{
+					ClientID: "my-client-id",
+					TokenURL: "https://auth.myservice.com/token",
+				},
+			},
+		}
+
+		data, err := generateProxyConfig(credentials)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		require.Len(t, cfg.Routes, 1)
+		assert.Equal(t, "/myservice", cfg.Routes[0].PathPrefix)
+		assert.Equal(t, "https://api.myservice.com", cfg.Routes[0].Upstream)
+		assert.Equal(t, "oauth2", cfg.Routes[0].Injector)
+	})
 }
 
 func TestConfigureProxyImage(t *testing.T) {
@@ -681,5 +766,96 @@ func TestOpenClawProxyConfigMap(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(data), &cfg))
 		require.Len(t, cfg.Routes, 1, "should have one route for the test credential")
 		assert.Equal(t, ".googleapis.com", cfg.Routes[0].Domain)
+	})
+
+	t.Run("should include gateway fields in proxy config when credential has provider", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      ClawProxyConfigMapName,
+				Namespace: namespace,
+			}, cm) == nil
+		}, "proxy config ConfigMap should be created")
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["proxy-config.json"]), &cfg))
+		require.Len(t, cfg.Routes, 1)
+		assert.Equal(t, "/gemini", cfg.Routes[0].PathPrefix, "should have gateway path prefix")
+		assert.Equal(t, "https://generativelanguage.googleapis.com", cfg.Routes[0].Upstream, "should have gateway upstream")
+	})
+}
+
+func TestOpenClawDynamicProviders(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("should inject dynamic providers into ConfigMap after reconciliation", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      ClawConfigMapName,
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		openclawJSON, ok := cm.Data["openclaw.json"]
+		require.True(t, ok, "openclaw.json should exist")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(openclawJSON), &config))
+
+		models, ok := config["models"].(map[string]any)
+		require.True(t, ok, "models section should exist")
+		providers, ok := models["providers"].(map[string]any)
+		require.True(t, ok, "providers section should exist")
+		require.Contains(t, providers, "google", "google provider should be injected")
+
+		google, ok := providers["google"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "http://claw-proxy:8080/gemini/v1beta", google["baseUrl"])
+		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
+	})
+
+	t.Run("should have empty providers when no credentials have provider set", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = ClawInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:   "passthrough",
+				Type:   clawv1alpha1.CredentialTypeNone,
+				Domain: "example.com",
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      ClawConfigMapName,
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["openclaw.json"]), &config))
+
+		models := config["models"].(map[string]any)
+		providers := models["providers"].(map[string]any)
+		assert.Empty(t, providers, "providers should be empty when no credentials have provider set")
 	})
 }
