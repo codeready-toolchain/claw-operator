@@ -23,6 +23,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
   - `gcp` (GCPConfig, optional): Required when type is `gcp`. Fields: `project` (GCP project ID, minLength=1), `location` (GCP region, minLength=1)
   - `pathToken` (PathTokenConfig, optional): Required when type is `pathToken`. Fields: `prefix` (URL path prefix, minLength=1)
   - `oauth2` (OAuth2Config, optional): Required when type is `oauth2`. Fields: `clientID` (minLength=1), `tokenURL` (minLength=1), `scopes` ([]string, optional)
+  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `openclaw.json`. When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
 
 **Status Fields:**
 - `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`claw-gateway-token`)
@@ -189,6 +190,13 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ If routeHost is empty (vanilla Kubernetes): use "http://localhost:18789" fallback
    └─ Set modified JSON back into ConfigMap
   ↓
+7b. injectProvidersIntoConfigMap(objects, instance.Spec.Credentials)
+   ├─ Filter credentials with Provider set
+   ├─ For each: resolveProviderInfo(cred) → upstream + basePath
+   ├─ Build baseUrl: http://claw-proxy:8080/<credName><basePath>
+   ├─ Parse openclaw.json, replace models.providers with generated entries
+   └─ Credentials without Provider are MITM-only (no provider entry)
+  ↓
 8. Filter for remaining resources (kind != "Route")
   ↓
 9. Set namespace and owner references on remaining objects
@@ -227,6 +235,8 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
 - `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in ConfigMap with Route host (or localhost fallback)
+- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `openclaw.json` from credentials that have `Provider` set, generating `baseUrl` entries pointing to the proxy's gateway routes
+- `resolveProviderInfo()` — returns upstream host and base path for a credential's provider (handles Google Gemini vs Vertex AI, unknown providers fall back to domain)
 - `applyResources()` — applies list of unstructured objects using server-side apply
 - `configureProxyImage()` — overrides proxy Deployment container image if `ProxyImage` is set (from `PROXY_IMAGE` env var); no-op when empty (preserves embedded default for `make run`)
 - `configureProxyDeployment()` — modifies claw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
@@ -313,7 +323,7 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 - **Pattern:** `Test*` functions with `t.Run()` subtests; uses `t.Cleanup()` for cleanup; uses `waitFor()` helper for async assertions (10s timeout, 250ms poll)
 - **Polling helper:** `waitFor(t, timeout, interval, condition, message)` — custom helper for async checks (replaces Gomega's `Eventually()`)
 - **Table-driven tests:** Use standard Go pattern with struct slices and `t.Run(tt.name, ...)` for parameterized tests
-- **Test CRs:** Test Claw instances can include the optional `credentials` field for credential testing (e.g., `instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, SecretRef: &clawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}, Domain: "generativelanguage.googleapis.com", APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"}}}`)
+- **Test CRs:** Test Claw instances can include the optional `credentials` field for credential testing (e.g., `instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", SecretRef: &clawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}, Domain: ".googleapis.com", APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"}}}`)
 - **Test files:** Separate test files per resource type (`claw_configmap_test.go`, `claw_credentials_test.go`, `claw_status_test.go`, etc.)
 - **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment 
 

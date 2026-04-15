@@ -26,6 +26,8 @@ type Injector interface {
 	Inject(req *http.Request) error
 }
 
+const injectorGCP = "gcp"
+
 // authHeaders are stripped from every request before injection (defense in depth).
 var authHeaders = []string{
 	"Authorization",
@@ -48,7 +50,7 @@ func NewInjector(route *Route) (Injector, error) {
 		return NewAPIKeyInjector(route)
 	case "bearer":
 		return NewBearerInjector(route)
-	case "gcp":
+	case injectorGCP:
 		return NewGCPInjector(route)
 	case "none":
 		return NewNoneInjector(route)

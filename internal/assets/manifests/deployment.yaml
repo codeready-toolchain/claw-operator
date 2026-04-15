@@ -125,9 +125,9 @@ spec:
             - name: https_proxy
               value: http://claw-proxy:8080
             - name: NO_PROXY
-              value: localhost,127.0.0.1
+              value: localhost,127.0.0.1,claw-proxy
             - name: no_proxy
-              value: localhost,127.0.0.1
+              value: localhost,127.0.0.1,claw-proxy
             - name: NODE_USE_ENV_PROXY
               value: "1"
             - name: NODE_EXTRA_CA_CERTS

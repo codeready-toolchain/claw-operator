@@ -686,8 +686,9 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 
 			instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 				{
-					Name: "gemini",
-					Type: clawv1alpha1.CredentialTypeAPIKey,
+					Name:     "gemini",
+					Type:     clawv1alpha1.CredentialTypeAPIKey,
+					Provider: "google",
 					SecretRef: &clawv1alpha1.SecretRef{
 						Name: apiKeySecret,
 						Key:  apiKeySecretKey,

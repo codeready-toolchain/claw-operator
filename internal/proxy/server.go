@@ -25,16 +25,23 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/elazarl/goproxy"
 )
 
-// Server is a MITM credential-injecting forward proxy backed by goproxy.
+// Server is a credential-injecting proxy with two modes:
+//   - Gateway mode: path-based routing for SDKs using baseUrl (e.g., /gemini/v1beta/...)
+//   - Forward proxy mode: MITM CONNECT proxy for general egress via HTTP_PROXY/HTTPS_PROXY
 type Server struct {
-	proxy  *goproxy.ProxyHttpServer
-	logger *slog.Logger
+	proxy     *goproxy.ProxyHttpServer
+	cfg       *Config
+	injectors map[string]Injector
+	gateways  map[string]*httputil.ReverseProxy
+	logger    *slog.Logger
 }
 
 // NewServer creates a proxy server from the given config and CA materials.
@@ -116,7 +123,7 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 			// real token acquisition and injection on the actual API request. This
 			// must happen here (not in the injector) because we need to short-circuit
 			// the entire request and return a synthetic response.
-			if route.Injector == "gcp" && isTokenVendingRequest(req) {
+			if route.Injector == injectorGCP && isTokenVendingRequest(req) {
 				return req, goproxy.NewResponse(
 					req, "application/json", http.StatusOK,
 					string(TokenVendingResponse()),
@@ -147,7 +154,36 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 		},
 	)
 
-	return &Server{proxy: proxy, logger: logger}, nil
+	gws := make(map[string]*httputil.ReverseProxy)
+	for i := range cfg.Routes {
+		route := &cfg.Routes[i]
+		if route.PathPrefix == "" || route.Upstream == "" {
+			continue
+		}
+		upstream, err := url.Parse(route.Upstream)
+		if err != nil {
+			return nil, fmt.Errorf("parse upstream URL %q for route %s: %w", route.Upstream, route.Domain, err)
+		}
+		gw := &httputil.ReverseProxy{
+			Director: func(req *http.Request) {
+				req.URL.Scheme = upstream.Scheme
+				req.URL.Host = upstream.Host
+				req.Host = upstream.Host
+			},
+			Transport: &http.Transport{
+				TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+				ResponseHeaderTimeout: 300 * time.Second,
+				IdleConnTimeout:       90 * time.Second,
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   10,
+			},
+			FlushInterval: -1,
+		}
+		gws[route.PathPrefix] = gw
+		logger.Info("registered gateway route", "pathPrefix", route.PathPrefix, "upstream", route.Upstream)
+	}
+
+	return &Server{proxy: proxy, cfg: cfg, injectors: injectors, gateways: gws, logger: logger}, nil
 }
 
 // Close is a no-op retained for API compatibility.
@@ -161,8 +197,61 @@ func (s *Server) Handler() http.Handler {
 			_, _ = w.Write([]byte("ok\n"))
 			return
 		}
+
+		if r.Method != http.MethodConnect {
+			if route, strippedPath := s.cfg.MatchRouteByPath(r.URL.Path); route != nil {
+				s.serveGateway(w, r, route, strippedPath)
+				return
+			}
+		}
+
 		s.proxy.ServeHTTP(w, r)
 	})
+}
+
+// serveGateway handles requests matched by path prefix, forwarding to the
+// configured upstream with credential injection. This is the gateway mode
+// where SDKs use baseUrl to send plain HTTP requests directly to the proxy.
+func (s *Server) serveGateway(w http.ResponseWriter, r *http.Request, route *Route, strippedPath string) {
+	gw := s.gateways[route.PathPrefix]
+	if gw == nil {
+		http.Error(w, `{"error":"no gateway route configured"}`, http.StatusBadGateway)
+		return
+	}
+
+	StripAuthHeaders(r)
+
+	if route.Injector == injectorGCP && isTokenVendingRequest(r) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(TokenVendingResponse())
+		return
+	}
+
+	inj := s.injectors[route.Domain]
+	if inj == nil {
+		s.logger.Error("no injector for gateway route", "domain", route.Domain)
+		http.Error(w, `{"error":"credential injection failed"}`, http.StatusBadGateway)
+		return
+	}
+
+	if err := inj.Inject(r); err != nil {
+		s.logger.Error("credential injection failed", "domain", route.Domain, "error", "[REDACTED]")
+		http.Error(w, `{"error":"credential injection failed"}`, http.StatusBadGateway)
+		return
+	}
+
+	for k, v := range route.DefaultHeaders {
+		r.Header.Set(k, v)
+	}
+
+	r.URL.Path = strippedPath
+	r.URL.RawPath = ""
+	r.Header.Del("Via")
+	r.Header.Del("X-Forwarded-For")
+
+	s.logger.Debug("gateway", "pathPrefix", route.PathPrefix, "upstream", route.Upstream, "path", strippedPath)
+	gw.ServeHTTP(w, r)
 }
 
 func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, error) {

@@ -242,8 +242,9 @@ func createClawInstance(t *testing.T, ctx context.Context, name, namespace strin
 	instance.Namespace = namespace
 	instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 		{
-			Name: "gemini",
-			Type: clawv1alpha1.CredentialTypeAPIKey,
+			Name:     "gemini",
+			Type:     clawv1alpha1.CredentialTypeAPIKey,
+			Provider: "google",
 			SecretRef: &clawv1alpha1.SecretRef{
 				Name: aiModelSecret,
 				Key:  aiModelSecretKey,
@@ -261,8 +262,9 @@ func createClawInstance(t *testing.T, ctx context.Context, name, namespace strin
 func testCredentials() []clawv1alpha1.CredentialSpec {
 	return []clawv1alpha1.CredentialSpec{
 		{
-			Name: "gemini",
-			Type: clawv1alpha1.CredentialTypeAPIKey,
+			Name:     "gemini",
+			Type:     clawv1alpha1.CredentialTypeAPIKey,
+			Provider: "google",
 			SecretRef: &clawv1alpha1.SecretRef{
 				Name: aiModelSecret,
 				Key:  aiModelSecretKey,

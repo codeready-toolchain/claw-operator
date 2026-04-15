@@ -21,32 +21,7 @@ data:
         "trustedProxies": ["10.0.0.0/8", "172.16.0.0/12"]
       },
       "models": {
-        "providers": {
-          "google": {
-            "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
-            "apiKey": "ah-ah-ah-you-didnt-say-the-magic-word",
-            "request": { "proxy": { "mode": "env-proxy" } },
-            "models": []
-          },
-          "anthropic": {
-            "baseUrl": "https://api.anthropic.com",
-            "apiKey": "ah-ah-ah-you-didnt-say-the-magic-word",
-            "request": { "proxy": { "mode": "env-proxy" } },
-            "models": []
-          },
-          "openai": {
-            "baseUrl": "https://api.openai.com",
-            "apiKey": "ah-ah-ah-you-didnt-say-the-magic-word",
-            "request": { "proxy": { "mode": "env-proxy" } },
-            "models": []
-          },
-          "openrouter": {
-            "baseUrl": "https://openrouter.ai/api",
-            "apiKey": "ah-ah-ah-you-didnt-say-the-magic-word",
-            "request": { "proxy": { "mode": "env-proxy" } },
-            "models": []
-          }
-        }
+        "providers": {}
       },
       "agents": {
         "defaults": {
