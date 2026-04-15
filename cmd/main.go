@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -206,11 +207,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	imagePullPolicy, err := validateImagePullPolicy(os.Getenv("IMAGE_PULL_POLICY"))
+	if err != nil {
+		setupLog.Error(err, "invalid IMAGE_PULL_POLICY")
+		os.Exit(1)
+	}
+
 	if err = (&controller.ClawResourceReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		ProxyImage:      os.Getenv("PROXY_IMAGE"),
-		ImagePullPolicy: os.Getenv("IMAGE_PULL_POLICY"),
+		ImagePullPolicy: imagePullPolicy,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Claw")
 		os.Exit(1)
@@ -254,4 +261,20 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+var validImagePullPolicies = map[string]bool{
+	"Always":       true,
+	"IfNotPresent": true,
+	"Never":        true,
+}
+
+func validateImagePullPolicy(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if !validImagePullPolicies[value] {
+		return "", fmt.Errorf("unsupported value %q, must be one of: Always, IfNotPresent, Never", value)
+	}
+	return value, nil
 }

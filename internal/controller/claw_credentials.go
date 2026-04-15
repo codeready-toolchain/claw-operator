@@ -25,6 +25,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -101,7 +102,7 @@ func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, inst
 	logger.Info("Applying gateway secret", "name", secret.Name)
 	if err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
 		FieldManager: "claw-operator",
-		Force:        &[]bool{true}[0],
+		Force:        ptr.To(true),
 	}); err != nil {
 		return fmt.Errorf("failed to apply gateway secret: %w", err)
 	}
@@ -110,10 +111,20 @@ func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, inst
 	return nil
 }
 
-// validateCredentials validates all credential entries: checks that referenced Secrets exist
-// and that type-specific configuration is present. Returns an error describing all failures.
+// Known provider values that the controller can resolve to gateway routes.
+var knownProviders = map[string]bool{
+	"google":     true,
+	"anthropic":  true,
+	"openai":     true,
+	"openrouter": true,
+}
+
+// validateCredentials validates all credential entries: checks that referenced Secrets exist,
+// that type-specific configuration is present, and that provider values are valid and unique.
+// Returns an error describing all failures.
 func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	var errs []error
+	seenProviders := map[string]string{} // provider -> credential name
 
 	for _, cred := range instance.Spec.Credentials {
 		// Validate SecretRef exists for types that require it
@@ -133,6 +144,18 @@ func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instan
 			}
 			if _, ok := secret.Data[cred.SecretRef.Key]; !ok {
 				errs = append(errs, fmt.Errorf("credential %q: key %q not found in Secret %q", cred.Name, cred.SecretRef.Key, cred.SecretRef.Name))
+			}
+		}
+
+		// Validate provider field
+		if cred.Provider != "" {
+			if !knownProviders[cred.Provider] {
+				errs = append(errs, fmt.Errorf("credential %q: unknown provider %q (known: google, anthropic, openai, openrouter)", cred.Name, cred.Provider))
+			}
+			if existing, seen := seenProviders[cred.Provider]; seen {
+				errs = append(errs, fmt.Errorf("credential %q: duplicate provider %q (already used by credential %q)", cred.Name, cred.Provider, existing))
+			} else {
+				seenProviders[cred.Provider] = cred.Name
 			}
 		}
 

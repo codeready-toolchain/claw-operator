@@ -858,4 +858,31 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		providers := models["providers"].(map[string]any)
 		assert.Empty(t, providers, "providers should be empty when no credentials have provider set")
 	})
+
+	t.Run("should have empty providers and filtered model defaults for MITM-only credentials", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstanceMITMOnly(t, ctx, ClawInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      ClawConfigMapName,
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["openclaw.json"]), &config))
+
+		models := config["models"].(map[string]any)
+		providers := models["providers"].(map[string]any)
+		assert.Empty(t, providers, "providers should be empty for MITM-only credentials")
+
+		agents, _ := config["agents"].(map[string]any)
+		defaults, _ := agents["defaults"].(map[string]any)
+		modelAliases, _ := defaults["models"].(map[string]any)
+		assert.Empty(t, modelAliases, "model aliases should be empty when no providers are configured")
+	})
 }

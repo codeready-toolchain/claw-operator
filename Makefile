@@ -292,7 +292,7 @@ endif
 	$(MAKE) install
 	$(call generate-deploy-overlay,$(REGISTRY)/claw-operator:$(TAG),$(REGISTRY)/claw-proxy:$(TAG),Always)
 	@trap 'rm -rf config/.deploy' EXIT; $(KUSTOMIZE) build config/.deploy | $(KUBECTL) apply -f -
-	@$(KUBECTL) rollout restart deployment -n claw-operator claw-operator-controller-manager 2>/dev/null || true
+	@$(KUBECTL) rollout restart deployment -n claw-operator claw-operator-controller-manager || { echo "ERROR: rollout restart failed" >&2; false; }
 
 .PHONY: dev-setup
 dev-setup: ## Full dev setup: build, push, and deploy.

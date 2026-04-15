@@ -306,8 +306,9 @@ With the browser tab open (so the pairing request stays active), list pending re
 oc exec -n claw-operator deployment/claw -- \
   node /app/dist/index.js devices list
 
-# Approve by request ID (copy from the Pending table above)
-<requestId>
+# Approve by request ID (replace <requestId> with the ID from the Pending table above)
+oc exec -n claw-operator deployment/claw -- \
+  node /app/dist/index.js devices approve <requestId>
 ```
 
 Refresh the browser after approval. The device is remembered -- you won't need to pair again unless you clear browser data or switch browsers.

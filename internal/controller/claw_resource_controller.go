@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -322,7 +323,7 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 	for _, obj := range objects {
 		if err := r.Patch(ctx, obj, client.Apply, &client.PatchOptions{
 			FieldManager: "claw-operator",
-			Force:        &[]bool{true}[0],
+			Force:        ptr.To(true),
 		}); err != nil {
 			// Skip resources whose CRDs are not registered (e.g., Route on non-OpenShift clusters)
 			if meta.IsNoMatchError(err) {
@@ -445,6 +446,8 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 		}
 		models["providers"] = providers
 
+		filterAgentDefaultsForProviders(config, providers)
+
 		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 		if err != nil {
 			return fmt.Errorf("failed to marshal openclaw.json: %w", err)
@@ -457,6 +460,41 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 	}
 
 	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
+}
+
+// filterAgentDefaultsForProviders removes model entries from agents.defaults whose
+// provider (the part before "/" in the model name) is not in the injected providers map,
+// and clears agents.defaults.model.primary if its provider is not available.
+func filterAgentDefaultsForProviders(config map[string]any, providers map[string]any) {
+	agents, _ := config["agents"].(map[string]any)
+	if agents == nil {
+		return
+	}
+	defaults, _ := agents["defaults"].(map[string]any)
+	if defaults == nil {
+		return
+	}
+
+	if modelMap, ok := defaults["models"].(map[string]any); ok {
+		var firstAvailable string
+		for modelName := range modelMap {
+			providerKey, _, _ := strings.Cut(modelName, "/")
+			if _, exists := providers[providerKey]; !exists {
+				delete(modelMap, modelName)
+			} else if firstAvailable == "" {
+				firstAvailable = modelName
+			}
+		}
+
+		if primary, _ := defaults["model"].(map[string]any); primary != nil {
+			if primaryName, _ := primary["primary"].(string); primaryName != "" {
+				providerKey, _, _ := strings.Cut(primaryName, "/")
+				if _, exists := providers[providerKey]; !exists {
+					primary["primary"] = firstAvailable
+				}
+			}
+		}
+	}
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem

@@ -35,6 +35,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -190,7 +191,7 @@ func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instan
 
 	if err := r.Patch(ctx, cm, client.Apply, &client.PatchOptions{
 		FieldManager: "claw-operator",
-		Force:        &[]bool{true}[0],
+		Force:        ptr.To(true),
 	}); err != nil {
 		return fmt.Errorf("failed to apply proxy config: %w", err)
 	}
@@ -481,7 +482,7 @@ func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *cla
 
 	if err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
 		FieldManager: "claw-operator",
-		Force:        &[]bool{true}[0],
+		Force:        ptr.To(true),
 	}); err != nil {
 		return fmt.Errorf("failed to apply proxy CA secret: %w", err)
 	}

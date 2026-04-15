@@ -236,9 +236,8 @@ func TestServerMITMCredentialInjection(t *testing.T) {
 
 	t.Setenv("CRED_BEARER_TEST", "test-token-12345")
 
-	host, port, err := net.SplitHostPort(upstream.Listener.Addr().String())
+	_, port, err := net.SplitHostPort(upstream.Listener.Addr().String())
 	require.NoError(t, err)
-	_ = host
 
 	cfg := &Config{
 		Routes: []Route{

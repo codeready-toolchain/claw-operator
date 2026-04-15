@@ -321,7 +321,7 @@ The proxy needs to intercept the gateway's outbound HTTP(S) requests, inspect th
 - Stored in Secret `claw-proxy-ca` with owner reference
 - CA cert+key mounted into proxy pod (for signing leaf certs)
 - CA cert only mounted into gateway pod + `NODE_EXTRA_CA_CERTS`
-- Long validity (5 years) — cluster-internal only, not externally trusted
+- Long validity (10 years) — cluster-internal only, not externally trusted
 - Operator checks expiry during reconciliation, regenerates if nearing expiration
 - On OpenShift, the proxy's outbound trust store uses `config.openshift.io/inject-trusted-cabundle` to handle corporate proxy CAs
 

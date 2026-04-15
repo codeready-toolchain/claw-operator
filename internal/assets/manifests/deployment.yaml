@@ -38,9 +38,15 @@ spec:
             - sh
             - -c
             - |
+              set -e
               cp -a /app/dist/. /patched-dist/
+              candidates=$(grep -rl 'fetchWithWebToolsNetworkGuard({' /patched-dist --include='*.js' 2>/dev/null || true)
+              if [ -z "$candidates" ]; then
+                echo "[proxy-patch] ERROR: no files contain fetchWithWebToolsNetworkGuard({ — upstream may have changed" >&2
+                exit 1
+              fi
               patched=0
-              for file in $(grep -rl 'fetchWithWebToolsNetworkGuard({' /patched-dist --include='*.js' 2>/dev/null); do
+              for file in $candidates; do
                 if ! grep -q 'useEnvProxy:true' "$file" 2>/dev/null; then
                   sed -i 's|fetchWithWebToolsNetworkGuard({|fetchWithWebToolsNetworkGuard({useEnvProxy:true,|g' "$file"
                   echo "[proxy-patch] Patched: $file"
@@ -48,7 +54,9 @@ spec:
                 fi
               done
               if [ "$patched" -eq 0 ]; then
-                echo "[proxy-patch] No files needed patching"
+                echo "[proxy-patch] All files already patched"
+              else
+                echo "[proxy-patch] Patched $patched file(s)"
               fi
           resources:
             requests:

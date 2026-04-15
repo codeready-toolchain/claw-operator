@@ -244,6 +244,8 @@ The actual secret bytes never pass through the operator or the ConfigMap.
 
 **Why hybrid instead of pure MITM:** The original design specified pure MITM for all traffic. During implementation, we discovered that the Google ADK JS SDK strips the `thought_signature` field from function call parts when running in `env-proxy` mode with streamed responses. This caused 400 errors from the Gemini API after tool use. The gateway mode bypasses this SDK bug by using `baseUrl` instead of `env-proxy`, sending plain HTTP to the proxy (which then adds credentials and forwards as HTTPS). MITM is retained for general egress (web_fetch, npm, OTEL) where no SDK bug applies.
 
+> **TODO: Revisit when upstream is fixed.** The hybrid proxy workaround exists solely because of [google/adk-typescript#505](https://github.com/google/adk-typescript/issues/505) — `thought_signature` is stripped from function call parts during SSE streaming in `env-proxy` mode. Once the upstream fix lands, we can simplify back to pure MITM and remove gateway mode for LLM providers. The init container's `fetchWithWebToolsNetworkGuard` patching (which enables `useEnvProxy:true`) is also tied to this workaround and should be re-evaluated.
+
 **Health endpoint:** `GET /healthz` returns 200.
 
 **Image:** Custom Go binary, built as a distroless container image.
