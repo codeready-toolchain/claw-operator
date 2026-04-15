@@ -453,19 +453,15 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("waiting for claw-proxy deployment")
-			var deploymentFound bool
-			deadline := time.Now().Add(2 * time.Minute)
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "deployment", "claw-proxy",
-					"-n", userNamespace)
-				_, err := utils.Run(t, cmd)
-				if err == nil {
-					deploymentFound = true
-					break
-				}
-				time.Sleep(pollInterval)
-			}
-			require.True(t, deploymentFound,
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, 2*time.Minute, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "deployment", "claw-proxy",
+						"-n", userNamespace)
+					_, err := utils.Run(t, cmd)
+					return err == nil, nil
+				})
+			require.NoError(t, err,
 				"timed out waiting for claw-proxy deployment in namespace %s", userNamespace)
 
 			t.Log("verifying CRED_GEMINI references the correct Secret name")
@@ -495,20 +491,15 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			assert.Equal(t, "proxy", output, "First container should be named 'proxy'")
 
 			t.Log("verifying pods are running")
-			var podsRunning bool
-			deadline = time.Now().Add(3 * time.Minute)
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw-proxy",
-					"-o", "jsonpath={.items[*].status.phase}",
-					"-n", userNamespace)
-				output, err := utils.Run(t, cmd)
-				if err == nil && strings.Contains(output, podPhaseRunning) {
-					podsRunning = true
-					break
-				}
-				time.Sleep(pollInterval)
-			}
-			require.True(t, podsRunning,
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, 3*time.Minute, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw-proxy",
+						"-o", "jsonpath={.items[*].status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && strings.Contains(output, podPhaseRunning), nil
+				})
+			require.NoError(t, err,
 				"claw-proxy pods in namespace %s never reached Running phase", userNamespace)
 		})
 
