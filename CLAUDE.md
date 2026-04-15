@@ -72,7 +72,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 - `Age`: Shows creation timestamp via JSONPath `.metadata.creationTimestamp`
 
 **Version Logging:**
-The operator logs version and build time at startup: `version` (short commit SHA) and `buildTime` (RFC3339). Injected via LDFLAGS during `docker-build`. Local builds show defaults (`dev`/`unknown`).
+The operator logs version and build time at startup: `version` (short commit SHA) and `buildTime` (RFC3339). Injected via LDFLAGS during `container-build`. Local builds show defaults (`dev`/`unknown`).
 
 ## Common Commands
 
@@ -96,8 +96,8 @@ make setup-test-e2e     # Create Kind cluster
 make test-e2e           # Run e2e tests
 make cleanup-test-e2e   # Tear down Kind cluster
 
-# Docker
-make docker-build IMG=<registry>/claw-operator:tag
+# Container
+make container-build IMG=<registry>/claw-operator:tag
 
 # Dev deployment (OpenShift/Kubernetes)
 make dev-setup REGISTRY=quay.io/myuser           # Build + push + deploy (one command)
