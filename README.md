@@ -248,7 +248,8 @@ oc apply -f config/samples/claw_v1alpha1_claw.yaml -n <user-namespace>
 
 Or create it directly:
 
-```yaml
+```sh
+oc apply -f - <<'EOF'
 apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
@@ -264,6 +265,7 @@ spec:
       domain: ".googleapis.com"
       apiKey:
         header: x-goog-api-key
+EOF
 ```
 
 **3. Watch the instance become ready:**
@@ -290,7 +292,25 @@ oc port-forward svc/claw 18789:18789 -n claw-operator
 
 Then open http://localhost:18789 in your browser.
 
-**5. Authenticate with the gateway token:**
+**5. Approve device pairing:**
+
+On first connection from a new browser you'll see **"pairing required"**. This is OpenClaw's device authentication -- remote connections require a one-time approval.
+
+With the browser tab open (so the pairing request stays active), list pending requests and approve:
+
+```sh
+# List pending pairing requests
+oc exec -n claw-operator deployment/claw -- \
+  node /app/dist/index.js devices list
+
+# Approve by request ID (copy from the Pending table above)
+oc exec -n claw-operator deployment/claw -- \
+  node /app/dist/index.js devices approve <requestId>
+```
+
+Refresh the browser after approval. The device is remembered -- you won't need to pair again unless you clear browser data or switch browsers.
+
+**6. Authenticate with the gateway token:**
 
 The operator generates a gateway authentication token stored in a Secret. Retrieve it with:
 
