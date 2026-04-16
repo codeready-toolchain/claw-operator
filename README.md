@@ -54,6 +54,8 @@ export NS=my-claw-namespace
 oc create namespace $NS
 ```
 
+> **Do not use the `default` namespace.** On OpenShift, the `default` namespace uses a different SCC assignment that may not inject a numeric `runAsUser` into pods. This causes containers whose image declares a non-numeric `USER` (e.g., `node`) to fail with `runAsNonRoot` verification errors. Always create a dedicated namespace for your Claw instance.
+
 ### 3. Create a Credential Secret
 
 ```sh
