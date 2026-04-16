@@ -410,8 +410,8 @@ func TestGenerateProxyConfig(t *testing.T) {
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
 		require.Len(t, cfg.Routes, len(builtinPassthroughDomains))
-		assert.Equal(t, "openrouter.ai", cfg.Routes[0].Domain)
-		assert.Equal(t, "none", cfg.Routes[0].Injector)
+		route := findRouteByDomain(t, cfg.Routes, "openrouter.ai")
+		assert.Equal(t, "none", route.Injector)
 	})
 
 	t.Run("should preserve pathToken prefix and skip gateway routing when provider is set", func(t *testing.T) {
