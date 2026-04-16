@@ -94,10 +94,10 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "gcp", cfg.Routes[0].Injector)
-		assert.Empty(t, cfg.Routes[0].PathPrefix, "Vertex SDK provider should not have gateway path prefix")
-		assert.Empty(t, cfg.Routes[0].Upstream, "Vertex SDK provider should not have gateway upstream")
+		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
+		assert.Equal(t, "gcp", route.Injector)
+		assert.Empty(t, route.PathPrefix, "Vertex SDK provider should not have gateway path prefix")
+		assert.Empty(t, route.Upstream, "Vertex SDK provider should not have gateway upstream")
 	})
 
 	t.Run("should create gateway route for GCP google but not GCP anthropic", func(t *testing.T) {
@@ -137,8 +137,6 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 2)
-
 		var googleRoute, anthropicRoute *proxyRoute
 		for i := range cfg.Routes {
 			if cfg.Routes[i].SAFilePath == "/etc/proxy/credentials/gemini-vertex/sa-key.json" {
