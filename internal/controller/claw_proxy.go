@@ -535,6 +535,7 @@ func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, cred
 					"name":  "ANTHROPIC_VERTEX_PROJECT_ID",
 					"value": cred.GCP.Project,
 				})
+				break
 			}
 		}
 

@@ -300,12 +300,16 @@ func (r *ClawResourceReconciler) applyProxyResources(ctx context.Context, instan
 		}
 		return nil, err
 	}
-	setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionTrue, clawv1alpha1.ConditionReasonConfigured, "Proxy config generated successfully")
-
 	if err := r.applyVertexADCConfigMap(ctx, instance); err != nil {
 		logger.Error(err, "Failed to apply Vertex ADC config")
+		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after Vertex ADC config failure")
+		}
 		return nil, err
 	}
+	setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionTrue, clawv1alpha1.ConditionReasonConfigured, "Proxy config generated successfully")
 
 	return proxyConfigJSON, nil
 }
