@@ -80,32 +80,35 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
 	@mkdir -p tmp
-	@kubectl config current-context > tmp/.pre-e2e-context 2>/dev/null || true
-	@kubectl config use-context kind-$(KIND_CLUSTER)
+	@$(KUBECTL) config current-context > tmp/.pre-e2e-context 2>/dev/null || true
+	@$(KUBECTL) config use-context kind-$(KIND_CLUSTER)
 
 .PHONY: reset-test-e2e
 reset-test-e2e: ## Remove leftover operator resources from a previous e2e run
 	@echo "Resetting e2e test state..."
 	-$(MAKE) undeploy 2>/dev/null
 	-$(MAKE) uninstall 2>/dev/null
-	-kubectl delete ns claw-operator --ignore-not-found
+	-$(KUBECTL) delete ns claw-operator --ignore-not-found
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet reset-test-e2e ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: ## Run the e2e tests. Expected an isolated environment using Kind.
+	@trap '$(MAKE) cleanup-test-e2e >/dev/null 2>&1 || true' EXIT; \
+	$(MAKE) setup-test-e2e manifests generate fmt vet reset-test-e2e; \
 	KIND_CLUSTER=$(KIND_CLUSTER) go test -v ./test/e2e/
-	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER)
-	@if [ -f tmp/.pre-e2e-context ]; then \
+	@status=0; \
+	$(KIND) delete cluster --name $(KIND_CLUSTER) || status=$$?; \
+	if [ -f tmp/.pre-e2e-context ]; then \
 		ctx=$$(cat tmp/.pre-e2e-context); \
 		rm -f tmp/.pre-e2e-context; \
-		if [ -n "$$ctx" ] && kubectl config get-contexts "$$ctx" >/dev/null 2>&1; then \
+		if [ -n "$$ctx" ] && $(KUBECTL) config get-contexts "$$ctx" >/dev/null 2>&1; then \
 			echo "Restoring kubectl context to $$ctx"; \
-			kubectl config use-context "$$ctx"; \
+			$(KUBECTL) config use-context "$$ctx"; \
 		fi; \
-	fi
+	fi; \
+	exit $$status
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -243,7 +246,8 @@ wait-ready: ## Wait for the Claw instance to become ready and print the URL.
 	@$(KUBECTL) wait --for=condition=Ready claw/instance -n $(NS) --timeout=300s
 	@echo
 	@echo "URL: $$($(KUBECTL) get claw instance -n $(NS) -o jsonpath='{.status.url}')"
-	@echo "Token: $$($(KUBECTL) get secret claw-gateway-token -n $(NS) -o jsonpath='{.data.token}' | base64 -d)"
+	@token_secret=$$($(KUBECTL) get claw instance -n $(NS) -o jsonpath='{.status.gatewayTokenSecretRef}'); \
+	echo "Token: $$($(KUBECTL) get secret $$token_secret -n $(NS) -o jsonpath='{.data.token}' | base64 -d)"
 
 .PHONY: approve-pairing
 approve-pairing: ## Approve a device pairing request. Usage: make approve-pairing NS=... [REQUEST_ID=...]
