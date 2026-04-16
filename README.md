@@ -51,7 +51,7 @@ The operator runs in `claw-operator`, but user workloads (Claw instances, secret
 
 ```sh
 export NS=my-claw-namespace
-oc new-project $NS 2>/dev/null || oc project $NS
+oc create namespace $NS
 ```
 
 ### 3. Create a Credential Secret
