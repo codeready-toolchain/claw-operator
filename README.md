@@ -86,12 +86,11 @@ spec:
       secretRef:
         name: gemini-api-key
         key: api-key
-      domain: "generativelanguage.googleapis.com"
-      apiKey:
-        header: x-goog-api-key
       provider: google
 EOF
 ```
+
+For known providers (`google`, `anthropic`), the operator infers `domain` and `apiKey` automatically. For other LLM providers (Anthropic Claude, Vertex AI, and more), see the [Provider Setup Guide](docs/provider-setup.md).
 
 Wait for it to become ready and get the URL and gateway token:
 

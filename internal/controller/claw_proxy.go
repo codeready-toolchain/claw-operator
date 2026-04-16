@@ -73,6 +73,61 @@ func credEnvVarName(credName string) string {
 	return "CRED_" + strings.ReplaceAll(upper, "-", "_")
 }
 
+// usesVertexSDK returns true when a credential should use the native Vertex AI SDK
+// instead of a gateway proxy route. This applies to non-Google GCP providers (e.g.,
+// Anthropic via Vertex AI), where the provider's SDK format doesn't match Vertex AI's
+// URL structure and the native @anthropic-ai/vertex-sdk handles it correctly.
+func usesVertexSDK(cred clawv1alpha1.CredentialSpec) bool {
+	return cred.Type == clawv1alpha1.CredentialTypeGCP && cred.Provider != "" && cred.Provider != "google"
+}
+
+// vertexProviderAPIMapping maps provider names to their OpenClaw API identifiers for Vertex AI.
+var vertexProviderAPIMapping = map[string]string{
+	"anthropic": "anthropic-messages",
+}
+
+// apiKeyProviderDefault holds the default domain and header for a known provider using type: apiKey.
+type apiKeyProviderDefault struct {
+	Domain string
+	Header string
+}
+
+// knownAPIKeyProviders maps provider names to their default domain and header.
+var knownAPIKeyProviders = map[string]apiKeyProviderDefault{
+	"google":    {Domain: "generativelanguage.googleapis.com", Header: "x-goog-api-key"},
+	"anthropic": {Domain: "api.anthropic.com", Header: "x-api-key"},
+}
+
+// resolveProviderDefaults fills in missing Domain and APIKey fields for known providers.
+// Explicit values are preserved (escape hatch). Returns an error if required fields
+// are still missing after applying defaults (unknown provider without domain/apiKey).
+func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
+	switch cred.Type {
+	case clawv1alpha1.CredentialTypeAPIKey:
+		if defaults, ok := knownAPIKeyProviders[cred.Provider]; ok {
+			if cred.Domain == "" {
+				cred.Domain = defaults.Domain
+			}
+			if cred.APIKey == nil {
+				cred.APIKey = &clawv1alpha1.APIKeyConfig{Header: defaults.Header}
+			}
+		}
+
+	case clawv1alpha1.CredentialTypeGCP:
+		if cred.Domain == "" {
+			cred.Domain = ".googleapis.com"
+		}
+	}
+
+	if cred.Domain == "" {
+		return fmt.Errorf("credential %q: domain is required (no default for provider %q with type %q)", cred.Name, cred.Provider, cred.Type)
+	}
+	if cred.Type == clawv1alpha1.CredentialTypeAPIKey && cred.APIKey == nil {
+		return fmt.Errorf("credential %q: apiKey config is required (no default for provider %q)", cred.Name, cred.Provider)
+	}
+	return nil
+}
+
 // providerInfo holds the resolved upstream host and base path for a provider's gateway route.
 type providerInfo struct {
 	Upstream string
@@ -80,25 +135,24 @@ type providerInfo struct {
 }
 
 // resolveProviderInfo returns the upstream and base path for a credential's provider.
-// For Google + apiKey: uses Gemini REST API. For Google + gcp: uses Vertex AI.
-// For unknown providers or unknown type combos: upstream = domain, basePath = "".
+// GCP credentials route through Vertex AI with the provider name as the publisher
+// (works for google, anthropic, meta, etc.). Google + apiKey uses the Gemini REST API.
+// All other combos: upstream = domain, basePath = "".
 func resolveProviderInfo(cred clawv1alpha1.CredentialSpec) providerInfo {
-	switch cred.Provider {
-	case "google":
-		if cred.Type == clawv1alpha1.CredentialTypeGCP && cred.GCP != nil {
-			return providerInfo{
-				Upstream: "https://" + cred.GCP.Location + "-aiplatform.googleapis.com",
-				BasePath: "/v1/projects/" + cred.GCP.Project + "/locations/" + cred.GCP.Location + "/publishers/google",
-			}
+	if cred.Type == clawv1alpha1.CredentialTypeGCP && cred.GCP != nil {
+		return providerInfo{
+			Upstream: "https://" + cred.GCP.Location + "-aiplatform.googleapis.com",
+			BasePath: "/v1/projects/" + cred.GCP.Project + "/locations/" + cred.GCP.Location + "/publishers/" + cred.Provider,
 		}
+	}
+
+	if cred.Provider == "google" {
 		return providerInfo{
 			Upstream: "https://generativelanguage.googleapis.com",
 			BasePath: "/v1beta",
 		}
 	}
 
-	// All other providers (anthropic, openai, openrouter, custom, ...):
-	// upstream = domain, no base path needed.
 	domain := strings.TrimPrefix(cred.Domain, ".")
 	return providerInfo{Upstream: "https://" + domain}
 }
@@ -152,7 +206,9 @@ func generateProxyConfig(credentials []clawv1alpha1.CredentialSpec) ([]byte, err
 
 		// Configure gateway routing when provider is set.
 		// PathToken routes are excluded because they use PathPrefix for token injection.
-		if cred.Provider != "" && cred.Type != clawv1alpha1.CredentialTypePathToken {
+		// Vertex SDK providers (GCP + non-Google) are excluded because the native SDK
+		// talks directly to *.googleapis.com through the MITM proxy.
+		if cred.Provider != "" && cred.Type != clawv1alpha1.CredentialTypePathToken && !usesVertexSDK(cred) {
 			info := resolveProviderInfo(cred)
 			route.PathPrefix = "/" + strings.ToLower(cred.Name)
 			route.Upstream = info.Upstream
@@ -197,6 +253,49 @@ func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instan
 	}
 
 	logger.Info("Applied proxy config ConfigMap")
+	return nil
+}
+
+// hasVertexSDKCredentials returns true if any credential uses the native Vertex SDK.
+func hasVertexSDKCredentials(credentials []clawv1alpha1.CredentialSpec) bool {
+	for _, cred := range credentials {
+		if usesVertexSDK(cred) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyVertexADCConfigMap creates or updates the stub ADC ConfigMap used by the
+// OpenClaw pod's Vertex SDK to bootstrap GCP token refresh. The stub contains
+// dummy credentials — the MITM proxy replaces tokens with real ones.
+func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, instance *clawv1alpha1.Claw) error {
+	if !hasVertexSDKCredentials(instance.Spec.Credentials) {
+		return nil
+	}
+
+	logger := log.FromContext(ctx)
+
+	cm := &corev1.ConfigMap{}
+	cm.SetName(ClawVertexADCConfigMapName)
+	cm.SetNamespace(instance.Namespace)
+	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
+	cm.Data = map[string]string{
+		"adc.json": `{"type":"authorized_user","client_id":"stub.apps.googleusercontent.com","client_secret":"stub","refresh_token":"proxy-managed-token"}`,
+	}
+
+	if err := controllerutil.SetControllerReference(instance, cm, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set controller reference on vertex ADC config: %w", err)
+	}
+
+	if err := r.Patch(ctx, cm, client.Apply, &client.PatchOptions{
+		FieldManager: "claw-operator",
+		Force:        ptr.To(true),
+	}); err != nil {
+		return fmt.Errorf("failed to apply vertex ADC config: %w", err)
+	}
+
+	logger.Info("Applied Vertex ADC ConfigMap")
 	return nil
 }
 
@@ -374,6 +473,101 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 		return nil
 	}
 	return fmt.Errorf("claw-proxy deployment not found in manifests")
+}
+
+// configureClawDeploymentForVertex adds Vertex AI environment variables and the stub
+// ADC volume mount to the claw (gateway) deployment when any credential uses the
+// native Vertex SDK (GCP + non-Google provider). The stub ADC allows google-auth-library
+// to bootstrap token refresh, which the MITM proxy intercepts with real credentials.
+func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
+	var vertexCreds []clawv1alpha1.CredentialSpec
+	for _, cred := range credentials {
+		if usesVertexSDK(cred) {
+			vertexCreds = append(vertexCreds, cred)
+		}
+	}
+	if len(vertexCreds) == 0 {
+		return nil
+	}
+
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawDeploymentName {
+			continue
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from claw deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in claw deployment")
+		}
+
+		containerIdx := -1
+		var container map[string]any
+		for i, c := range containers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawGatewayContainerName {
+				containerIdx = i
+				container = cm
+				break
+			}
+		}
+		if containerIdx < 0 {
+			return fmt.Errorf("container %q not found in claw deployment", ClawGatewayContainerName)
+		}
+
+		envVars, _, _ := unstructured.NestedSlice(container, "env")
+		volumeMounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
+		volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
+
+		envVars = append(envVars, map[string]any{
+			"name":  "GOOGLE_APPLICATION_CREDENTIALS",
+			"value": "/etc/vertex-adc/adc.json",
+		})
+
+		for _, cred := range vertexCreds {
+			if cred.Provider == "anthropic" && cred.GCP != nil {
+				envVars = append(envVars, map[string]any{
+					"name":  "ANTHROPIC_VERTEX_PROJECT_ID",
+					"value": cred.GCP.Project,
+				})
+				break
+			}
+		}
+
+		volumeMounts = append(volumeMounts, map[string]any{
+			"name":      "vertex-adc",
+			"mountPath": "/etc/vertex-adc",
+			"readOnly":  true,
+		})
+		volumes = append(volumes, map[string]any{
+			"name": "vertex-adc",
+			"configMap": map[string]any{
+				"name": ClawVertexADCConfigMapName,
+			},
+		})
+
+		if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
+			return fmt.Errorf("failed to set env vars on claw deployment: %w", err)
+		}
+		if err := unstructured.SetNestedSlice(container, volumeMounts, "volumeMounts"); err != nil {
+			return fmt.Errorf("failed to set volume mounts on claw deployment: %w", err)
+		}
+		containers[containerIdx] = container
+		if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+			return fmt.Errorf("failed to set containers on claw deployment: %w", err)
+		}
+		if err := unstructured.SetNestedSlice(obj.Object, volumes, "spec", "template", "spec", "volumes"); err != nil {
+			return fmt.Errorf("failed to set volumes on claw deployment: %w", err)
+		}
+
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
 }
 
 // stampProxyConfigHash adds a hash annotation to the proxy pod template to trigger

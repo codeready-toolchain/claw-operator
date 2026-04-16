@@ -563,7 +563,7 @@ func TestResolveProviderInfo(t *testing.T) {
 			wantBasePath: "/v1/projects/my-project/locations/us-central1/publishers/google",
 		},
 		{
-			name: "anthropic uses domain directly",
+			name: "anthropic bearer uses domain directly",
 			cred: clawv1alpha1.CredentialSpec{
 				Provider: "anthropic",
 				Type:     clawv1alpha1.CredentialTypeBearer,
@@ -571,6 +571,20 @@ func TestResolveProviderInfo(t *testing.T) {
 			},
 			wantUpstream: "https://api.anthropic.com",
 			wantBasePath: "",
+		},
+		{
+			name: "anthropic gcp uses Vertex AI with anthropic publisher",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "anthropic",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "us-east5",
+				},
+			},
+			wantUpstream: "https://us-east5-aiplatform.googleapis.com",
+			wantBasePath: "/v1/projects/my-project/locations/us-east5/publishers/anthropic",
 		},
 		{
 			name: "unknown provider with exact domain",

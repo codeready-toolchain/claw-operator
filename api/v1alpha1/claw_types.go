@@ -116,7 +116,7 @@ type OAuth2Config struct {
 }
 
 // CredentialSpec defines a single credential entry for proxy injection.
-// +kubebuilder:validation:XValidation:rule="self.type != 'apiKey' || has(self.apiKey)",message="apiKey config is required when type is apiKey"
+// +kubebuilder:validation:XValidation:rule="self.type != 'apiKey' || has(self.apiKey) || has(self.provider)",message="apiKey config is required when type is apiKey and provider is not set"
 // +kubebuilder:validation:XValidation:rule="self.type != 'gcp' || has(self.gcp)",message="gcp config is required when type is gcp"
 // +kubebuilder:validation:XValidation:rule="self.type != 'pathToken' || has(self.pathToken)",message="pathToken config is required when type is pathToken"
 // +kubebuilder:validation:XValidation:rule="self.type != 'oauth2' || has(self.oauth2)",message="oauth2 config is required when type is oauth2"
@@ -136,8 +136,9 @@ type CredentialSpec struct {
 
 	// Domain the proxy matches against the request Host header.
 	// Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot).
-	// +kubebuilder:validation:MinLength=1
-	Domain string `json:"domain"`
+	// Optional for known providers (google, anthropic) — the operator infers the default domain.
+	// +optional
+	Domain string `json:"domain,omitempty"`
 
 	// DefaultHeaders are injected on every proxied request for this credential,
 	// in addition to the credential itself (e.g., "anthropic-version: 2023-06-01").

@@ -589,3 +589,148 @@ func TestFindClawsReferencingSecret(t *testing.T) {
 		assert.Empty(t, requests)
 	})
 }
+
+// --- Provider defaults tests ---
+
+func TestResolveProviderDefaults(t *testing.T) {
+	tests := []struct {
+		name       string
+		cred       clawv1alpha1.CredentialSpec
+		wantDomain string
+		wantHeader string
+		wantErr    string
+	}{
+		{
+			name: "google apiKey fills domain and header",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "google",
+			},
+			wantDomain: "generativelanguage.googleapis.com",
+			wantHeader: "x-goog-api-key",
+		},
+		{
+			name: "anthropic apiKey fills domain and header",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "anthropic",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "anthropic",
+			},
+			wantDomain: "api.anthropic.com",
+			wantHeader: "x-api-key",
+		},
+		{
+			name: "google gcp fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "google",
+				GCP:      &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
+			},
+			wantDomain: ".googleapis.com",
+		},
+		{
+			name: "anthropic gcp fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "anthropic-vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "anthropic",
+				GCP:      &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"},
+			},
+			wantDomain: ".googleapis.com",
+		},
+		{
+			name: "explicit domain preserved",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "google",
+				Domain:   "custom-proxy.internal",
+			},
+			wantDomain: "custom-proxy.internal",
+			wantHeader: "x-goog-api-key",
+		},
+		{
+			name: "explicit apiKey preserved",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "google",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "x-custom-key"},
+			},
+			wantDomain: "generativelanguage.googleapis.com",
+			wantHeader: "x-custom-key",
+		},
+		{
+			name: "unknown provider with domain succeeds",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "custom",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "custom-llm",
+				Domain:   "api.custom-llm.com",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "x-api-key"},
+			},
+			wantDomain: "api.custom-llm.com",
+			wantHeader: "x-api-key",
+		},
+		{
+			name: "unknown provider without domain errors",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "custom",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "custom-llm",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "x-api-key"},
+			},
+			wantErr: "domain is required",
+		},
+		{
+			name: "unknown provider without apiKey errors",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "custom",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "custom-llm",
+				Domain:   "api.custom-llm.com",
+			},
+			wantErr: "apiKey config is required",
+		},
+		{
+			name: "no provider with domain and apiKey succeeds",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:   "legacy",
+				Type:   clawv1alpha1.CredentialTypeAPIKey,
+				Domain: "api.example.com",
+				APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-token"},
+			},
+			wantDomain: "api.example.com",
+			wantHeader: "x-token",
+		},
+		{
+			name: "bearer type with no domain errors",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "custom",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "custom-llm",
+			},
+			wantErr: "domain is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cred := tt.cred
+			err := resolveProviderDefaults(&cred)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantDomain, cred.Domain)
+			if tt.wantHeader != "" {
+				require.NotNil(t, cred.APIKey)
+				assert.Equal(t, tt.wantHeader, cred.APIKey.Header)
+			}
+		})
+	}
+}

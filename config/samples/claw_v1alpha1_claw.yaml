@@ -9,7 +9,4 @@ spec:
       secretRef:
         name: gemini-api-key
         key: api-key
-      domain: "generativelanguage.googleapis.com"
-      apiKey:
-        header: x-goog-api-key
       provider: google

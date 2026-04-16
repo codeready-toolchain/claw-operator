@@ -70,6 +70,8 @@ const (
 	ClawProxyDeploymentName      = "claw-proxy"
 	ClawProxyCACertSecretName    = "claw-proxy-ca"
 	ClawProxyContainerName       = "proxy"
+	ClawGatewayContainerName     = "gateway"
+	ClawVertexADCConfigMapName   = "claw-vertex-adc"
 	// Kubernetes resource kinds
 	RouteKind      = "Route"
 	DeploymentKind = "Deployment"
@@ -124,6 +126,19 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	// Resolve provider defaults (domain, apiKey) for known providers before validation
+	for i := range instance.Spec.Credentials {
+		if err := resolveProviderDefaults(&instance.Spec.Credentials[i]); err != nil {
+			logger.Error(err, "Failed to resolve provider defaults")
+			setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+			setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+			if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+				logger.Error(statusErr, "Failed to update status after provider defaults failure")
+			}
+			return ctrl.Result{}, err
+		}
+	}
+
 	// Validate all credential entries (Secrets exist, type-specific config present)
 	if err := r.validateCredentials(ctx, instance); err != nil {
 		logger.Error(err, "Credential validation failed")
@@ -142,28 +157,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Generate proxy config JSON once; used by both applyProxyConfigMap and stampProxyConfigHash
-	proxyConfigJSON, err := generateProxyConfig(instance.Spec.Credentials)
+	// Generate proxy config, apply ConfigMaps (proxy config + Vertex AI stub ADC)
+	proxyConfigJSON, err := r.applyProxyResources(ctx, instance)
 	if err != nil {
-		logger.Error(err, "Failed to generate proxy config")
-		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
-		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
-		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
-			logger.Error(statusErr, "Failed to update status after proxy config failure")
-		}
 		return ctrl.Result{}, err
 	}
-
-	if err := r.applyProxyConfigMap(ctx, instance, proxyConfigJSON); err != nil {
-		logger.Error(err, "Failed to apply proxy config")
-		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
-		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
-		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
-			logger.Error(statusErr, "Failed to update status after proxy config failure")
-		}
-		return ctrl.Result{}, err
-	}
-	setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionTrue, clawv1alpha1.ConditionReasonConfigured, "Proxy config generated successfully")
 
 	// Build kustomized objects
 	objects, err := r.buildKustomizedObjects()
@@ -270,7 +268,50 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if err := configureProxyForCredentials(objects, instance.Spec.Credentials); err != nil {
 		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
 	}
+	if err := configureClawDeploymentForVertex(objects, instance.Spec.Credentials); err != nil {
+		return fmt.Errorf("failed to configure claw deployment for Vertex AI: %w", err)
+	}
 	return nil
+}
+
+// applyProxyResources generates the proxy config, applies the proxy ConfigMap and
+// (when needed) the Vertex AI stub ADC ConfigMap. Returns the proxy config JSON
+// for use in config hash stamping.
+func (r *ClawResourceReconciler) applyProxyResources(ctx context.Context, instance *clawv1alpha1.Claw) ([]byte, error) {
+	logger := log.FromContext(ctx)
+
+	proxyConfigJSON, err := generateProxyConfig(instance.Spec.Credentials)
+	if err != nil {
+		logger.Error(err, "Failed to generate proxy config")
+		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after proxy config failure")
+		}
+		return nil, err
+	}
+
+	if err := r.applyProxyConfigMap(ctx, instance, proxyConfigJSON); err != nil {
+		logger.Error(err, "Failed to apply proxy config")
+		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after proxy config failure")
+		}
+		return nil, err
+	}
+	if err := r.applyVertexADCConfigMap(ctx, instance); err != nil {
+		logger.Error(err, "Failed to apply Vertex ADC config")
+		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after Vertex ADC config failure")
+		}
+		return nil, err
+	}
+	setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionTrue, clawv1alpha1.ConditionReasonConfigured, "Proxy config generated successfully")
+
+	return proxyConfigJSON, nil
 }
 
 func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstructured, error) {
@@ -405,28 +446,46 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 }
 
 // injectProvidersIntoConfigMap dynamically builds the models.providers section of openclaw.json
-// from credentials that have Provider set. Each provider entry gets a baseUrl pointing to the
-// proxy's gateway path and a dummy apiKey (real credentials are injected by the proxy).
+// from credentials that have Provider set. Gateway-routed providers get a baseUrl pointing to
+// the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since traffic
+// flows through the MITM proxy which injects GCP credentials transparently.
 func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
 	providers := map[string]any{}
 	for _, cred := range credentials {
 		if cred.Provider == "" {
 			continue
 		}
-		if _, exists := providers[cred.Provider]; exists {
-			return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
-		}
 		// PathToken uses PathPrefix for token injection in the URL path (e.g., /bot<TOKEN>/...),
 		// not for gateway routing — skip provider entry to avoid referencing a non-existent gateway route.
 		if cred.Type == clawv1alpha1.CredentialTypePathToken {
 			continue
 		}
-		info := resolveProviderInfo(cred)
-		baseURL := "http://claw-proxy:8080/" + strings.ToLower(cred.Name) + info.BasePath
-		providers[cred.Provider] = map[string]any{
-			"baseUrl": baseURL,
-			"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
-			"models":  []any{},
+
+		if usesVertexSDK(cred) {
+			providerKey := cred.Provider + "-vertex"
+			if _, exists := providers[providerKey]; exists {
+				return fmt.Errorf("duplicate provider %q in credentials", providerKey)
+			}
+			entry := map[string]any{
+				"baseUrl": "https://" + cred.GCP.Location + "-aiplatform.googleapis.com",
+				"apiKey":  "gcp-vertex-credentials",
+				"models":  []any{},
+			}
+			if api, ok := vertexProviderAPIMapping[cred.Provider]; ok {
+				entry["api"] = api
+			}
+			providers[providerKey] = entry
+		} else {
+			if _, exists := providers[cred.Provider]; exists {
+				return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
+			}
+			info := resolveProviderInfo(cred)
+			baseURL := "http://claw-proxy:8080/" + strings.ToLower(cred.Name) + info.BasePath
+			providers[cred.Provider] = map[string]any{
+				"baseUrl": baseURL,
+				"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
+				"models":  []any{},
+			}
 		}
 	}
 
@@ -455,6 +514,7 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 		}
 		models["providers"] = providers
 
+		remapVertexProviderModels(config, providers)
 		filterAgentDefaultsForProviders(config, providers)
 
 		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
@@ -469,6 +529,51 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 	}
 
 	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
+}
+
+// remapVertexProviderModels renames model entries in agents.defaults from "provider/model"
+// to "provider-vertex/model" when a Vertex variant exists but the base provider does not.
+// For example, "anthropic/claude-sonnet-4-6" becomes "anthropic-vertex/claude-sonnet-4-6"
+// when anthropic-vertex is configured but anthropic is not.
+func remapVertexProviderModels(config map[string]any, providers map[string]any) {
+	agents, _ := config["agents"].(map[string]any)
+	if agents == nil {
+		return
+	}
+	defaults, _ := agents["defaults"].(map[string]any)
+	if defaults == nil {
+		return
+	}
+
+	if modelMap, ok := defaults["models"].(map[string]any); ok {
+		for modelName, val := range modelMap {
+			providerKey, modelID, ok := strings.Cut(modelName, "/")
+			if !ok {
+				continue
+			}
+			vertexKey := providerKey + "-vertex"
+			_, hasBase := providers[providerKey]
+			_, hasVertex := providers[vertexKey]
+			if !hasBase && hasVertex {
+				delete(modelMap, modelName)
+				modelMap[vertexKey+"/"+modelID] = val
+			}
+		}
+	}
+
+	if primary, _ := defaults["model"].(map[string]any); primary != nil {
+		if primaryName, _ := primary["primary"].(string); primaryName != "" {
+			providerKey, modelID, ok := strings.Cut(primaryName, "/")
+			if ok {
+				vertexKey := providerKey + "-vertex"
+				_, hasBase := providers[providerKey]
+				_, hasVertex := providers[vertexKey]
+				if !hasBase && hasVertex {
+					primary["primary"] = vertexKey + "/" + modelID
+				}
+			}
+		}
+	}
 }
 
 // filterAgentDefaultsForProviders removes model entries from agents.defaults whose
