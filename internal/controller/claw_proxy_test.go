@@ -403,17 +403,6 @@ func TestGenerateProxyConfig(t *testing.T) {
 		require.Len(t, cfg.Routes, 3, "2 credential routes + 1 builtin passthrough")
 	})
 
-	t.Run("should include builtin passthrough routes when credentials are empty", func(t *testing.T) {
-		data, err := generateProxyConfig(nil)
-		require.NoError(t, err)
-
-		var cfg proxyConfig
-		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, len(builtinPassthroughDomains))
-		route := findRouteByDomain(t, cfg.Routes, "openrouter.ai")
-		assert.Equal(t, "none", route.Injector)
-	})
-
 	t.Run("should preserve pathToken prefix and skip gateway routing when provider is set", func(t *testing.T) {
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
@@ -507,6 +496,7 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
+		require.Len(t, cfg.Routes, len(builtinPassthroughDomains))
 		route := findRouteByDomain(t, cfg.Routes, "openrouter.ai")
 		assert.Equal(t, "none", route.Injector)
 	})
