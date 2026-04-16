@@ -93,23 +93,15 @@ spec:
 EOF
 ```
 
-Watch it become ready:
+Wait for it to become ready and get the URL and gateway token:
 
 ```sh
-oc get claw -n $NS -w
-# NAME       READY   REASON
-# instance   True    Ready
+make wait-ready NS=$NS
 ```
 
-### 5. Get the URL and Log In
+### 5. Log In
 
-```sh
-# Get the instance URL (OpenShift)
-oc get claw instance -n $NS -o jsonpath='{.status.url}'
-
-# Get the gateway token
-oc get secret claw-gateway-token -n $NS -o jsonpath='{.data.token}' | base64 -d
-```
+Open the URL printed above and enter the gateway token to log in.
 
 On vanilla Kubernetes (no Route), use port-forwarding instead:
 
@@ -123,13 +115,13 @@ oc port-forward svc/claw 18789:18789 -n $NS
 On first connection you'll see "pairing required". With the browser tab open, approve the request:
 
 ```sh
-# List pending pairing requests
-oc exec -n $NS deployment/claw -- \
-  node /app/dist/index.js devices list
+make approve-pairing NS=$NS
+```
 
-# Approve (replace <requestId> with the ID shown above)
-oc exec -n $NS deployment/claw -- \
-  node /app/dist/index.js devices approve <requestId>
+This lists pending requests and prompts for the ID to approve. If you already know the ID:
+
+```sh
+make approve-pairing NS=$NS REQUEST_ID=<requestId>
 ```
 
 Refresh the browser after approval. The device is remembered across sessions.

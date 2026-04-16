@@ -79,6 +79,7 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
+	@mkdir -p tmp
 	@kubectl config current-context > tmp/.pre-e2e-context 2>/dev/null || true
 	@kubectl config use-context kind-$(KIND_CLUSTER)
 
@@ -233,6 +234,33 @@ endif
 	$(MAKE) dev-build REGISTRY=$(REGISTRY) TAG=$(TAG)
 	$(MAKE) dev-push REGISTRY=$(REGISTRY) TAG=$(TAG)
 	$(MAKE) dev-deploy REGISTRY=$(REGISTRY) TAG=$(TAG)
+
+NS ?= my-claw-namespace
+
+.PHONY: wait-ready
+wait-ready: ## Wait for the Claw instance to become ready and print the URL.
+	@echo "Waiting for Claw instance to become ready in namespace $(NS)..."
+	@$(KUBECTL) wait --for=condition=Ready claw/instance -n $(NS) --timeout=300s
+	@echo
+	@echo "URL: $$($(KUBECTL) get claw instance -n $(NS) -o jsonpath='{.status.url}')"
+	@echo "Token: $$($(KUBECTL) get secret claw-gateway-token -n $(NS) -o jsonpath='{.data.token}' | base64 -d)"
+
+.PHONY: approve-pairing
+approve-pairing: ## Approve a device pairing request. Usage: make approve-pairing NS=... [REQUEST_ID=...]
+	@if [ -n "$(REQUEST_ID)" ]; then \
+		$(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices approve $(REQUEST_ID); \
+	else \
+		output=$$($(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices list 2>/dev/null); \
+		rid=$$(echo "$$output" | grep -oP '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1); \
+		if [ -z "$$rid" ]; then \
+			echo "No pending pairing requests found."; \
+			exit 1; \
+		fi; \
+		echo "Found pairing request: $$rid"; \
+		read -r -p "Approve? [y/N] " ans; \
+		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 0;; esac; \
+		$(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices approve "$$rid"; \
+	fi
 
 .PHONY: dev-cleanup
 dev-cleanup: ## Remove deployed controller and CRDs.
