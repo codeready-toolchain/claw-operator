@@ -157,10 +157,28 @@ func resolveProviderInfo(cred clawv1alpha1.CredentialSpec) providerInfo {
 	return providerInfo{Upstream: "https://" + domain}
 }
 
+// builtinPassthroughDomains are domains the proxy always allows without credential
+// injection. OpenClaw's gateway fetches model pricing from OpenRouter's public API
+// to power cost estimation in the UI.
+var builtinPassthroughDomains = []string{
+	"openrouter.ai",
+}
+
 // generateProxyConfig builds the proxy config JSON from spec.credentials[].
 // Exact-match domains are emitted before suffix-match domains for predictable matching.
 func generateProxyConfig(credentials []clawv1alpha1.CredentialSpec) ([]byte, error) {
 	var exact, suffix []proxyRoute
+
+	coveredDomains := make(map[string]bool)
+	for _, cred := range credentials {
+		coveredDomains[strings.ToLower(cred.Domain)] = true
+	}
+
+	for _, domain := range builtinPassthroughDomains {
+		if !coveredDomains[domain] {
+			exact = append(exact, proxyRoute{Domain: domain, Injector: "none"})
+		}
+	}
 
 	for _, cred := range credentials {
 		route := proxyRoute{

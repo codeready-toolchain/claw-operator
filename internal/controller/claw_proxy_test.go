@@ -32,6 +32,17 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+func findRouteByDomain(t *testing.T, routes []proxyRoute, domain string) proxyRoute {
+	t.Helper()
+	for _, r := range routes {
+		if r.Domain == domain {
+			return r
+		}
+	}
+	t.Fatalf("route with domain %q not found in %d routes", domain, len(routes))
+	return proxyRoute{}
+}
+
 // --- Proxy CA tests ---
 
 func TestClawProxyCA(t *testing.T) {
@@ -167,13 +178,12 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "generativelanguage.googleapis.com", cfg.Routes[0].Domain)
-		assert.Equal(t, "api_key", cfg.Routes[0].Injector)
-		assert.Equal(t, "CRED_GEMINI", cfg.Routes[0].EnvVar)
-		assert.Equal(t, "x-goog-api-key", cfg.Routes[0].Header)
-		assert.Equal(t, "/gemini", cfg.Routes[0].PathPrefix)
-		assert.Equal(t, "https://generativelanguage.googleapis.com", cfg.Routes[0].Upstream)
+		route := findRouteByDomain(t, cfg.Routes, "generativelanguage.googleapis.com")
+		assert.Equal(t, "api_key", route.Injector)
+		assert.Equal(t, "CRED_GEMINI", route.EnvVar)
+		assert.Equal(t, "x-goog-api-key", route.Header)
+		assert.Equal(t, "/gemini", route.PathPrefix)
+		assert.Equal(t, "https://generativelanguage.googleapis.com", route.Upstream)
 	})
 
 	t.Run("should not set gateway fields when provider is empty", func(t *testing.T) {
@@ -197,9 +207,9 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Empty(t, cfg.Routes[0].PathPrefix, "should not have gateway path prefix")
-		assert.Empty(t, cfg.Routes[0].Upstream, "should not have gateway upstream")
+		route := findRouteByDomain(t, cfg.Routes, "api.telegram.org")
+		assert.Empty(t, route.PathPrefix, "should not have gateway path prefix")
+		assert.Empty(t, route.Upstream, "should not have gateway upstream")
 	})
 
 	t.Run("should generate config with bearer route", func(t *testing.T) {
@@ -223,10 +233,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "bearer", cfg.Routes[0].Injector)
-		assert.Equal(t, "CRED_OPENAI", cfg.Routes[0].EnvVar)
-		assert.Equal(t, "org-123", cfg.Routes[0].DefaultHeaders["OpenAI-Organization"])
+		route := findRouteByDomain(t, cfg.Routes, "api.openai.com")
+		assert.Equal(t, "bearer", route.Injector)
+		assert.Equal(t, "CRED_OPENAI", route.EnvVar)
+		assert.Equal(t, "org-123", route.DefaultHeaders["OpenAI-Organization"])
 	})
 
 	t.Run("should generate config with GCP route and Vertex AI gateway", func(t *testing.T) {
@@ -252,12 +262,12 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "gcp", cfg.Routes[0].Injector)
-		assert.Equal(t, "/etc/proxy/credentials/vertex/sa-key.json", cfg.Routes[0].SAFilePath)
-		assert.Equal(t, "my-project", cfg.Routes[0].GCPProject)
-		assert.Equal(t, "/vertex", cfg.Routes[0].PathPrefix)
-		assert.Equal(t, "https://us-central1-aiplatform.googleapis.com", cfg.Routes[0].Upstream)
+		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
+		assert.Equal(t, "gcp", route.Injector)
+		assert.Equal(t, "/etc/proxy/credentials/vertex/sa-key.json", route.SAFilePath)
+		assert.Equal(t, "my-project", route.GCPProject)
+		assert.Equal(t, "/vertex", route.PathPrefix)
+		assert.Equal(t, "https://us-central1-aiplatform.googleapis.com", route.Upstream)
 	})
 
 	t.Run("should order exact matches before suffix matches", func(t *testing.T) {
@@ -285,9 +295,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 2)
+		require.Len(t, cfg.Routes, 3)
 		assert.Equal(t, "api.example.com", cfg.Routes[0].Domain, "exact match should come first")
-		assert.Equal(t, ".example.com", cfg.Routes[1].Domain, "suffix match should come second")
+		assert.Equal(t, "openrouter.ai", cfg.Routes[1].Domain, "builtin exact should come before suffix")
+		assert.Equal(t, ".example.com", cfg.Routes[2].Domain, "suffix match should come last")
 	})
 
 	t.Run("should generate config with none route", func(t *testing.T) {
@@ -304,10 +315,9 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "none", cfg.Routes[0].Injector)
-		assert.Equal(t, "internal.example.com", cfg.Routes[0].Domain)
-		assert.Empty(t, cfg.Routes[0].EnvVar, "none should not have envVar")
+		route := findRouteByDomain(t, cfg.Routes, "internal.example.com")
+		assert.Equal(t, "none", route.Injector)
+		assert.Empty(t, route.EnvVar, "none should not have envVar")
 	})
 
 	t.Run("should generate config with pathToken route", func(t *testing.T) {
@@ -331,10 +341,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "path_token", cfg.Routes[0].Injector)
-		assert.Equal(t, "CRED_TELEGRAM", cfg.Routes[0].EnvVar)
-		assert.Equal(t, "/bot", cfg.Routes[0].PathPrefix)
+		route := findRouteByDomain(t, cfg.Routes, "api.telegram.org")
+		assert.Equal(t, "path_token", route.Injector)
+		assert.Equal(t, "CRED_TELEGRAM", route.EnvVar)
+		assert.Equal(t, "/bot", route.PathPrefix)
 	})
 
 	t.Run("should generate config with oauth2 route", func(t *testing.T) {
@@ -360,12 +370,12 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "oauth2", cfg.Routes[0].Injector)
-		assert.Equal(t, "CRED_MYSERVICE", cfg.Routes[0].EnvVar)
-		assert.Equal(t, "my-client-id", cfg.Routes[0].ClientID)
-		assert.Equal(t, "https://auth.myservice.com/token", cfg.Routes[0].TokenURL)
-		assert.Equal(t, []string{"read", "write"}, cfg.Routes[0].Scopes)
+		route := findRouteByDomain(t, cfg.Routes, "api.myservice.com")
+		assert.Equal(t, "oauth2", route.Injector)
+		assert.Equal(t, "CRED_MYSERVICE", route.EnvVar)
+		assert.Equal(t, "my-client-id", route.ClientID)
+		assert.Equal(t, "https://auth.myservice.com/token", route.TokenURL)
+		assert.Equal(t, []string{"read", "write"}, route.Scopes)
 	})
 
 	t.Run("should include all credential types together", func(t *testing.T) {
@@ -390,16 +400,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 2)
-	})
-
-	t.Run("should handle empty credentials", func(t *testing.T) {
-		data, err := generateProxyConfig(nil)
-		require.NoError(t, err)
-
-		var cfg proxyConfig
-		require.NoError(t, json.Unmarshal(data, &cfg))
-		assert.Nil(t, cfg.Routes)
+		require.Len(t, cfg.Routes, 3, "2 credential routes + 1 builtin passthrough")
 	})
 
 	t.Run("should preserve pathToken prefix and skip gateway routing when provider is set", func(t *testing.T) {
@@ -424,9 +425,9 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "/bot", cfg.Routes[0].PathPrefix, "pathToken prefix should be preserved")
-		assert.Empty(t, cfg.Routes[0].Upstream, "pathToken should not get gateway upstream even with provider set")
+		route := findRouteByDomain(t, cfg.Routes, "api.telegram.org")
+		assert.Equal(t, "/bot", route.PathPrefix, "pathToken prefix should be preserved")
+		assert.Empty(t, route.Upstream, "pathToken should not get gateway upstream even with provider set")
 	})
 
 	t.Run("should set gateway fields for bearer credential when provider is set", func(t *testing.T) {
@@ -451,11 +452,11 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "/claude", cfg.Routes[0].PathPrefix)
-		assert.Equal(t, "https://api.anthropic.com", cfg.Routes[0].Upstream)
-		assert.Equal(t, "bearer", cfg.Routes[0].Injector)
-		assert.Equal(t, "2023-06-01", cfg.Routes[0].DefaultHeaders["anthropic-version"])
+		route := findRouteByDomain(t, cfg.Routes, "api.anthropic.com")
+		assert.Equal(t, "/claude", route.PathPrefix)
+		assert.Equal(t, "https://api.anthropic.com", route.Upstream)
+		assert.Equal(t, "bearer", route.Injector)
+		assert.Equal(t, "2023-06-01", route.DefaultHeaders["anthropic-version"])
 	})
 
 	t.Run("should set gateway fields for oauth2 credential when provider is set", func(t *testing.T) {
@@ -481,10 +482,55 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "/myservice", cfg.Routes[0].PathPrefix)
-		assert.Equal(t, "https://api.myservice.com", cfg.Routes[0].Upstream)
-		assert.Equal(t, "oauth2", cfg.Routes[0].Injector)
+		route := findRouteByDomain(t, cfg.Routes, "api.myservice.com")
+		assert.Equal(t, "/myservice", route.PathPrefix)
+		assert.Equal(t, "https://api.myservice.com", route.Upstream)
+		assert.Equal(t, "oauth2", route.Injector)
+	})
+}
+
+func TestBuiltinPassthroughDomains(t *testing.T) {
+	t.Run("should include openrouter.ai as none route with no credentials", func(t *testing.T) {
+		data, err := generateProxyConfig(nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		require.Len(t, cfg.Routes, len(builtinPassthroughDomains))
+		route := findRouteByDomain(t, cfg.Routes, "openrouter.ai")
+		assert.Equal(t, "none", route.Injector)
+	})
+
+	t.Run("should skip builtin route when user credential covers the domain", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name: "openrouter",
+				Type: clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "or-secret",
+					Key:  "api-key",
+				},
+				Domain:   "openrouter.ai",
+				Provider: "openrouter",
+			},
+		}
+
+		data, err := generateProxyConfig(credentials)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		var count int
+		for _, r := range cfg.Routes {
+			if r.Domain == "openrouter.ai" {
+				count++
+			}
+		}
+		assert.Equal(t, 1, count, "should not duplicate openrouter.ai when user already has it")
+
+		route := findRouteByDomain(t, cfg.Routes, "openrouter.ai")
+		assert.Equal(t, "bearer", route.Injector, "user credential should take precedence")
 	})
 }
 
@@ -852,8 +898,8 @@ func TestOpenClawProxyConfigMap(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal([]byte(data), &cfg))
-		require.Len(t, cfg.Routes, 1, "should have one route for the test credential")
-		assert.Equal(t, ".googleapis.com", cfg.Routes[0].Domain)
+		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
+		assert.Equal(t, "api_key", route.Injector)
 	})
 
 	t.Run("should include gateway fields in proxy config when credential has provider", func(t *testing.T) {
@@ -872,9 +918,9 @@ func TestOpenClawProxyConfigMap(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal([]byte(cm.Data["proxy-config.json"]), &cfg))
-		require.Len(t, cfg.Routes, 1)
-		assert.Equal(t, "/gemini", cfg.Routes[0].PathPrefix, "should have gateway path prefix")
-		assert.Equal(t, "https://generativelanguage.googleapis.com", cfg.Routes[0].Upstream, "should have gateway upstream")
+		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
+		assert.Equal(t, "/gemini", route.PathPrefix, "should have gateway path prefix")
+		assert.Equal(t, "https://generativelanguage.googleapis.com", route.Upstream, "should have gateway upstream")
 	})
 }
 
