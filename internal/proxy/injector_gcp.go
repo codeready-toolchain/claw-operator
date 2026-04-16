@@ -29,8 +29,9 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-// GCPInjector loads a GCP service account JSON, obtains OAuth2 tokens, and injects
-// Authorization: Bearer <token>. Tokens are cached and auto-refreshed.
+// GCPInjector loads a GCP credential JSON (service account or authorized user),
+// obtains OAuth2 tokens, and injects Authorization: Bearer <token>.
+// Tokens are cached and auto-refreshed.
 // It also implements token vending: intercepts POST to oauth2.googleapis.com/token
 // and returns a dummy token so Google SDK clients work with placeholder ADC credentials.
 type GCPInjector struct {
@@ -64,7 +65,12 @@ func (g *GCPInjector) getTokenSource(ctx context.Context) (*google.Credentials, 
 		return nil, fmt.Errorf("read SA key file %s: %w", g.saFilePath, err)
 	}
 
-	creds, err := google.CredentialsFromJSONWithType(ctx, saJSON, google.ServiceAccount, "https://www.googleapis.com/auth/cloud-platform")
+	credType, err := detectCredentialType(saJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	creds, err := google.CredentialsFromJSONWithType(ctx, saJSON, credType, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		return nil, fmt.Errorf("parse GCP credentials: %w", err)
 	}
@@ -115,6 +121,29 @@ func hostnameOnly(hostPort string) string {
 		return strings.ToLower(hostPort)
 	}
 	return strings.ToLower(host)
+}
+
+// allowedCredentialTypes is the set of GCP credential types the proxy accepts.
+var allowedCredentialTypes = map[google.CredentialsType]bool{
+	google.ServiceAccount: true,
+	google.AuthorizedUser: true,
+}
+
+// detectCredentialType reads the "type" field from a GCP credential JSON and
+// validates it against the allowed set. This avoids the deprecated unvalidated
+// CredentialsFromJSON while still supporting both service accounts and user credentials.
+func detectCredentialType(jsonData []byte) (google.CredentialsType, error) {
+	var f struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(jsonData, &f); err != nil {
+		return "", fmt.Errorf("parse GCP credential file: %w", err)
+	}
+	ct := google.CredentialsType(f.Type)
+	if !allowedCredentialTypes[ct] {
+		return "", fmt.Errorf("unsupported GCP credential type %q (expected service_account or authorized_user)", f.Type)
+	}
+	return ct, nil
 }
 
 // TokenVendingResponse returns a dummy access token for Google SDK client satisfaction.

@@ -17,7 +17,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
   - `name` (string, required, minLength=1): Unique identifier for this credential
   - `type` (CredentialType, required): Credential injection mechanism. Enum: `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `none`
   - `secretRef` (SecretRef, optional): Reference to Kubernetes Secret holding credential value. Required for all types except `none`. SecretRef has fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1)
-  - `domain` (string, required, minLength=1): Domain to match against request Host header. Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot)
+  - `domain` (string, optional): Domain to match against request Host header. Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot). Optional for known providers (google, anthropic) and gcp type — the operator infers the default
   - `defaultHeaders` (map[string]string, optional): Headers injected on every proxied request (e.g., "anthropic-version: 2023-06-01")
   - `apiKey` (APIKeyConfig, optional): Required when type is `apiKey`. Fields: `header` (header name, minLength=1), `valuePrefix` (optional, e.g., "Bot ")
   - `gcp` (GCPConfig, optional): Required when type is `gcp`. Fields: `project` (GCP project ID, minLength=1), `location` (GCP region, minLength=1)
@@ -53,7 +53,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 
 **Validation Rules:**
 - CE validation ensures type-specific config fields are present when required
-- `apiKey` config required when `type == "apiKey"`
+- `apiKey` config required when `type == "apiKey"` and `provider` is not set (known providers infer defaults)
 - `gcp` config required when `type == "gcp"`
 - `pathToken` config required when `type == "pathToken"`
 - `oauth2` config required when `type == "oauth2"`
@@ -154,6 +154,23 @@ PHASE 1: Gateway Secret
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply Secret (Patch with Apply)
   ↓
+3b. resolveProviderDefaults for each credential
+   ├─ Known apiKey providers (google, anthropic): fill domain and apiKey.header if not set
+   ├─ GCP credentials: fill domain ".googleapis.com" if not set
+   ├─ Explicit values are preserved (escape hatch)
+   └─ Error if domain or apiKey still missing after defaults
+  ↓
+3c. applyProxyResources(ctx, instance)
+   ├─ generateProxyConfig: build proxy config JSON (routes, injectors, gateway paths)
+   │  └─ usesVertexSDK credentials skip gateway route (no PathPrefix/Upstream)
+   ├─ applyProxyConfigMap: server-side apply proxy config ConfigMap
+   ├─ applyVertexADCConfigMap (if any Vertex SDK credentials exist):
+   │  ├─ Create ConfigMap "claw-vertex-adc" with stub authorized_user ADC JSON
+   │  ├─ Stub allows google-auth-library to attempt token refresh via oauth2.googleapis.com
+   │  ├─ Proxy intercepts and returns dummy tokens (token vending)
+   │  └─ Set owner reference for garbage collection
+   └─ Return proxy config JSON for hash stamping
+  ↓
 PHASE 2: Route Application and Host Resolution
 4. applyRouteOnly(ctx, instance)
    ├─ Build Kustomize manifests
@@ -178,6 +195,10 @@ PHASE 3: ConfigMap Injection and Remaining Resources
  │  ├─ Configure credential-specific environment variables based on instance.Spec.Credentials
  │  ├─ Update valueFrom.secretKeyRef to point to user's Secrets (name and key from each CredentialSpec.SecretRef)
  │  └─ Modify in-place BEFORE applying (so pod template changes trigger automatic pod restarts on Secret ref changes)
+   ├─ configureClawDeploymentForVertex(objects, credentials) — when Vertex SDK credentials exist:
+ │  ├─ Add GOOGLE_APPLICATION_CREDENTIALS=/etc/vertex-adc/adc.json env var to gateway container
+ │  ├─ Add ANTHROPIC_VERTEX_PROJECT_ID env var (from GCP config)
+ │  └─ Mount claw-vertex-adc ConfigMap as read-only volume at /etc/vertex-adc/
  ├─ stampSecretVersionAnnotation(ctx, objects, instance)
  │  ├─ Fetch user's Secrets to get their ResourceVersions
  │  ├─ Find claw-proxy Deployment in parsed objects
@@ -194,9 +215,10 @@ PHASE 3: ConfigMap Injection and Remaining Resources
   ↓
 7b. injectProvidersIntoConfigMap(objects, instance.Spec.Credentials)
    ├─ Filter credentials with Provider set
-   ├─ For each: resolveProviderInfo(cred) → upstream + basePath
-   ├─ Build baseUrl: http://claw-proxy:8080/<credName><basePath>
-   ├─ Parse openclaw.json, replace models.providers with generated entries
+   ├─ For gateway-routed providers: resolveProviderInfo(cred) → upstream + basePath, build baseUrl via proxy
+   ├─ For Vertex SDK providers (GCP + non-Google, e.g., anthropic): map to "{provider}-vertex" key with real Vertex AI URL, api mapping, and "gcp-vertex-credentials" apiKey
+   ├─ remapVertexProviderModels: rename "anthropic/..." model entries to "anthropic-vertex/..." when vertex variant exists but base provider does not
+   ├─ filterAgentDefaultsForProviders: remove model entries whose provider is not in the injected providers map
    └─ Credentials without Provider are MITM-only (no provider entry)
   ↓
 8. Filter for remaining resources (kind != "Route")
@@ -237,8 +259,14 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
 - `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in ConfigMap with Route host (or localhost fallback)
-- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `openclaw.json` from credentials that have `Provider` set, generating `baseUrl` entries pointing to the proxy's gateway routes
-- `resolveProviderInfo()` — returns upstream host and base path for a credential's provider (handles Google Gemini vs Vertex AI, unknown providers fall back to domain)
+- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `openclaw.json`. Gateway-routed providers get a baseUrl through the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since MITM proxy handles credential injection transparently
+- `remapVertexProviderModels()` — renames model entries from "provider/model" to "provider-vertex/model" when a Vertex variant exists but the base provider does not (e.g., "anthropic/claude-sonnet-4-6" → "anthropic-vertex/claude-sonnet-4-6")
+- `resolveProviderDefaults()` — fills missing `domain` and `apiKey` fields for known providers (google, anthropic) before validation. Explicit values are preserved as escape hatch. Returns error if required fields are still missing
+- `resolveProviderInfo()` — returns upstream host and base path for a credential's provider. GCP credentials route through Vertex AI with the provider name as the publisher (works for google, anthropic, meta, etc.). Google + apiKey uses Gemini REST API. All others fall back to domain
+- `usesVertexSDK()` — returns true when a credential should use the native Vertex AI SDK (type == gcp && provider != "" && provider != "google")
+- `configureClawDeploymentForVertex()` — adds GOOGLE_APPLICATION_CREDENTIALS, ANTHROPIC_VERTEX_PROJECT_ID env vars and stub ADC volume mount to the claw deployment when Vertex SDK credentials exist
+- `applyVertexADCConfigMap()` — creates/updates the stub ADC ConfigMap (claw-vertex-adc) with dummy authorized_user credentials for Vertex SDK token refresh bootstrap. Only created when Vertex SDK credentials exist
+- `applyProxyResources()` — generates proxy config, applies proxy ConfigMap and Vertex ADC ConfigMap. Returns proxy config JSON for hash stamping
 - `applyResources()` — applies list of unstructured objects using server-side apply
 - `configureProxyImage()` — overrides proxy Deployment container image if `ProxyImage` is set (from `PROXY_IMAGE` env var); no-op when empty (preserves embedded default for `make run`)
 - `configureProxyDeployment()` — modifies claw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
@@ -259,6 +287,8 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `ClawGatewaySecretName = "claw-gateway-token"` — Secret containing gateway authentication token
 - `ClawIngressNetworkPolicyName = "claw-ingress"` — ingress NetworkPolicy restricting gateway access to OpenShift router
 - `GatewayTokenKeyName = "token"` — data key for gateway token in gateway Secret
+- `ClawGatewayContainerName = "gateway"` — container name in the claw deployment
+- `ClawVertexADCConfigMapName = "claw-vertex-adc"` — ConfigMap containing stub ADC for Vertex AI SDK
 
 **NodePairingRequestApprovalReconciler** (`internal/controller/nodepairingrequestapproval_controller.go`):
 - Reconciles `NodePairingRequestApproval` CRs
@@ -325,7 +355,7 @@ RBAC is generated from `// +kubebuilder:rbac:...` markers on reconciler methods.
 - **Pattern:** `Test*` functions with `t.Run()` subtests; uses `t.Cleanup()` for cleanup; uses `waitFor()` helper for async assertions (10s timeout, 250ms poll)
 - **Polling helper:** `waitFor(t, timeout, interval, condition, message)` — custom helper for async checks (replaces Gomega's `Eventually()`)
 - **Table-driven tests:** Use standard Go pattern with struct slices and `t.Run(tt.name, ...)` for parameterized tests
-- **Test CRs:** Test Claw instances can include the optional `credentials` field for credential testing (e.g., `instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", SecretRef: &clawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}, Domain: ".googleapis.com", APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"}}}`)
+- **Test CRs:** Test Claw instances can include the optional `credentials` field for credential testing (e.g., `instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", SecretRef: &clawv1alpha1.SecretRef{Name: "test-secret", Key: "api-key"}}}` — domain and apiKey are inferred for known providers)
 - **Test files:** Separate test files per resource type (`claw_configmap_test.go`, `claw_credentials_test.go`, `claw_status_test.go`, etc.)
 - **E2E:** `test/e2e/` — runs against a Kind cluster, validates metrics and full deployment 
 

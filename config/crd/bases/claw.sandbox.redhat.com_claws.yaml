@@ -81,7 +81,7 @@ spec:
                       description: |-
                         Domain the proxy matches against the request Host header.
                         Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot).
-                      minLength: 1
+                        Optional for known providers (google, anthropic) — the operator infers the default domain.
                       type: string
                     gcp:
                       description: GCP configures GCP service account credential injection.
@@ -171,13 +171,13 @@ spec:
                       - none
                       type: string
                   required:
-                  - domain
                   - name
                   - type
                   type: object
                   x-kubernetes-validations:
-                  - message: apiKey config is required when type is apiKey
-                    rule: self.type != 'apiKey' || has(self.apiKey)
+                  - message: apiKey config is required when type is apiKey and provider
+                      is not set
+                    rule: self.type != 'apiKey' || has(self.apiKey) || has(self.provider)
                   - message: gcp config is required when type is gcp
                     rule: self.type != 'gcp' || has(self.gcp)
                   - message: pathToken config is required when type is pathToken

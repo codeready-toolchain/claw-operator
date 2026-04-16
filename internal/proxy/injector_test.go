@@ -22,7 +22,61 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2/google"
 )
+
+func TestDetectCredentialType(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		wantType google.CredentialsType
+		wantErr  string
+	}{
+		{
+			name:     "service account",
+			json:     `{"type":"service_account","project_id":"test"}`,
+			wantType: google.ServiceAccount,
+		},
+		{
+			name:     "authorized user",
+			json:     `{"type":"authorized_user","client_id":"test"}`,
+			wantType: google.AuthorizedUser,
+		},
+		{
+			name:    "external account rejected",
+			json:    `{"type":"external_account","audience":"test"}`,
+			wantErr: "unsupported GCP credential type",
+		},
+		{
+			name:    "empty type rejected",
+			json:    `{"type":""}`,
+			wantErr: "unsupported GCP credential type",
+		},
+		{
+			name:    "missing type field rejected",
+			json:    `{"project_id":"test"}`,
+			wantErr: "unsupported GCP credential type",
+		},
+		{
+			name:    "invalid JSON",
+			json:    `not json`,
+			wantErr: "parse GCP credential file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ct, err := detectCredentialType([]byte(tt.json))
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantType, ct)
+		})
+	}
+}
 
 func TestStripAuthHeaders(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
