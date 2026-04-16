@@ -251,7 +251,7 @@ approve-pairing: ## Approve a device pairing request. Usage: make approve-pairin
 		$(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices approve $(REQUEST_ID); \
 	else \
 		output=$$($(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices list 2>/dev/null); \
-		rid=$$(echo "$$output" | grep -oP '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1); \
+		rid=$$(echo "$$output" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1); \
 		if [ -z "$$rid" ]; then \
 			echo "No pending pairing requests found."; \
 			exit 1; \

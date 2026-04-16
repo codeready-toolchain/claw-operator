@@ -40,7 +40,7 @@ Make sure the `claw-operator` and `claw-proxy` repositories on quay.io are set t
 Then build, push, and deploy in one command:
 
 ```sh
-make dev-setup REGISTRY=quay.io/myuser
+make dev-setup REGISTRY=quay.io/<your-user>
 ```
 
 This builds both images (operator + proxy), pushes them, installs CRDs, and deploys the controller into the `claw-operator` namespace.
@@ -118,11 +118,7 @@ On first connection you'll see "pairing required". With the browser tab open, ap
 make approve-pairing NS=$NS
 ```
 
-This lists pending requests and prompts for the ID to approve. If you already know the ID:
-
-```sh
-make approve-pairing NS=$NS REQUEST_ID=<requestId>
-```
+This picks the first pending request and asks for confirmation.
 
 Refresh the browser after approval. The device is remembered across sessions.
 
