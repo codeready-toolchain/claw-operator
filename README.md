@@ -47,12 +47,14 @@ This builds both images (operator + proxy), pushes them, installs CRDs, and depl
 
 ### 2. Set Up Your Namespace
 
-The operator runs in `claw-operator`, but user workloads (Claw instances, secrets) go in your own namespace. Set it once and all commands below will use it:
+The operator runs in `claw-operator`, but user workloads (Claw instances, secrets) go in your own namespace. Set `NS` once and all commands below will use it (Makefile targets also default to `my-claw`):
 
 ```sh
-export NS=my-claw-namespace
+export NS=my-claw   # or pick your own name
 oc create namespace $NS
 ```
+
+> **Do not use the `default` namespace.** On OpenShift, the `default` namespace uses a different SCC assignment that may not inject a numeric `runAsUser` into pods. This causes containers whose image declares a non-numeric `USER` (e.g., `node`) to fail with `runAsNonRoot` verification errors. Always create a dedicated namespace for your Claw instance.
 
 ### 3. Create a Credential Secret
 

@@ -240,7 +240,7 @@ endif
 	$(MAKE) dev-push REGISTRY=$(REGISTRY) TAG=$(TAG)
 	$(MAKE) dev-deploy REGISTRY=$(REGISTRY) TAG=$(TAG)
 
-NS ?= my-claw-namespace
+NS ?= my-claw
 
 .PHONY: wait-ready
 wait-ready: ## Wait for the Claw instance to become ready and print the URL.
