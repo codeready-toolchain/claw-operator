@@ -1,54 +1,3 @@
-# VERSION defines the project version for the bundle.
-# Update this value when you upgrade the version of your project.
-# To re-generate a bundle for another specific version without changing the standard setup, you can:
-# - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
-# - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.0.1
-
-# CHANNELS define the bundle channels used in the bundle.
-# Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
-# To re-generate a bundle for other specific channels without changing the standard setup, you can:
-# - use the CHANNELS as arg of the bundle target (e.g make bundle CHANNELS=candidate,fast,stable)
-# - use environment variables to overwrite this value (e.g export CHANNELS="candidate,fast,stable")
-ifneq ($(origin CHANNELS), undefined)
-BUNDLE_CHANNELS := --channels=$(CHANNELS)
-endif
-
-# DEFAULT_CHANNEL defines the default channel used in the bundle.
-# Add a new line here if you would like to change its default config. (E.g DEFAULT_CHANNEL = "stable")
-# To re-generate a bundle for any other default channel without changing the default setup, you can:
-# - use the DEFAULT_CHANNEL as arg of the bundle target (e.g make bundle DEFAULT_CHANNEL=stable)
-# - use environment variables to overwrite this value (e.g export DEFAULT_CHANNEL="stable")
-ifneq ($(origin DEFAULT_CHANNEL), undefined)
-BUNDLE_DEFAULT_CHANNEL := --default-channel=$(DEFAULT_CHANNEL)
-endif
-BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
-
-# IMAGE_TAG_BASE defines the docker.io namespace and part of the image name for remote images.
-# This variable is used to construct full image tags for bundle and catalog images.
-#
-# For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# claw.sandbox.redhat.com/claw-operator-bundle:$VERSION and claw.sandbox.redhat.com/claw-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= claw.sandbox.redhat.com/claw-operator
-
-# BUNDLE_IMG defines the image:tag used for the bundle.
-# You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
-BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:v$(VERSION)
-
-# BUNDLE_GEN_FLAGS are the flags passed to the operator-sdk generate bundle command
-BUNDLE_GEN_FLAGS ?= -q --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
-
-# USE_IMAGE_DIGESTS defines if images are resolved via tags or digests
-# You can enable this value if you would like to use SHA Based Digests
-# To enable set flag to true
-USE_IMAGE_DIGESTS ?= false
-ifeq ($(USE_IMAGE_DIGESTS), true)
-	BUNDLE_GEN_FLAGS += --use-image-digests
-endif
-
-# Set the Operator SDK version to use. By default, what is installed on the system is used.
-# This is useful for CI or a project to utilize a specific version of the operator-sdk toolkit.
-OPERATOR_SDK_VERSION ?= v1.42.0
 # Image URL to use all building/pushing image targets
 IMG ?= claw-operator:latest
 PROXY_IMG ?= claw-proxy:latest
@@ -62,10 +11,7 @@ GOBIN=$(shell go env GOBIN)
 endif
 
 # CONTAINER_TOOL defines the container tool to be used for building images.
-# Be aware that the target commands are only tested with Docker which is
-# scaffolded by default. However, you might want to replace it to use other
-# tools. (i.e. podman)
-CONTAINER_TOOL ?= docker
+CONTAINER_TOOL ?= podman
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -115,7 +61,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test -p 1 $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
-# The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
+# The default setup assumes Kind is pre-installed and builds/loads the Manager container image locally.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= claw-operator-test-e2e
@@ -133,22 +79,36 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
+	@mkdir -p tmp
+	@$(KUBECTL) config current-context > tmp/.pre-e2e-context 2>/dev/null || true
+	@$(KUBECTL) config use-context kind-$(KIND_CLUSTER)
 
 .PHONY: reset-test-e2e
 reset-test-e2e: ## Remove leftover operator resources from a previous e2e run
 	@echo "Resetting e2e test state..."
 	-$(MAKE) undeploy 2>/dev/null
 	-$(MAKE) uninstall 2>/dev/null
-	-kubectl delete ns claw-operator --ignore-not-found
+	-$(KUBECTL) delete ns claw-operator --ignore-not-found
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet reset-test-e2e ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: ## Run the e2e tests. Expected an isolated environment using Kind.
+	@trap '$(MAKE) cleanup-test-e2e >/dev/null 2>&1 || true' EXIT; \
+	$(MAKE) setup-test-e2e manifests generate fmt vet reset-test-e2e; \
 	KIND_CLUSTER=$(KIND_CLUSTER) go test -v ./test/e2e/
-	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+	@status=0; \
+	$(KIND) delete cluster --name $(KIND_CLUSTER) || status=$$?; \
+	if [ -f tmp/.pre-e2e-context ]; then \
+		ctx=$$(cat tmp/.pre-e2e-context); \
+		rm -f tmp/.pre-e2e-context; \
+		if [ -n "$$ctx" ] && $(KUBECTL) config get-contexts "$$ctx" >/dev/null 2>&1; then \
+			echo "Restoring kubectl context to $$ctx"; \
+			$(KUBECTL) config use-context "$$ctx"; \
+		fi; \
+	fi; \
+	exit $$status
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -177,56 +137,31 @@ run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
-# (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
-# More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-.PHONY: docker-build
-docker-build: ## Build docker image with the manager.
+# (i.e. podman build --platform linux/arm64)
+.PHONY: container-build
+container-build: ## Build container image with the manager.
 	$(CONTAINER_TOOL) build --platform=${PLATFORM} -t ${IMG} \
 		--build-arg VERSION=$$(git rev-parse --short HEAD) \
 		--build-arg BUILD_TIME=$$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
 		-f Containerfile .
 
-.PHONY: docker-save
-docker-save: ## Save the docker image to a tar file
+.PHONY: container-save
+container-save: ## Save the container image to a tar file.
 	mkdir -p tmp 2>/dev/null 
 	rm -f ${OUTPUT_FILE} || true
 	$(CONTAINER_TOOL) save -o ${OUTPUT_FILE} ${IMG}
 
-.PHONY: docker-push
-docker-push: ## Push docker image with the manager.
+.PHONY: container-push
+container-push: ## Push container image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
-.PHONY: docker-build-proxy
-docker-build-proxy: ## Build docker image for the credential proxy.
+.PHONY: container-build-proxy
+container-build-proxy: ## Build container image for the credential proxy.
 	$(CONTAINER_TOOL) build --platform=${PLATFORM} -t ${PROXY_IMG} -f Containerfile.proxy .
 
-.PHONY: docker-push-proxy
-docker-push-proxy: ## Push docker image for the credential proxy.
+.PHONY: container-push-proxy
+container-push-proxy: ## Push container image for the credential proxy.
 	$(CONTAINER_TOOL) push ${PROXY_IMG}
-
-# PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
-# architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
-# - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
-# - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-# - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
-# To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
-.PHONY: docker-buildx
-docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Containerfile and insert --platform=${BUILDPLATFORM} into Containerfile.cross, and preserve the original Containerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Containerfile > Containerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name claw-operator-builder
-	$(CONTAINER_TOOL) buildx use claw-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Containerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm claw-operator-builder
-	rm Containerfile.cross
-
-.PHONY: build-installer
-build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
-	mkdir -p dist
-	$(call generate-deploy-overlay,$(IMG),$(PROXY_IMG))
-	$(KUSTOMIZE) build config/.deploy > dist/install.yaml
-	@rm -rf config/.deploy
 
 # generate-deploy-overlay creates a temporary kustomize overlay at config/.deploy/
 # that wraps config/default with image and PROXY_IMAGE overrides.
@@ -273,16 +208,16 @@ dev-build: ## Build operator and proxy images for dev.
 ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-build REGISTRY=quay.io/myuser)
 endif
-	$(MAKE) docker-build IMG=$(REGISTRY)/claw-operator:$(TAG)
-	$(MAKE) docker-build-proxy PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
+	$(MAKE) container-build IMG=$(REGISTRY)/claw-operator:$(TAG)
+	$(MAKE) container-build-proxy PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
 
 .PHONY: dev-push
 dev-push: ## Push operator and proxy images for dev.
 ifndef REGISTRY
 	$(error REGISTRY is required. Usage: make dev-push REGISTRY=quay.io/myuser)
 endif
-	$(MAKE) docker-push IMG=$(REGISTRY)/claw-operator:$(TAG)
-	$(MAKE) docker-push-proxy PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
+	$(MAKE) container-push IMG=$(REGISTRY)/claw-operator:$(TAG)
+	$(MAKE) container-push-proxy PROXY_IMG=$(REGISTRY)/claw-proxy:$(TAG)
 
 .PHONY: dev-deploy
 dev-deploy: manifests kustomize ## Install CRDs and deploy controller for dev (uses Always pull policy).
@@ -302,6 +237,34 @@ endif
 	$(MAKE) dev-build REGISTRY=$(REGISTRY) TAG=$(TAG)
 	$(MAKE) dev-push REGISTRY=$(REGISTRY) TAG=$(TAG)
 	$(MAKE) dev-deploy REGISTRY=$(REGISTRY) TAG=$(TAG)
+
+NS ?= my-claw-namespace
+
+.PHONY: wait-ready
+wait-ready: ## Wait for the Claw instance to become ready and print the URL.
+	@echo "Waiting for Claw instance to become ready in namespace $(NS)..."
+	@$(KUBECTL) wait --for=condition=Ready claw/instance -n $(NS) --timeout=300s
+	@echo
+	@echo "URL: $$($(KUBECTL) get claw instance -n $(NS) -o jsonpath='{.status.url}')"
+	@token_secret=$$($(KUBECTL) get claw instance -n $(NS) -o jsonpath='{.status.gatewayTokenSecretRef}'); \
+	echo "Token: $$($(KUBECTL) get secret $$token_secret -n $(NS) -o jsonpath='{.data.token}' | base64 -d)"
+
+.PHONY: approve-pairing
+approve-pairing: ## Approve a device pairing request. Usage: make approve-pairing NS=... [REQUEST_ID=...]
+	@if [ -n "$(REQUEST_ID)" ]; then \
+		$(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices approve $(REQUEST_ID); \
+	else \
+		output=$$($(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices list 2>/dev/null); \
+		rid=$$(echo "$$output" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1); \
+		if [ -z "$$rid" ]; then \
+			echo "No pending pairing requests found."; \
+			exit 1; \
+		fi; \
+		echo "Found pairing request: $$rid"; \
+		read -r -p "Approve? [y/N] " ans; \
+		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 0;; esac; \
+		$(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices approve "$$rid"; \
+	fi
 
 .PHONY: dev-cleanup
 dev-cleanup: ## Remove deployed controller and CRDs.
@@ -376,75 +339,3 @@ mv $(1) $(1)-$(3) ;\
 ln -sf $(1)-$(3) $(1)
 endef
 
-.PHONY: operator-sdk
-OPERATOR_SDK ?= $(LOCALBIN)/operator-sdk
-operator-sdk: ## Download operator-sdk locally if necessary.
-ifeq (,$(wildcard $(OPERATOR_SDK)))
-ifeq (, $(shell which operator-sdk 2>/dev/null))
-	@{ \
-	set -e ;\
-	mkdir -p $(dir $(OPERATOR_SDK)) ;\
-	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPERATOR_SDK) https://github.com/operator-framework/operator-sdk/releases/download/$(OPERATOR_SDK_VERSION)/operator-sdk_$${OS}_$${ARCH} ;\
-	chmod +x $(OPERATOR_SDK) ;\
-	}
-else
-OPERATOR_SDK = $(shell which operator-sdk)
-endif
-endif
-
-.PHONY: bundle
-bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metadata, then validate generated files.
-	$(OPERATOR_SDK) generate kustomize manifests -q
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
-	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
-	$(OPERATOR_SDK) bundle validate ./bundle
-
-.PHONY: bundle-build
-bundle-build: ## Build the bundle image.
-	$(CONTAINER_TOOL) build --platform=${PLATFORM} -f bundle.Dockerfile -t $(BUNDLE_IMG) .
-
-.PHONY: bundle-push
-bundle-push: ## Push the bundle image.
-	$(MAKE) docker-push IMG=$(BUNDLE_IMG)
-
-.PHONY: opm
-OPM = $(LOCALBIN)/opm
-opm: ## Download opm locally if necessary.
-ifeq (,$(wildcard $(OPM)))
-ifeq (,$(shell which opm 2>/dev/null))
-	@{ \
-	set -e ;\
-	mkdir -p $(dir $(OPM)) ;\
-	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.55.0/$${OS}-$${ARCH}-opm ;\
-	chmod +x $(OPM) ;\
-	}
-else
-OPM = $(shell which opm)
-endif
-endif
-
-# A comma-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS=example.com/operator-bundle:v0.1.0,example.com/operator-bundle:v0.2.0).
-# These images MUST exist in a registry and be pull-able.
-BUNDLE_IMGS ?= $(BUNDLE_IMG)
-
-# The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
-CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
-
-# Set CATALOG_BASE_IMG to an existing catalog image tag to add $BUNDLE_IMGS to that image.
-ifneq ($(origin CATALOG_BASE_IMG), undefined)
-FROM_INDEX_OPT := --from-index $(CATALOG_BASE_IMG)
-endif
-
-# Build a catalog image by adding bundle images to an empty catalog using the operator package manager tool, 'opm'.
-# This recipe invokes 'opm' in 'semver' bundle add mode. For more information on add modes, see:
-# https://github.com/operator-framework/community-operators/blob/7f1438c/docs/packaging-operator.md#updating-your-existing-operator
-.PHONY: catalog-build
-catalog-build: opm ## Build a catalog image.
-	$(OPM) index add --container-tool $(CONTAINER_TOOL) --mode semver --tag $(CATALOG_IMG) --bundles $(BUNDLE_IMGS) $(FROM_INDEX_OPT)
-
-# Push the catalog image.
-.PHONY: catalog-push
-catalog-push: ## Push a catalog image.
-	$(MAKE) docker-push IMG=$(CATALOG_IMG)

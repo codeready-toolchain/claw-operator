@@ -45,7 +45,7 @@ var (
 
 // TestMain runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
 // temporary environment to validate project changes with the purposed to be used in CI jobs.
-// The default setup requires Kind, builds/loads the Manager Docker image locally, and installs
+// The default setup requires Kind, builds/loads the Manager container image locally, and installs
 // CertManager.
 func TestMain(m *testing.M) {
 	fmt.Println("Starting claw-operator integration test suite")
@@ -61,11 +61,11 @@ func TestMain(m *testing.M) {
 	// Images are saved to tar first because podman and kind do not work well
 	// together when loading from a docker registry.
 	// See https://github.com/kubernetes-sigs/kind/issues/2038
-	if err := buildAndLoadImage("manager", "docker-build", "IMG", projectImage, kindCluster); err != nil {
+	if err := buildAndLoadImage("manager", "container-build", "IMG", projectImage, kindCluster); err != nil {
 		fmt.Fprintf(os.Stderr, "manager image setup failed: %v\n", err)
 		os.Exit(1)
 	}
-	if err := buildAndLoadImage("proxy", "docker-build-proxy", "PROXY_IMG", proxyImage, kindCluster); err != nil {
+	if err := buildAndLoadImage("proxy", "container-build-proxy", "PROXY_IMG", proxyImage, kindCluster); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy image setup failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -101,9 +101,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// buildAndLoadImage builds a Docker image, saves it to a tar, and loads it into
+// buildAndLoadImage builds a container image, saves it to a tar, and loads it into
 // a Kind cluster. label is a human-readable name for log messages, buildTarget
-// is the make target (e.g. "docker-build"), imgVar is the make variable that
+// is the make target (e.g. "container-build"), imgVar is the make variable that
 // receives the image name (e.g. "IMG" or "PROXY_IMG").
 func buildAndLoadImage(label, buildTarget, imgVar, image, kindCluster string) error {
 	tarFile := fmt.Sprintf("tmp/%s.tar", label)
@@ -114,7 +114,7 @@ func buildAndLoadImage(label, buildTarget, imgVar, image, kindCluster string) er
 	}
 
 	fmt.Printf("Loading %s image into Kind cluster...\n", label)
-	if err := runStreaming("make", "docker-save",
+	if err := runStreaming("make", "container-save",
 		fmt.Sprintf("IMG=%s", image),
 		fmt.Sprintf("OUTPUT_FILE=%s", tarFile)); err != nil {
 		return fmt.Errorf("save %s image: %w", label, err)
@@ -127,7 +127,7 @@ func buildAndLoadImage(label, buildTarget, imgVar, image, kindCluster string) er
 }
 
 // runStreaming executes a command with stdout/stderr streamed directly to the
-// console so that long-running setup steps (Docker build, image load) produce
+// console so that long-running setup steps (container build, image load) produce
 // visible progress output instead of appearing to hang.
 func runStreaming(name string, args ...string) error {
 	dir, err := utils.GetProjectDir()
