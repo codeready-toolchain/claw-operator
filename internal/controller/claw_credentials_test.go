@@ -370,7 +370,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 				GCP:       &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
 			},
 		}
-		require.NoError(t, configureProxyForCredentials(objects, creds))
+		require.NoError(t, configureProxyForCredentials(objects, toResolved(creds)))
 
 		container := findProxyContainer(t, objects)
 		mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
@@ -410,7 +410,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 				APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-api-key"},
 			},
 		}
-		require.NoError(t, configureProxyForCredentials(objects, creds))
+		require.NoError(t, configureProxyForCredentials(objects, toResolved(creds)))
 
 		container := findProxyContainer(t, objects)
 		envVars, _, _ := unstructured.NestedSlice(container, "env")
@@ -437,7 +437,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 				Domain:    "api.openai.com",
 			},
 		}
-		require.NoError(t, configureProxyForCredentials(objects, creds))
+		require.NoError(t, configureProxyForCredentials(objects, toResolved(creds)))
 
 		container := findProxyContainer(t, objects)
 		envVars, _, _ := unstructured.NestedSlice(container, "env")

@@ -169,6 +169,7 @@ spec:
                       - pathToken
                       - oauth2
                       - none
+                      - kubernetes
                       type: string
                   required:
                   - name

@@ -67,7 +67,7 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForVertex(objects, credentials))
+		require.NoError(t, configureClawDeploymentForVertex(objects, toResolved(credentials)))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)
@@ -116,7 +116,7 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForVertex(objects, credentials))
+		require.NoError(t, configureClawDeploymentForVertex(objects, toResolved(credentials)))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)

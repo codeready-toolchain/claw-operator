@@ -218,3 +218,152 @@ The operator uses two different routing strategies depending on the provider:
 3. The MITM proxy transparently intercepts GCP auth traffic and injects real OAuth2 tokens from the service account
 
 This ensures **real GCP credentials stay on the proxy pod only** — the application pod never sees them.
+
+## Kubernetes API Access
+
+The `kubernetes` credential type lets the AI assistant interact with Kubernetes API servers through the credential-injecting proxy. You provide a standard kubeconfig file in a Secret — the operator parses it to extract server URLs, contexts, namespaces, and tokens. The assistant gets a sanitized kubeconfig (real tokens replaced with placeholders) and all API requests are transparently authenticated by the proxy.
+
+**Requirements:**
+- The kubeconfig must use **token-based authentication** (static tokens or projected service account tokens). Client certificate, exec-based, and auth provider-based auth are not supported yet.
+- Each cluster server URL must map to exactly one token. If the same cluster is referenced by multiple contexts with different users/tokens, split into separate kubeconfigs.
+
+### Single Cluster
+
+**1. Create a ServiceAccount with RBAC:**
+
+```sh
+oc create sa claw-assistant -n my-workspace
+oc create rolebinding claw-assistant-edit \
+  --clusterrole=edit \
+  --serviceaccount=my-workspace:claw-assistant \
+  -n my-workspace
+```
+
+**2. Build a kubeconfig from your current cluster:**
+
+This extracts the server URL and CA from your existing kubeconfig, then creates a new one with the SA token — no need to find CA files manually.
+
+```sh
+# Get the API server URL and CA data from the current context
+SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+CA_DATA=$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+
+# Request a token for the ServiceAccount
+SA_TOKEN=$(oc create token claw-assistant -n my-workspace --duration=8760h)
+
+# Build the kubeconfig
+kubectl config set-cluster target \
+  --server="$SERVER" \
+  --kubeconfig=/tmp/kubeconfig
+kubectl config set clusters.target.certificate-authority-data "$CA_DATA" \
+  --kubeconfig=/tmp/kubeconfig
+kubectl config set-credentials claw-sa \
+  --token="$SA_TOKEN" \
+  --kubeconfig=/tmp/kubeconfig
+kubectl config set-context workspace \
+  --cluster=target \
+  --user=claw-sa \
+  --namespace=my-workspace \
+  --kubeconfig=/tmp/kubeconfig
+kubectl config use-context workspace --kubeconfig=/tmp/kubeconfig
+```
+
+> **Tip:** If your cluster uses a CA file instead of inline `certificate-authority-data`, you can embed it:
+> ```sh
+> CA_FILE=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.certificate-authority}')
+> kubectl config set-cluster target \
+>   --server="$SERVER" \
+>   --certificate-authority="$CA_FILE" \
+>   --embed-certs=true \
+>   --kubeconfig=/tmp/kubeconfig
+> ```
+
+**3. Create the Secret:**
+
+```sh
+oc create secret generic my-kubeconfig \
+  --from-file=kubeconfig=/tmp/kubeconfig \
+  -n $NS
+```
+
+**4. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: k8s-workspace
+      type: kubernetes
+      secretRef:
+        name: my-kubeconfig
+        key: kubeconfig
+EOF
+```
+
+### Multi-Cluster
+
+A single kubeconfig can contain multiple clusters. The operator creates a proxy route per cluster server and the assistant can switch contexts with `kubectl config use-context`.
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: k8s-multi
+      type: kubernetes
+      secretRef:
+        name: multi-cluster-kubeconfig
+        key: kubeconfig
+EOF
+```
+
+The operator automatically:
+- Creates proxy routes for each cluster server `hostname:port`
+- Patches the proxy egress NetworkPolicy to allow non-443 ports (e.g., 6443)
+- Mounts a sanitized kubeconfig on the gateway pod (tokens replaced with placeholders)
+- Injects a "Kubernetes Access" section into AGENTS.md listing available contexts and namespaces
+
+### Combining with LLM Providers
+
+Kubernetes credentials work alongside LLM provider credentials in the same Claw instance:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        name: gemini-api-key
+        key: api-key
+      provider: google
+    - name: k8s-workspace
+      type: kubernetes
+      secretRef:
+        name: my-kubeconfig
+        key: kubeconfig
+EOF
+```
+
+### How Kubernetes Routing Works
+
+The `kubernetes` credential uses the proxy's existing **MITM forward proxy mode** (CONNECT tunneling). The gateway pod's `HTTP_PROXY` / `HTTPS_PROXY` env vars route all traffic through the proxy, which:
+
+1. Matches the request `hostname:port` against cluster servers from the kubeconfig
+2. TLS-terminates via MITM
+3. Strips all existing auth headers
+4. Injects the real `Authorization: Bearer <token>` for the matched cluster
+5. Re-encrypts and forwards to the upstream API server
+
+The gateway pod **cannot** reach any API server directly — egress is restricted to the proxy by NetworkPolicy. The assistant never sees real tokens; only the sanitized kubeconfig with placeholder values.

@@ -95,3 +95,40 @@ func TestMatchRoute(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchRoutePortAware(t *testing.T) {
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "api.example.com:6443", Injector: "kubernetes"},
+			{Domain: "api.example.com:8443", Injector: "kubernetes"},
+			{Domain: "api.example.com", Injector: "bearer"},
+			{Domain: ".googleapis.com", Injector: "api_key"},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		host    string
+		wantNil bool
+		wantDom string
+	}{
+		{name: "port-qualified match on 6443", host: "api.example.com:6443", wantDom: "api.example.com:6443"},
+		{name: "port-qualified match on 8443", host: "api.example.com:8443", wantDom: "api.example.com:8443"},
+		{name: "bare domain match with standard port", host: "api.example.com:443", wantDom: "api.example.com"},
+		{name: "bare domain match without port", host: "api.example.com", wantDom: "api.example.com"},
+		{name: "suffix match still works with port-qualified routes", host: "storage.googleapis.com:443", wantDom: ".googleapis.com"},
+		{name: "no match on wrong port", host: "api.example.com:9999", wantDom: "api.example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := cfg.MatchRoute(tt.host)
+			if tt.wantNil {
+				assert.Nil(t, route)
+			} else {
+				require.NotNil(t, route)
+				assert.Equal(t, tt.wantDom, route.Domain)
+			}
+		})
+	}
+}

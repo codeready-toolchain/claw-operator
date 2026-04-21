@@ -58,6 +58,8 @@ func NewInjector(route *Route) (Injector, error) {
 		return NewPathTokenInjector(route)
 	case "oauth2":
 		return NewOAuth2Injector(route)
+	case "kubernetes":
+		return NewKubernetesInjector(route)
 	default:
 		return nil, fmt.Errorf("unknown injector type: %s", route.Injector)
 	}

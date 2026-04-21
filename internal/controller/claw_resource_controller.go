@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,26 +57,29 @@ const (
 	ClawInstanceName = "instance"
 
 	// Core resources
-	ClawConfigMapName            = "claw-config"
-	ClawPVCName                  = "claw-home-pvc"
-	ClawNetworkPolicyName        = "claw-egress"
-	ClawIngressNetworkPolicyName = "claw-ingress"
-	ClawRouteName                = "claw"
-	ClawServiceName              = "claw"
-	ClawDeploymentName           = "claw"
-	ClawGatewaySecretName        = "claw-gateway-token"
-	GatewayTokenKeyName          = "token"
-	ClawProxyServiceName         = "claw-proxy"
-	ClawProxyConfigMapName       = "claw-proxy-config"
-	ClawProxyDeploymentName      = "claw-proxy"
-	ClawProxyCACertSecretName    = "claw-proxy-ca"
-	ClawProxyContainerName       = "proxy"
-	ClawGatewayContainerName     = "gateway"
-	ClawVertexADCConfigMapName   = "claw-vertex-adc"
+	ClawConfigMapName                = "claw-config"
+	ClawPVCName                      = "claw-home-pvc"
+	ClawNetworkPolicyName            = "claw-egress"
+	ClawIngressNetworkPolicyName     = "claw-ingress"
+	ClawRouteName                    = "claw"
+	ClawServiceName                  = "claw"
+	ClawDeploymentName               = "claw"
+	ClawGatewaySecretName            = "claw-gateway-token"
+	GatewayTokenKeyName              = "token"
+	ClawProxyServiceName             = "claw-proxy"
+	ClawProxyConfigMapName           = "claw-proxy-config"
+	ClawProxyDeploymentName          = "claw-proxy"
+	ClawProxyCACertSecretName        = "claw-proxy-ca"
+	ClawProxyContainerName           = "proxy"
+	ClawGatewayContainerName         = "gateway"
+	ClawVertexADCConfigMapName       = "claw-vertex-adc"
+	ClawKubeConfigMapName            = "claw-kube-config"
+	ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"
 	// Kubernetes resource kinds
-	RouteKind      = "Route"
-	DeploymentKind = "Deployment"
-	ConfigMapKind  = "ConfigMap"
+	RouteKind         = "Route"
+	DeploymentKind    = "Deployment"
+	ConfigMapKind     = "ConfigMap"
+	NetworkPolicyKind = "NetworkPolicy"
 )
 
 // ClawResourceReconciler reconciles all resources for Claw
@@ -126,39 +130,14 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Resolve provider defaults (domain, apiKey) for known providers before validation
-	for i := range instance.Spec.Credentials {
-		if err := resolveProviderDefaults(&instance.Spec.Credentials[i]); err != nil {
-			logger.Error(err, "Failed to resolve provider defaults")
-			setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
-			setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
-			if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
-				logger.Error(statusErr, "Failed to update status after provider defaults failure")
-			}
-			return ctrl.Result{}, err
-		}
-	}
-
-	// Validate all credential entries (Secrets exist, type-specific config present)
-	if err := r.validateCredentials(ctx, instance); err != nil {
-		logger.Error(err, "Credential validation failed")
-		setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
-		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
-		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
-			logger.Error(statusErr, "Failed to update status after credential validation failure")
-		}
-		return ctrl.Result{}, err
-	}
-	setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionTrue, clawv1alpha1.ConditionReasonResolved, "All credential Secrets are valid")
-
-	// Ensure proxy CA certificate exists for MITM proxy
-	if err := r.applyProxyCA(ctx, instance); err != nil {
-		logger.Error(err, "Failed to apply proxy CA")
+	// Resolve credentials (provider defaults, validation, kubeconfig parsing)
+	resolvedCreds, err := r.resolveAndApplyCredentials(ctx, instance)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Generate proxy config, apply ConfigMaps (proxy config + Vertex AI stub ADC)
-	proxyConfigJSON, err := r.applyProxyResources(ctx, instance)
+	proxyConfigJSON, err := r.applyProxyResources(ctx, instance, resolvedCreds)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -170,7 +149,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Apply deployment overrides (proxy image, pull policy, credentials)
-	if err := r.configureDeployments(objects, instance); err != nil {
+	if err := r.configureDeployments(objects, resolvedCreds); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -221,6 +200,16 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
 	}
 
+	// Inject Kubernetes context info into AGENTS.md
+	if err := injectKubernetesIntoAgentsMd(objects, resolvedCreds); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes info into AGENTS.md: %w", err)
+	}
+
+	// Inject non-443 ports from kubernetes credentials into proxy egress NetworkPolicy
+	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
+	}
+
 	// Filter out Route (applied in phase above) and proxy ConfigMap (controller-managed)
 	remainingObjects := []*unstructured.Unstructured{}
 	for _, obj := range objects {
@@ -254,10 +243,52 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{}, nil
 }
 
+// resolveAndApplyCredentials handles provider defaults, credential resolution/validation,
+// sanitized kubeconfig creation, and proxy CA generation in one cohesive step.
+func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context, instance *clawv1alpha1.Claw) ([]resolvedCredential, error) {
+	logger := log.FromContext(ctx)
+
+	for i := range instance.Spec.Credentials {
+		if err := resolveProviderDefaults(&instance.Spec.Credentials[i]); err != nil {
+			logger.Error(err, "Failed to resolve provider defaults")
+			setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+			setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+			if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+				logger.Error(statusErr, "Failed to update status after provider defaults failure")
+			}
+			return nil, err
+		}
+	}
+
+	resolvedCreds, err := r.resolveCredentials(ctx, instance)
+	if err != nil {
+		logger.Error(err, "Credential validation failed")
+		setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after credential validation failure")
+		}
+		return nil, err
+	}
+	setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionTrue, clawv1alpha1.ConditionReasonResolved, "All credential Secrets are valid")
+
+	if err := r.applySanitizedKubeconfig(ctx, instance, resolvedCreds); err != nil {
+		logger.Error(err, "Failed to apply sanitized kubeconfig")
+		return nil, err
+	}
+
+	if err := r.applyProxyCA(ctx, instance); err != nil {
+		logger.Error(err, "Failed to apply proxy CA")
+		return nil, err
+	}
+
+	return resolvedCreds, nil
+}
+
 // configureDeployments applies deployment overrides (proxy image, pull policy, credentials)
 func (r *ClawResourceReconciler) configureDeployments(
 	objects []*unstructured.Unstructured,
-	instance *clawv1alpha1.Claw,
+	resolvedCreds []resolvedCredential,
 ) error {
 	if err := configureProxyImage(objects, r.ProxyImage); err != nil {
 		return fmt.Errorf("failed to configure proxy image: %w", err)
@@ -265,11 +296,14 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
 		return fmt.Errorf("failed to configure image pull policy: %w", err)
 	}
-	if err := configureProxyForCredentials(objects, instance.Spec.Credentials); err != nil {
+	if err := configureProxyForCredentials(objects, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
 	}
-	if err := configureClawDeploymentForVertex(objects, instance.Spec.Credentials); err != nil {
+	if err := configureClawDeploymentForVertex(objects, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Vertex AI: %w", err)
+	}
+	if err := configureClawDeploymentForKubernetes(objects, resolvedCreds); err != nil {
+		return fmt.Errorf("failed to configure claw deployment for Kubernetes: %w", err)
 	}
 	return nil
 }
@@ -277,10 +311,10 @@ func (r *ClawResourceReconciler) configureDeployments(
 // applyProxyResources generates the proxy config, applies the proxy ConfigMap and
 // (when needed) the Vertex AI stub ADC ConfigMap. Returns the proxy config JSON
 // for use in config hash stamping.
-func (r *ClawResourceReconciler) applyProxyResources(ctx context.Context, instance *clawv1alpha1.Claw) ([]byte, error) {
+func (r *ClawResourceReconciler) applyProxyResources(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) ([]byte, error) {
 	logger := log.FromContext(ctx)
 
-	proxyConfigJSON, err := generateProxyConfig(instance.Spec.Credentials)
+	proxyConfigJSON, err := generateProxyConfig(resolvedCreds)
 	if err != nil {
 		logger.Error(err, "Failed to generate proxy config")
 		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
@@ -300,7 +334,7 @@ func (r *ClawResourceReconciler) applyProxyResources(ctx context.Context, instan
 		}
 		return nil, err
 	}
-	if err := r.applyVertexADCConfigMap(ctx, instance); err != nil {
+	if err := r.applyVertexADCConfigMap(ctx, instance, resolvedCreds); err != nil {
 		logger.Error(err, "Failed to apply Vertex ADC config")
 		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
 		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
@@ -614,6 +648,126 @@ func filterAgentDefaultsForProviders(config map[string]any, providers map[string
 			}
 		}
 	}
+}
+
+// injectKubePortsIntoNetworkPolicy adds non-443 ports from kubernetes credentials to
+// the proxy egress NetworkPolicy. This allows the proxy to reach API servers on
+// non-standard ports (e.g., 6443).
+func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
+	uniquePorts := map[string]bool{}
+	for _, rc := range resolvedCreds {
+		if rc.KubeConfig == nil {
+			continue
+		}
+		for _, cluster := range rc.KubeConfig.Clusters {
+			if cluster.Port != "443" {
+				uniquePorts[cluster.Port] = true
+			}
+		}
+	}
+	if len(uniquePorts) == 0 {
+		return nil
+	}
+
+	for _, obj := range objects {
+		if obj.GetKind() != NetworkPolicyKind || obj.GetName() != ClawProxyEgressNetworkPolicyName {
+			continue
+		}
+
+		egress, found, err := unstructured.NestedSlice(obj.Object, "spec", "egress")
+		if err != nil {
+			return fmt.Errorf("failed to get egress rules from proxy NetworkPolicy: %w", err)
+		}
+		if !found || len(egress) == 0 {
+			return fmt.Errorf("egress rules not found in proxy NetworkPolicy")
+		}
+
+		// First egress rule is the HTTPS rule (ports only, no `to` restriction)
+		httpsRule, ok := egress[0].(map[string]any)
+		if !ok {
+			return fmt.Errorf("unexpected egress rule type in proxy NetworkPolicy")
+		}
+
+		ports, _, _ := unstructured.NestedSlice(httpsRule, "ports")
+		for port := range uniquePorts {
+			portInt, err := strconv.Atoi(port)
+			if err != nil {
+				return fmt.Errorf("invalid port %q from kubeconfig: %w", port, err)
+			}
+			ports = append(ports, map[string]any{
+				"port":     int64(portInt),
+				"protocol": "TCP",
+			})
+		}
+
+		if err := unstructured.SetNestedSlice(httpsRule, ports, "ports"); err != nil {
+			return fmt.Errorf("failed to set ports on proxy egress rule: %w", err)
+		}
+		egress[0] = httpsRule
+		if err := unstructured.SetNestedSlice(obj.Object, egress, "spec", "egress"); err != nil {
+			return fmt.Errorf("failed to set egress rules on proxy NetworkPolicy: %w", err)
+		}
+		return nil
+	}
+	return nil
+}
+
+// injectKubernetesIntoAgentsMd appends a Kubernetes section to AGENTS.md in the
+// claw-config ConfigMap when kubernetes credentials are present.
+func injectKubernetesIntoAgentsMd(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
+	var allContexts []kubeconfigContext
+	for _, rc := range resolvedCreds {
+		if rc.KubeConfig == nil {
+			continue
+		}
+		allContexts = append(allContexts, rc.KubeConfig.Contexts...)
+	}
+	if len(allContexts) == 0 {
+		return nil
+	}
+
+	for _, obj := range objects {
+		if obj.GetKind() != ConfigMapKind || obj.GetName() != ClawConfigMapName {
+			continue
+		}
+
+		agentsMd, _, err := unstructured.NestedString(obj.Object, "data", "AGENTS.md")
+		if err != nil {
+			return fmt.Errorf("failed to extract AGENTS.md from ConfigMap: %w", err)
+		}
+
+		var sb strings.Builder
+		sb.WriteString(agentsMd)
+		sb.WriteString("\n## Kubernetes Access\n\n")
+		sb.WriteString("You have access to Kubernetes clusters via `kubectl`. Your KUBECONFIG is\n")
+		sb.WriteString("pre-configured. Available contexts:\n")
+
+		// Sort contexts for stable output
+		sort.Slice(allContexts, func(i, j int) bool {
+			return allContexts[i].Name < allContexts[j].Name
+		})
+
+		for _, ctx := range allContexts {
+			entry := fmt.Sprintf("- `%s` (cluster: %s", ctx.Name, ctx.Cluster)
+			if ctx.Namespace != "" {
+				entry += ", namespace: " + ctx.Namespace
+			}
+			entry += ")"
+			if ctx.Current {
+				entry += " [current]"
+			}
+			sb.WriteString(entry + "\n")
+		}
+
+		sb.WriteString("\nUse `kubectl` commands to manage resources. The proxy handles authentication\n")
+		sb.WriteString("transparently — do not attempt to manage tokens or kubeconfig yourself.\n")
+
+		if err := unstructured.SetNestedField(obj.Object, sb.String(), "data", "AGENTS.md"); err != nil {
+			return fmt.Errorf("failed to set AGENTS.md in ConfigMap: %w", err)
+		}
+		return nil
+	}
+	return nil
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem

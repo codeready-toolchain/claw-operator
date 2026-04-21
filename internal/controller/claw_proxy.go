@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -59,6 +60,8 @@ type proxyRoute struct {
 	TokenURL       string            `json:"tokenURL,omitempty"`
 	Scopes         []string          `json:"scopes,omitempty"`
 	DefaultHeaders map[string]string `json:"defaultHeaders,omitempty"`
+	KubeconfigPath string            `json:"kubeconfigPath,omitempty"`
+	CACert         string            `json:"caCert,omitempty"`
 }
 
 // proxyConfig is the top-level proxy configuration JSON.
@@ -117,6 +120,10 @@ func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
 		if cred.Domain == "" {
 			cred.Domain = ".googleapis.com"
 		}
+
+	case clawv1alpha1.CredentialTypeKubernetes:
+		// Domains are derived from the kubeconfig, not the domain field
+		return nil
 	}
 
 	if cred.Domain == "" {
@@ -164,14 +171,14 @@ var builtinPassthroughDomains = []string{
 	"openrouter.ai",
 }
 
-// generateProxyConfig builds the proxy config JSON from spec.credentials[].
+// generateProxyConfig builds the proxy config JSON from resolved credentials.
 // Exact-match domains are emitted before suffix-match domains for predictable matching.
-func generateProxyConfig(credentials []clawv1alpha1.CredentialSpec) ([]byte, error) {
+func generateProxyConfig(credentials []resolvedCredential) ([]byte, error) {
 	var exact, suffix []proxyRoute
 
 	coveredDomains := make(map[string]bool)
-	for _, cred := range credentials {
-		coveredDomains[strings.ToLower(cred.Domain)] = true
+	for _, rc := range credentials {
+		coveredDomains[strings.ToLower(rc.Domain)] = true
 	}
 
 	for _, domain := range builtinPassthroughDomains {
@@ -180,7 +187,29 @@ func generateProxyConfig(credentials []clawv1alpha1.CredentialSpec) ([]byte, err
 		}
 	}
 
-	for _, cred := range credentials {
+	for _, rc := range credentials {
+		cred := rc.CredentialSpec
+
+		if cred.Type == clawv1alpha1.CredentialTypeKubernetes {
+			if rc.KubeConfig == nil {
+				continue
+			}
+			kubeconfigPath := "/etc/proxy/credentials/" + cred.Name + "/kubeconfig"
+			for _, cluster := range rc.KubeConfig.Clusters {
+				route := proxyRoute{
+					Domain:         cluster.Hostname + ":" + cluster.Port,
+					Injector:       "kubernetes",
+					KubeconfigPath: kubeconfigPath,
+					DefaultHeaders: cred.DefaultHeaders,
+				}
+				if len(cluster.CAData) > 0 {
+					route.CACert = base64.StdEncoding.EncodeToString(cluster.CAData)
+				}
+				exact = append(exact, route)
+			}
+			continue
+		}
+
 		route := proxyRoute{
 			Domain:         cred.Domain,
 			DefaultHeaders: cred.DefaultHeaders,
@@ -275,9 +304,9 @@ func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instan
 }
 
 // hasVertexSDKCredentials returns true if any credential uses the native Vertex SDK.
-func hasVertexSDKCredentials(credentials []clawv1alpha1.CredentialSpec) bool {
-	for _, cred := range credentials {
-		if usesVertexSDK(cred) {
+func hasVertexSDKCredentials(credentials []resolvedCredential) bool {
+	for _, rc := range credentials {
+		if usesVertexSDK(rc.CredentialSpec) {
 			return true
 		}
 	}
@@ -287,8 +316,13 @@ func hasVertexSDKCredentials(credentials []clawv1alpha1.CredentialSpec) bool {
 // applyVertexADCConfigMap creates or updates the stub ADC ConfigMap used by the
 // OpenClaw pod's Vertex SDK to bootstrap GCP token refresh. The stub contains
 // dummy credentials — the MITM proxy replaces tokens with real ones.
-func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, instance *clawv1alpha1.Claw) error {
-	if !hasVertexSDKCredentials(instance.Spec.Credentials) {
+func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) error {
+	if !hasVertexSDKCredentials(resolvedCreds) {
+		existing := &corev1.ConfigMap{}
+		if err := r.Get(ctx, client.ObjectKey{Name: ClawVertexADCConfigMapName, Namespace: instance.Namespace}, existing); err == nil {
+			log.FromContext(ctx).Info("Cleaning up orphaned Vertex ADC ConfigMap")
+			return r.Delete(ctx, existing)
+		}
 		return nil
 	}
 
@@ -394,9 +428,9 @@ func configureImagePullPolicy(objects []*unstructured.Unstructured, policy strin
 }
 
 // configureProxyForCredentials adds credential env vars and volume mounts to the
-// claw-proxy Deployment based on spec.credentials[]. This modifies the parsed
+// claw-proxy Deployment based on resolved credentials. This modifies the parsed
 // kustomize objects in-place before they are applied via SSA.
-func configureProxyForCredentials(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
+func configureProxyForCredentials(objects []*unstructured.Unstructured, credentials []resolvedCredential) error {
 	for _, obj := range objects {
 		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
 			continue
@@ -431,7 +465,8 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 		volumeMounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
 		volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
 
-		for _, cred := range credentials {
+		for _, rc := range credentials {
+			cred := rc.CredentialSpec
 			switch cred.Type {
 			case clawv1alpha1.CredentialTypeAPIKey, clawv1alpha1.CredentialTypeBearer,
 				clawv1alpha1.CredentialTypePathToken, clawv1alpha1.CredentialTypeOAuth2:
@@ -471,6 +506,28 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 					"readOnly":  true,
 				})
 
+			case clawv1alpha1.CredentialTypeKubernetes:
+				if cred.SecretRef == nil {
+					continue
+				}
+				volName := "cred-" + cred.Name
+				volumes = append(volumes, map[string]any{
+					"name": volName,
+					"secret": map[string]any{
+						"secretName": cred.SecretRef.Name,
+						"items": []any{
+							map[string]any{
+								"key":  cred.SecretRef.Key,
+								"path": "kubeconfig",
+							},
+						},
+					},
+				})
+				volumeMounts = append(volumeMounts, map[string]any{
+					"name":      volName,
+					"mountPath": "/etc/proxy/credentials/" + cred.Name,
+					"readOnly":  true,
+				})
 			}
 		}
 
@@ -497,11 +554,11 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, credenti
 // ADC volume mount to the claw (gateway) deployment when any credential uses the
 // native Vertex SDK (GCP + non-Google provider). The stub ADC allows google-auth-library
 // to bootstrap token refresh, which the MITM proxy intercepts with real credentials.
-func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
+func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, credentials []resolvedCredential) error {
 	var vertexCreds []clawv1alpha1.CredentialSpec
-	for _, cred := range credentials {
-		if usesVertexSDK(cred) {
-			vertexCreds = append(vertexCreds, cred)
+	for _, rc := range credentials {
+		if usesVertexSDK(rc.CredentialSpec) {
+			vertexCreds = append(vertexCreds, rc.CredentialSpec)
 		}
 	}
 	if len(vertexCreds) == 0 {
@@ -566,6 +623,83 @@ func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, cred
 			"name": "vertex-adc",
 			"configMap": map[string]any{
 				"name": ClawVertexADCConfigMapName,
+			},
+		})
+
+		if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
+			return fmt.Errorf("failed to set env vars on claw deployment: %w", err)
+		}
+		if err := unstructured.SetNestedSlice(container, volumeMounts, "volumeMounts"); err != nil {
+			return fmt.Errorf("failed to set volume mounts on claw deployment: %w", err)
+		}
+		containers[containerIdx] = container
+		if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+			return fmt.Errorf("failed to set containers on claw deployment: %w", err)
+		}
+		if err := unstructured.SetNestedSlice(obj.Object, volumes, "spec", "template", "spec", "volumes"); err != nil {
+			return fmt.Errorf("failed to set volumes on claw deployment: %w", err)
+		}
+
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
+}
+
+// configureClawDeploymentForKubernetes mounts the sanitized kubeconfig ConfigMap and
+// sets KUBECONFIG env var on the claw (gateway) deployment when a kubernetes credential is present.
+func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, credentials []resolvedCredential) error {
+	if !hasKubernetesCredentials(credentials) {
+		return nil
+	}
+
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawDeploymentName {
+			continue
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from claw deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in claw deployment")
+		}
+
+		containerIdx := -1
+		var container map[string]any
+		for i, c := range containers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawGatewayContainerName {
+				containerIdx = i
+				container = cm
+				break
+			}
+		}
+		if containerIdx < 0 {
+			return fmt.Errorf("container %q not found in claw deployment", ClawGatewayContainerName)
+		}
+
+		envVars, _, _ := unstructured.NestedSlice(container, "env")
+		volumeMounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
+		volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
+
+		envVars = append(envVars, map[string]any{
+			"name":  "KUBECONFIG",
+			"value": "/etc/kube/config",
+		})
+
+		volumeMounts = append(volumeMounts, map[string]any{
+			"name":      "kube-config",
+			"mountPath": "/etc/kube",
+			"readOnly":  true,
+		})
+		volumes = append(volumes, map[string]any{
+			"name": "kube-config",
+			"configMap": map[string]any{
+				"name": ClawKubeConfigMapName,
 			},
 		})
 

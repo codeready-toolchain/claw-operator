@@ -46,7 +46,9 @@ const (
 	pollInterval    = 1 * time.Second
 	extendedTimeout = 5 * time.Minute
 
-	podPhaseRunning = "Running"
+	podPhaseRunning   = "Running"
+	podPhaseSucceeded = "Succeeded"
+	conditionTrue     = "True"
 )
 
 // clawYAMLWithGemini returns a Claw CR YAML using spec.credentials[] with apiKey type.
@@ -306,7 +308,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 					"-o", "jsonpath={.status.phase}",
 					"-n", operatorNamespace)
 				output, err := utils.Run(t, cmd)
-				if err == nil && output == "Succeeded" {
+				if err == nil && output == podPhaseSucceeded {
 					break
 				}
 				time.Sleep(pollInterval)
@@ -352,7 +354,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
-					return err == nil && output == "True", nil
+					return err == nil && output == conditionTrue, nil
 				})
 			require.NoError(t, err, "Claw ProxyConfigured did not become True within %v", defaultTimeout)
 
@@ -411,7 +413,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"-n", userNamespace)
 			condOutput, err := utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "True", condOutput, "CredentialsResolved should be True")
+			assert.Equal(t, conditionTrue, condOutput, "CredentialsResolved should be True")
 
 			t.Log("verifying ProxyConfigured condition")
 			cmd = exec.Command("kubectl", "get", "claw", "instance",
@@ -419,7 +421,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"-n", userNamespace)
 			condOutput, err = utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "True", condOutput, "ProxyConfigured should be True")
+			assert.Equal(t, conditionTrue, condOutput, "ProxyConfigured should be True")
 
 			t.Log("verifying reconciliation success in metrics")
 			metricsOutput := fetchFreshMetrics(t, "curl-metrics-reconcile")
@@ -542,7 +544,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
-					return err == nil && output == "True", nil
+					return err == nil && output == conditionTrue, nil
 				})
 			require.NoError(t, err, "Claw ProxyConfigured did not become True within %v", defaultTimeout)
 
@@ -627,6 +629,228 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 					return err == nil && output == podPhaseRunning, nil
 				})
 			require.NoError(t, err, "new pod did not reach Running phase")
+		})
+
+		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {
+			const (
+				kubeWorkspace = "e2e-kube-workspace"
+				kubeSAName    = "claw-e2e-sa"
+				kubeSecretNm  = "e2e-kubeconfig"
+				curlPodName   = "curl-kube-proxy"
+			)
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", kubeSecretNm, "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "pod", curlPodName, "-n", userNamespace, "--ignore-not-found")
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "ns", kubeWorkspace, "--ignore-not-found")
+				_, _ = utils.Run(t, cmd)
+			})
+
+			// 1. Create workspace namespace
+			t.Log("creating workspace namespace")
+			cmd := exec.Command("kubectl", "create", "ns", kubeWorkspace)
+			_, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to create workspace namespace")
+
+			// 2. Create ServiceAccount in workspace
+			t.Log("creating ServiceAccount in workspace")
+			cmd = exec.Command("kubectl", "create", "sa", kubeSAName, "-n", kubeWorkspace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "failed to create ServiceAccount")
+
+			// 3. Grant edit role
+			t.Log("granting edit role to ServiceAccount")
+			cmd = exec.Command("kubectl", "create", "rolebinding", "claw-e2e-edit",
+				"--clusterrole=edit",
+				fmt.Sprintf("--serviceaccount=%s:%s", kubeWorkspace, kubeSAName),
+				"-n", kubeWorkspace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "failed to create RoleBinding")
+
+			// 4. Get SA token
+			t.Log("requesting token for ServiceAccount")
+			cmd = exec.Command("kubectl", "create", "token", kubeSAName,
+				"-n", kubeWorkspace, "--duration=1h")
+			saToken, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to create token")
+			saToken = strings.TrimSpace(saToken)
+			require.NotEmpty(t, saToken)
+
+			// 5. Get cluster CA from host kubeconfig (--minify to get current context only)
+			t.Log("extracting cluster CA from kubeconfig")
+			cmd = exec.Command("kubectl", "config", "view", "--raw", "--minify",
+				"-o", "jsonpath={.clusters[0].cluster.certificate-authority-data}")
+			clusterCAB64, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to get cluster CA")
+			clusterCAB64 = strings.TrimSpace(clusterCAB64)
+			require.NotEmpty(t, clusterCAB64, "cluster CA should not be empty")
+
+			// 6. Build kubeconfig YAML
+			kubeconfigYAML := fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+  - name: kind-cluster
+    cluster:
+      server: https://kubernetes.default.svc
+      certificate-authority-data: %s
+contexts:
+  - name: workspace
+    context:
+      cluster: kind-cluster
+      user: claw-sa
+      namespace: %s
+current-context: workspace
+users:
+  - name: claw-sa
+    user:
+      token: %s
+`, clusterCAB64, kubeWorkspace, saToken)
+
+			// 7. Create Secret with kubeconfig
+			t.Log("creating kubeconfig Secret")
+			kubeconfigFile := filepath.Join("/tmp", "e2e-kubeconfig.yaml")
+			err = os.WriteFile(kubeconfigFile, []byte(kubeconfigYAML), os.FileMode(0o644))
+			require.NoError(t, err)
+
+			cmd = exec.Command("kubectl", "delete", "secret", kubeSecretNm,
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", kubeSecretNm,
+				fmt.Sprintf("--from-file=kubeconfig=%s", kubeconfigFile),
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "failed to create kubeconfig Secret")
+
+			// 8. Apply Claw CR with kubernetes credential
+			t.Log("applying Claw CR with kubernetes credential")
+			clawYAML := fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: k8s-test
+      type: kubernetes
+      secretRef:
+        name: %s
+        key: kubeconfig
+`, kubeSecretNm)
+			crFile := filepath.Join("/tmp", "claw-e2e-kube.yaml")
+			err = os.WriteFile(crFile, []byte(clawYAML), os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "failed to apply Claw CR")
+
+			// 9. Wait for ProxyConfigured=True
+			t.Log("waiting for Claw ProxyConfigured condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw ProxyConfigured did not become True")
+
+			// Wait for proxy pods to be running
+			t.Log("waiting for proxy pod to be running")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=claw-proxy",
+						"-o", "jsonpath={.items[0].status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == podPhaseRunning, nil
+				})
+			require.NoError(t, err, "proxy pod did not reach Running phase")
+
+			// 10. Extract MITM CA cert from claw-proxy-ca Secret
+			t.Log("extracting MITM CA cert")
+			var mitmCAB64 string
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "secret", "claw-proxy-ca",
+						"-o", "jsonpath={.data.ca\\.crt}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					if err == nil && output != "" {
+						mitmCAB64 = strings.TrimSpace(output)
+						return true, nil
+					}
+					return false, nil
+				})
+			require.NoError(t, err, "failed to get MITM CA cert")
+			require.NotEmpty(t, mitmCAB64)
+
+			// 11. Run curl pod through proxy to hit the Kubernetes API
+			t.Log("running curl pod through proxy to access Kubernetes API")
+			cmd = exec.Command("kubectl", "delete", "pod", curlPodName,
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+
+			curlScript := fmt.Sprintf(
+				"echo '%s' | base64 -d > /tmp/mitm-ca.crt && "+
+					"curl -s -o /tmp/response.json -w '%%{http_code}' "+
+					"--proxy http://claw-proxy.%s.svc.cluster.local:8080 "+
+					"--cacert /tmp/mitm-ca.crt "+
+					"https://kubernetes.default.svc/api/v1/namespaces/%s/configmaps && "+
+					"echo && cat /tmp/response.json",
+				mitmCAB64, userNamespace, kubeWorkspace)
+
+			cmd = exec.Command("kubectl", "run", curlPodName, "--restart=Never",
+				"--namespace", userNamespace,
+				"--image=curlimages/curl:latest",
+				"--overrides", fmt.Sprintf(`{
+					"spec": {
+						"containers": [{
+							"name": "curl",
+							"image": "curlimages/curl:latest",
+							"command": ["/bin/sh", "-c"],
+							"args": [%q],
+							"securityContext": {
+								"allowPrivilegeEscalation": false,
+								"capabilities": {"drop": ["ALL"]},
+								"runAsNonRoot": true,
+								"runAsUser": 1000,
+								"seccompProfile": {"type": "RuntimeDefault"}
+							}
+						}]
+					}
+				}`, curlScript))
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "failed to create curl pod")
+
+			// 12. Wait for curl pod to complete and check results
+			t.Log("waiting for curl pod to complete")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods", curlPodName,
+						"-o", "jsonpath={.status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && (output == podPhaseSucceeded || output == "Failed"), nil
+				})
+			require.NoError(t, err, "curl pod did not complete")
+
+			t.Log("checking curl pod logs")
+			cmd = exec.Command("kubectl", "logs", curlPodName, "-n", userNamespace)
+			curlOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to get curl pod logs")
+			t.Logf("curl output:\n%s", curlOutput)
+
+			assert.Contains(t, curlOutput, "200",
+				"curl through proxy to Kubernetes API should return 200")
+			assert.Contains(t, curlOutput, "ConfigMapList",
+				"response should contain ConfigMapList kind")
 		})
 	})
 }
@@ -724,7 +948,7 @@ func fetchFreshMetrics(t *testing.T, podName string) string {
 				"-o", "jsonpath={.status.phase}",
 				"-n", operatorNamespace)
 			output, err := utils.Run(t, cmd)
-			return err == nil && output == "Succeeded", nil
+			return err == nil && output == podPhaseSucceeded, nil
 		})
 	require.NoError(t, err, "pod %s did not reach Succeeded phase within %v", podName, defaultTimeout)
 
