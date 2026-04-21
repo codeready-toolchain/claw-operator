@@ -18,7 +18,7 @@ This is the generic claw-operator implementation. Platform-specific concerns (na
 - **Operator is platform-agnostic** — the operator accepts a kubeconfig in a Secret and processes it. It does not create ServiceAccounts, RoleBindings, or decide what RBAC the assistant gets. That's the platform's job.
 - **Kubeconfig is the standard** — users and platforms already produce kubeconfigs. The operator consumes them natively rather than requiring manual token extraction.
 - **Same security model as LLM credentials** — the proxy strips all client auth headers and injects the real token. The gateway pod has no direct route to the API server (blocked by NetworkPolicy). The assistant cannot present its own token or bypass injection.
-- **Multi-cluster for free** — a single kubeconfig can contain multiple clusters with different tokens. The proxy injects the right credential per API server hostname.
+- **Multi-cluster for free** — a single kubeconfig can contain multiple clusters with different tokens. The proxy injects the right credential per API server `hostname:port`.
 - **Fits existing credential patterns** — reuses the `spec.credentials[]` array, proxy injector interface, and controller patching pipeline. No new controllers or CRDs.
 
 ---
@@ -56,7 +56,7 @@ When the operator encounters a `kubernetes` credential during reconciliation:
    └─ Extract unique non-443 ports for NetworkPolicy patching
              │
 4. Generate proxy routes
-   └─ One route per cluster server hostname
+   └─ One route per cluster server hostname:port
    └─ Injector type: "kubernetes"
    └─ Kubeconfig file path for the proxy to read tokens from
              │
@@ -86,7 +86,7 @@ Claw Gateway (assistant runs kubectl)
     ▼
 Claw Proxy (MITM mode)
     │
-    │  1. Match hostname against kubeconfig cluster servers
+    │  1. Match hostname:port against kubeconfig cluster servers
     │  2. TLS-terminate (MITM CA)
     │  3. Strip all auth headers
     │  4. Read original kubeconfig, find token for this cluster
@@ -267,7 +267,7 @@ type KubernetesInjector struct {
 }
 ```
 
-- Parses the kubeconfig once on startup, builds a hostname→token map
+- Parses the kubeconfig once on startup, builds a `hostname:port` → token map
 - No file watching — token rotation is handled by pod restart via `stampSecretVersionAnnotation` (same as all other credential types)
 - `Inject(req)`: look up the token for `req.URL.Host`, set `Authorization: Bearer <token>`
 - Registered in `NewInjector()` factory as `"kubernetes"`
@@ -276,13 +276,13 @@ type KubernetesInjector struct {
 
 ```json
 {
-  "domain": "kubernetes.default.svc",
+  "domain": "kubernetes.default.svc:443",
   "injector": "kubernetes",
   "kubeconfigPath": "/etc/proxy/credentials/k8s-workspace/kubeconfig"
 }
 ```
 
-One route per cluster server hostname. All share the same kubeconfig file path (the injector maps hostnames to the right token internally).
+One route per cluster server `hostname:port`. All share the same kubeconfig file path (the injector maps `hostname:port` to the right token internally).
 
 **Note:** The proxy's `MatchRoute` currently strips the port from the `Host` header. For Kubernetes routes, the domain should include the port when it differs from 443 (e.g., `api.cluster.example.com:6443`) and `MatchRoute` must be updated to support port-aware matching. This prevents ambiguity when two clusters share the same hostname on different ports.
 
