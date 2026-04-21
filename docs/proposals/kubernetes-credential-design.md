@@ -199,7 +199,8 @@ For a `kubernetes` credential:
 2. Parse with `client-go/tools/clientcmd` (already a transitive dependency via controller-runtime)
 3. Validate all users use token-based auth (reject client certs, exec, etc.)
 4. Validate all cluster server URLs are parseable
-5. Populate `kubeconfigData` with extracted cluster/context metadata
+5. Validate one-token-per-server: each unique cluster server URL must map to exactly one token. If multiple contexts reference the same cluster with different users/tokens, reject the kubeconfig with an error (the proxy's `hostname:port → token` map cannot represent this; the user must split into separate kubeconfigs or use the same user)
+6. Populate `kubeconfigData` with extracted cluster/context metadata
 
 The resolved data is then passed to all downstream functions: `generateProxyConfig`, `applySanitizedKubeconfig`, `injectKubePortsIntoNetworkPolicy`, `injectKubernetesIntoAgentsMd` — each consuming the pre-parsed `kubeconfigData` without re-reading Secrets or re-parsing YAML.
 
@@ -211,7 +212,7 @@ For non-kubernetes types, the function accesses `cred.CredentialSpec` — minima
 
 For a `kubernetes` credential:
 1. Read `cred.KubeConfig.Clusters` (already parsed and validated)
-2. Emit a proxy route per cluster server hostname with injector type `"kubernetes"` and the kubeconfig file path
+2. Emit a proxy route per cluster with domain set to `hostname:port` (e.g., `api.example.com:6443`) — including port enables `MatchRoute` to disambiguate clusters on the same hostname
 3. The `domain` field on `CredentialSpec` is left empty — domains are derived from `kubeconfigData.Clusters`
 
 ### Deployment Patching (`configureProxyForCredentials`)
@@ -359,9 +360,11 @@ The original kubeconfig Secret is user-managed and mounted directly (not copied)
 12. Implement `KubernetesInjector` in `internal/proxy/injector_kubernetes.go`
 13. Register in `NewInjector()` factory
 14. Add `kubeconfigPath` field to proxy `Route` struct and controller-side `proxyRoute` struct
-15. Run `make manifests generate`
-16. Unit tests for all new code paths
-17. Integration tests with envtest
+15. Update `MatchRoute` for port-aware matching — compare `hostname:port` when a route's domain includes a port (e.g., `api.example.com:6443`); preserve existing port-stripping behavior for LLM routes that use bare hostnames
+16. Unit tests for `MatchRoute` port-aware matching (hostname:port collisions, e.g., `api.example.com:6443` vs `:8443`)
+17. Run `make manifests generate`
+18. Unit tests for all new code paths
+19. Integration tests with envtest
 
 ### Phase 2: Future Enhancements
 
