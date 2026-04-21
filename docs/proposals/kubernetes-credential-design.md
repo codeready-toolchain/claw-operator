@@ -155,7 +155,9 @@ The operator generates:
 
 The gateway pod's egress is restricted to the proxy only — it cannot reach any API server directly. This is the critical security property.
 
-The proxy's egress NetworkPolicy currently allows port 443 to `0.0.0.0/0`. The operator dynamically adds any non-443 ports parsed from the kubeconfig's cluster server URLs (e.g., 6443). This follows the same in-memory kustomize object patching pattern as `injectRouteHostIntoConfigMap`.
+The proxy's egress NetworkPolicy currently allows port 443 to `0.0.0.0/0` (no destination constraint — LLM APIs sit behind CDNs with dynamic IPs). The operator dynamically adds any non-443 ports parsed from the kubeconfig's cluster server URLs (e.g., 6443) to the same scope. This follows the same in-memory kustomize object patching pattern as `injectRouteHostIntoConfigMap`.
+
+**Residual risk:** Adding ports to `0.0.0.0/0` is a marginal expansion on an already wide-open baseline. The real L7 security boundary is the proxy itself — only configured routes are forwarded, everything else returns 403. Platforms that need tighter network controls can layer CNI-specific policies (e.g., Cilium FQDN-based egress) on top.
 
 ### Token Refresh
 
@@ -267,9 +269,9 @@ type KubernetesInjector struct {
 }
 ```
 
-- Parses the kubeconfig once on startup, builds a `hostname:port` → token map
+- Parses the kubeconfig once on startup, builds a `hostname:port` → token map. Both map construction and `Inject(req)` lookup apply the same normalization: default port 443 for HTTPS when omitted (e.g., `https://api.example.com` → `api.example.com:443`)
 - No file watching — token rotation is handled by pod restart via `stampSecretVersionAnnotation` (same as all other credential types)
-- `Inject(req)`: look up the token for `req.URL.Host`, set `Authorization: Bearer <token>`
+- `Inject(req)`: normalize `req.URL.Host` to `hostname:port`, look up the token, set `Authorization: Bearer <token>`
 - Registered in `NewInjector()` factory as `"kubernetes"`
 
 ### Proxy Config Route Format
