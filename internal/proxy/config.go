@@ -19,6 +19,7 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 )
@@ -39,6 +40,8 @@ type Route struct {
 	TokenURL       string            `json:"tokenURL,omitempty"`
 	Scopes         []string          `json:"scopes,omitempty"`
 	DefaultHeaders map[string]string `json:"defaultHeaders,omitempty"`
+	KubeconfigPath string            `json:"kubeconfigPath,omitempty"`
+	CACert         string            `json:"caCert,omitempty"`
 }
 
 // Config is the top-level proxy configuration.
@@ -62,21 +65,34 @@ func LoadConfig(path string) (*Config, error) {
 // MatchRoute finds the first route matching the given host.
 // Exact matches are checked first (they appear first in the config by convention),
 // then suffix matches (domains starting with ".").
+// Port-qualified domains (e.g., "api.example.com:6443") match against the full
+// hostname:port from the request. Bare domains use hostname-only matching.
 func (c *Config) MatchRoute(host string) *Route {
-	// Strip port if present
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
+	hostLower := strings.ToLower(host)
+
+	// Extract hostname without port (IPv6-safe)
+	hostname := hostLower
+	if h, _, err := net.SplitHostPort(hostLower); err == nil {
+		hostname = h
 	}
-	host = strings.ToLower(host)
 
 	for i := range c.Routes {
 		domain := strings.ToLower(c.Routes[i].Domain)
 		if strings.HasPrefix(domain, ".") {
-			if strings.HasSuffix(host, domain) || host == domain[1:] {
+			// Suffix match always uses hostname only
+			if strings.HasSuffix(hostname, domain) || hostname == domain[1:] {
 				return &c.Routes[i]
 			}
-		} else if host == domain {
-			return &c.Routes[i]
+		} else if _, _, err := net.SplitHostPort(domain); err == nil {
+			// Port-qualified domain: match against full host:port
+			if hostLower == domain {
+				return &c.Routes[i]
+			}
+		} else {
+			// Bare domain: match hostname only
+			if hostname == domain {
+				return &c.Routes[i]
+			}
 		}
 	}
 	return nil

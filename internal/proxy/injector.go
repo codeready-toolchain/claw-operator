@@ -19,6 +19,7 @@ package proxy
 import (
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // Injector injects credentials into an HTTP request.
@@ -34,12 +35,21 @@ var authHeaders = []string{
 	"X-Api-Key",
 	"X-Goog-Api-Key",
 	"Proxy-Authorization",
+	"Impersonate-User",
+	"Impersonate-Group",
+	"Impersonate-Uid",
 }
 
-// StripAuthHeaders removes all known auth headers from the request.
+// StripAuthHeaders removes all known auth and impersonation headers from the request.
 func StripAuthHeaders(req *http.Request) {
 	for _, h := range authHeaders {
 		req.Header.Del(h)
+	}
+	// Strip any Impersonate-Extra-* headers (variable suffix)
+	for key := range req.Header {
+		if strings.HasPrefix(strings.ToLower(key), "impersonate-extra-") {
+			req.Header.Del(key)
+		}
 	}
 }
 
@@ -58,6 +68,8 @@ func NewInjector(route *Route) (Injector, error) {
 		return NewPathTokenInjector(route)
 	case "oauth2":
 		return NewOAuth2Injector(route)
+	case "kubernetes":
+		return NewKubernetesInjector(route)
 	default:
 		return nil, fmt.Errorf("unknown injector type: %s", route.Injector)
 	}

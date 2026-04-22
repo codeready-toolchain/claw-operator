@@ -89,7 +89,7 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -132,7 +132,7 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig

@@ -69,6 +69,8 @@ spec:
         env:
           - name: PROXY_IMAGE
             value: claw-proxy:latest
+          - name: KUBECTL_IMAGE
+            value: quay.io/openshift/origin-cli:4.21
         ports: []
         securityContext:
           allowPrivilegeEscalation: false

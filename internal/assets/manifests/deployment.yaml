@@ -25,7 +25,6 @@ spec:
           image: ghcr.io/openclaw/openclaw:slim
           imagePullPolicy: IfNotPresent
           securityContext:
-            runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
@@ -37,24 +36,19 @@ spec:
             - |
               set -e
               cp -r /app/dist/. /patched-dist/
-              candidates=$(grep -rl 'fetchWithWebToolsNetworkGuard({' /patched-dist --include='*.js' 2>/dev/null || true)
-              if [ -z "$candidates" ]; then
-                echo "[proxy-patch] ERROR: no files contain fetchWithWebToolsNetworkGuard({ — upstream may have changed" >&2
+              patched=0
+              guard_pattern='mode[[:space:]]*===[[:space:]]*GUARDED_FETCH_MODE\.TRUSTED_ENV_PROXY[[:space:]]*&&[[:space:]]*hasProxyEnvConfigured\(\)'
+              guard_files=$(grep -rEl "$guard_pattern" /patched-dist --include='*.js' 2>/dev/null || true)
+              if [ -z "$guard_files" ]; then
+                echo "[proxy-patch] ERROR: no files contain SSRF guard conditional — upstream may have changed" >&2
                 exit 1
               fi
-              patched=0
-              for file in $candidates; do
-                if ! grep -q 'useEnvProxy:true' "$file" 2>/dev/null; then
-                  sed -i 's|fetchWithWebToolsNetworkGuard({|fetchWithWebToolsNetworkGuard({useEnvProxy:true,|g' "$file"
-                  echo "[proxy-patch] Patched: $file"
-                  patched=$((patched + 1))
-                fi
+              for file in $guard_files; do
+                sed -Ei "s|$guard_pattern|hasProxyEnvConfigured()|g" "$file"
+                echo "[proxy-patch] Patched SSRF guard: $file"
+                patched=$((patched + 1))
               done
-              if [ "$patched" -eq 0 ]; then
-                echo "[proxy-patch] All files already patched"
-              else
-                echo "[proxy-patch] Patched $patched file(s)"
-              fi
+              echo "[proxy-patch] Patched $patched file(s)"
           resources:
             requests:
               memory: 128Mi
@@ -69,7 +63,6 @@ spec:
           image: mirror.gcr.io/library/busybox:1.37
           imagePullPolicy: IfNotPresent
           securityContext:
-            runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
@@ -179,7 +172,6 @@ spec:
               mountPath: /etc/proxy-ca
               readOnly: true
           securityContext:
-            runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:

@@ -22,9 +22,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -32,6 +34,36 @@ import (
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
+
+// kubeconfigCluster holds parsed cluster info from a kubeconfig.
+type kubeconfigCluster struct {
+	Name     string
+	Server   string
+	Hostname string
+	Port     string
+	CAData   []byte
+}
+
+// kubeconfigContext holds parsed context info from a kubeconfig.
+type kubeconfigContext struct {
+	Name      string
+	Cluster   string
+	Namespace string
+	Current   bool
+}
+
+// kubeconfigData holds all parsed data from a kubeconfig needed by downstream functions.
+type kubeconfigData struct {
+	Clusters []kubeconfigCluster
+	Contexts []kubeconfigContext
+	RawBytes []byte
+}
+
+// resolvedCredential wraps a CredentialSpec with parsed kubeconfig data (non-nil for kubernetes type only).
+type resolvedCredential struct {
+	clawv1alpha1.CredentialSpec
+	KubeConfig *kubeconfigData
+}
 
 // generateGatewayToken generates a cryptographically secure random token
 // using crypto/rand. Returns a 64-character hex string (32 random bytes).
@@ -119,14 +151,17 @@ var knownProviders = map[string]bool{
 	"openrouter": true,
 }
 
-// validateCredentials validates all credential entries: checks that referenced Secrets exist,
-// that type-specific configuration is present, and that provider values are valid and unique.
-// Returns an error describing all failures.
-func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instance *clawv1alpha1.Claw) error {
+// resolveCredentials validates all credential entries and returns resolved credentials
+// with parsed data (e.g., kubeconfig). Checks that referenced Secrets exist, that
+// type-specific configuration is present, and that provider values are valid and unique.
+func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instance *clawv1alpha1.Claw) ([]resolvedCredential, error) {
 	var errs []error
+	var resolved []resolvedCredential
 	seenProviders := map[string]string{} // provider -> credential name
 
 	for _, cred := range instance.Spec.Credentials {
+		rc := resolvedCredential{CredentialSpec: cred}
+
 		// Validate SecretRef exists for types that require it
 		if cred.Type != clawv1alpha1.CredentialTypeNone {
 			if cred.SecretRef == nil {
@@ -142,8 +177,19 @@ func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instan
 				}
 				continue
 			}
-			if _, ok := secret.Data[cred.SecretRef.Key]; !ok {
+			data, ok := secret.Data[cred.SecretRef.Key]
+			if !ok {
 				errs = append(errs, fmt.Errorf("credential %q: key %q not found in Secret %q", cred.Name, cred.SecretRef.Key, cred.SecretRef.Name))
+				continue
+			}
+
+			if cred.Type == clawv1alpha1.CredentialTypeKubernetes {
+				kd, err := parseAndValidateKubeconfig(data)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("credential %q: %w", cred.Name, err))
+					continue
+				}
+				rc.KubeConfig = kd
 			}
 		}
 
@@ -178,10 +224,206 @@ func (r *ClawResourceReconciler) validateCredentials(ctx context.Context, instan
 				errs = append(errs, fmt.Errorf("credential %q: oauth2 config is required for type oauth2", cred.Name))
 			}
 		}
+
+		resolved = append(resolved, rc)
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("credential validation failed: %w", errors.Join(errs...))
+		return nil, fmt.Errorf("credential validation failed: %w", errors.Join(errs...))
 	}
+	return resolved, nil
+}
+
+// parseAndValidateKubeconfig parses kubeconfig bytes and validates that all users
+// use token-based auth. Returns extracted cluster and context metadata.
+func parseAndValidateKubeconfig(data []byte) (*kubeconfigData, error) {
+	cfg, err := clientcmd.Load(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse kubeconfig: %w", err)
+	}
+
+	// Validate all users use inline token auth only — reject file references and
+	// other auth mechanisms that won't work inside the proxy container.
+	for userName, authInfo := range cfg.AuthInfos {
+		if len(authInfo.ClientCertificateData) > 0 || authInfo.ClientCertificate != "" {
+			return nil, fmt.Errorf("user %q uses client certificate auth (not supported, use token auth)", userName)
+		}
+		if authInfo.Exec != nil {
+			return nil, fmt.Errorf("user %q uses exec-based auth (not supported, use token auth)", userName)
+		}
+		if authInfo.AuthProvider != nil {
+			return nil, fmt.Errorf("user %q uses auth provider (not supported, use token auth)", userName)
+		}
+		if authInfo.TokenFile != "" {
+			return nil, fmt.Errorf("user %q uses token-file auth (not supported, inline the token directly)", userName)
+		}
+		if authInfo.Username != "" || authInfo.Password != "" {
+			return nil, fmt.Errorf("user %q uses basic auth (not supported, use token auth)", userName)
+		}
+		if authInfo.Token == "" {
+			return nil, fmt.Errorf("user %q has no token configured", userName)
+		}
+	}
+
+	// Parse clusters and validate server URLs
+	serverTokens := map[string]string{} // "hostname:port" -> token (for uniqueness check)
+	var clusters []kubeconfigCluster
+	for clusterName, cluster := range cfg.Clusters {
+		if cluster.Server == "" {
+			return nil, fmt.Errorf("cluster %q has no server URL", clusterName)
+		}
+		if cluster.CertificateAuthority != "" {
+			return nil, fmt.Errorf("cluster %q uses certificate-authority file path (not supported, "+
+				"inline the CA with certificate-authority-data instead)", clusterName)
+		}
+		hostname, port, err := parseServerURL(cluster.Server)
+		if err != nil {
+			return nil, fmt.Errorf("cluster %q: %w", clusterName, err)
+		}
+		clusters = append(clusters, kubeconfigCluster{
+			Name:     clusterName,
+			Server:   cluster.Server,
+			Hostname: hostname,
+			Port:     port,
+			CAData:   cluster.CertificateAuthorityData,
+		})
+	}
+
+	// Validate one-token-per-server: build server -> token mapping via contexts
+	for ctxName, ctxInfo := range cfg.Contexts {
+		cluster, ok := cfg.Clusters[ctxInfo.Cluster]
+		if !ok {
+			continue
+		}
+		authInfo, ok := cfg.AuthInfos[ctxInfo.AuthInfo]
+		if !ok {
+			continue
+		}
+		hostname, port, err := parseServerURL(cluster.Server)
+		if err != nil {
+			continue
+		}
+		key := hostname + ":" + port
+		token := authInfo.Token
+		if existing, seen := serverTokens[key]; seen && existing != token {
+			return nil, fmt.Errorf("context %q: server %s has conflicting tokens from different users "+
+				"(split into separate kubeconfigs or use the same user)", ctxName, key)
+		}
+		serverTokens[key] = token
+	}
+
+	// Parse contexts
+	var contexts []kubeconfigContext
+	for ctxName, ctxInfo := range cfg.Contexts {
+		contexts = append(contexts, kubeconfigContext{
+			Name:      ctxName,
+			Cluster:   ctxInfo.Cluster,
+			Namespace: ctxInfo.Namespace,
+			Current:   ctxName == cfg.CurrentContext,
+		})
+	}
+
+	return &kubeconfigData{
+		Clusters: clusters,
+		Contexts: contexts,
+		RawBytes: data,
+	}, nil
+}
+
+// parseServerURL extracts hostname and port from a Kubernetes API server URL.
+// Defaults port to "443" when not specified.
+func parseServerURL(server string) (string, string, error) {
+	u, err := url.Parse(server)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid server URL %q: %w", server, err)
+	}
+	hostname := u.Hostname()
+	if hostname == "" {
+		return "", "", fmt.Errorf("server URL %q has no hostname", server)
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	return hostname, port, nil
+}
+
+// sanitizeKubeconfig replaces all user tokens with a placeholder and returns
+// the sanitized kubeconfig YAML bytes.
+func sanitizeKubeconfig(rawBytes []byte) ([]byte, error) {
+	cfg, err := clientcmd.Load(rawBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse kubeconfig for sanitization: %w", err)
+	}
+
+	for _, authInfo := range cfg.AuthInfos {
+		if authInfo.Token != "" {
+			authInfo.Token = "proxy-managed-token"
+		}
+		if authInfo.TokenFile != "" {
+			authInfo.TokenFile = ""
+			authInfo.Token = "proxy-managed-token"
+		}
+	}
+
+	return clientcmd.Write(*cfg)
+}
+
+// applySanitizedKubeconfig creates or updates the sanitized kubeconfig ConfigMap
+// for the gateway pod. Only created when a kubernetes credential is present.
+func (r *ClawResourceReconciler) applySanitizedKubeconfig(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) error {
+	var kd *kubeconfigData
+	for i := range resolvedCreds {
+		if resolvedCreds[i].KubeConfig != nil {
+			kd = resolvedCreds[i].KubeConfig
+			break
+		}
+	}
+	if kd == nil {
+		existing := &corev1.ConfigMap{}
+		if err := r.Get(ctx, client.ObjectKey{Name: ClawKubeConfigMapName, Namespace: instance.Namespace}, existing); err == nil {
+			log.FromContext(ctx).Info("Cleaning up orphaned kubeconfig ConfigMap")
+			return r.Delete(ctx, existing)
+		}
+		return nil
+	}
+
+	logger := log.FromContext(ctx)
+
+	sanitized, err := sanitizeKubeconfig(kd.RawBytes)
+	if err != nil {
+		return fmt.Errorf("failed to sanitize kubeconfig: %w", err)
+	}
+
+	cm := &corev1.ConfigMap{}
+	cm.SetName(ClawKubeConfigMapName)
+	cm.SetNamespace(instance.Namespace)
+	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
+	cm.Data = map[string]string{
+		"config": string(sanitized),
+	}
+
+	if err := controllerutil.SetControllerReference(instance, cm, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set controller reference on kubeconfig ConfigMap: %w", err)
+	}
+
+	if err := r.Patch(ctx, cm, client.Apply, &client.PatchOptions{
+		FieldManager: "claw-operator",
+		Force:        ptr.To(true),
+	}); err != nil {
+		return fmt.Errorf("failed to apply kubeconfig ConfigMap: %w", err)
+	}
+
+	logger.Info("Applied sanitized kubeconfig ConfigMap")
 	return nil
+}
+
+// hasKubernetesCredentials returns true if any resolved credential is type kubernetes.
+func hasKubernetesCredentials(creds []resolvedCredential) bool {
+	for i := range creds {
+		if creds[i].Type == clawv1alpha1.CredentialTypeKubernetes {
+			return true
+		}
+	}
+	return false
 }

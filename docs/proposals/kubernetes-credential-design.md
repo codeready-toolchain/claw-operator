@@ -290,7 +290,11 @@ One route per cluster server `hostname:port`. All share the same kubeconfig file
 
 ### Proxy Config Struct Changes
 
-The `Route` struct in `internal/proxy/config.go` needs a new `KubeconfigPath` field. The controller-side `proxyRoute` struct (used in `generateProxyConfig`) needs a corresponding field so that the JSON config can carry the path from the controller to the proxy.
+The `Route` struct in `internal/proxy/config.go` needs a new `KubeconfigPath` field and a `CACert` field. The controller-side `proxyRoute` struct (used in `generateProxyConfig`) needs corresponding fields so that the JSON config can carry the path and CA data from the controller to the proxy.
+
+### Upstream TLS CA Trust
+
+The proxy's transport verifies upstream server TLS certificates. Kubernetes API servers typically use cluster-specific CAs not present in the system trust store (Kind, OpenShift, kubeadm, etc.). The controller passes each kubeconfig cluster's `certificate-authority-data` through the proxy config as a base64-encoded PEM `caCert` field on the route. At startup, `NewServer()` collects all route CA certs into the transport's root CA pool (alongside system CAs) via `buildRootCAPool()`.
 
 ### Auth Header Stripping
 
@@ -346,7 +350,7 @@ The original kubeconfig Secret is user-managed and mounted directly (not copied)
 
 ## Implementation Plan
 
-### Phase 1: CRD + Controller + Proxy Injector
+### Phase 1: CRD + Controller + Proxy Injector - DONE
 
 1. Add `CredentialTypeKubernetes` to CRD types + enum marker
 2. Refactor `validateCredentials` → `resolveCredentials` returning `[]resolvedCredential` (all existing tests updated to use new signature)

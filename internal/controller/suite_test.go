@@ -309,6 +309,15 @@ func testCredentialsMITMOnly() []clawv1alpha1.CredentialSpec {
 	}
 }
 
+// toResolved wraps a slice of CredentialSpec into resolvedCredential with nil KubeConfig.
+func toResolved(specs []clawv1alpha1.CredentialSpec) []resolvedCredential {
+	resolved := make([]resolvedCredential, len(specs))
+	for i, s := range specs {
+		resolved[i] = resolvedCredential{CredentialSpec: s}
+	}
+	return resolved
+}
+
 // createClawReconciler creates a ClawResourceReconciler for testing.
 func createClawReconciler() *ClawResourceReconciler {
 	return &ClawResourceReconciler{

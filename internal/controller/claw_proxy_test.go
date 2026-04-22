@@ -173,7 +173,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -202,7 +202,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -228,7 +228,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -257,7 +257,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -290,7 +290,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -310,7 +310,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -336,7 +336,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -365,7 +365,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -395,7 +395,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -420,7 +420,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -447,7 +447,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -477,7 +477,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -491,7 +491,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 func TestBuiltinPassthroughDomains(t *testing.T) {
 	t.Run("should include openrouter.ai as none route with no credentials", func(t *testing.T) {
-		data, err := generateProxyConfig(nil)
+		data, err := generateProxyConfig(nil) //nolint:staticcheck
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -515,7 +515,7 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(credentials)
+		data, err := generateProxyConfig(toResolved(credentials))
 		require.NoError(t, err)
 
 		var cfg proxyConfig

@@ -20,6 +20,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"log/slog"
@@ -27,7 +28,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/elazarl/goproxy"
@@ -62,10 +62,12 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 
 	proxy := goproxy.NewProxyHttpServer()
 
+	rootCAs := buildRootCAPool(cfg, logger)
+
 	// Override goproxy's default transport which uses InsecureSkipVerify: true.
 	// We MUST verify upstream server TLS certificates to prevent credential theft via MITM.
 	proxy.Tr = &http.Transport{
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: rootCAs},
 		DialContext: (&net.Dialer{
 			Timeout: 15 * time.Second,
 		}).DialContext,
@@ -88,27 +90,25 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 
 	proxy.OnRequest().HandleConnectFunc(
 		func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-			hostname := stripPort(host)
-			route := cfg.MatchRoute(hostname)
+			route := cfg.MatchRoute(host)
 			if route == nil {
-				logger.Warn("blocked CONNECT to unknown domain", "host", hostname)
+				logger.Warn("blocked CONNECT to unknown domain", "host", host)
 				ctx.Resp = goproxy.NewResponse(
 					ctx.Req, goproxy.ContentTypeText, http.StatusForbidden,
 					`{"error":"domain not allowed"}`,
 				)
 				return rejectConnect, host
 			}
-			logger.Debug("CONNECT allowed", "host", hostname)
+			logger.Debug("CONNECT allowed", "host", host)
 			return mitmConnect, host
 		},
 	)
 
 	proxy.OnRequest().DoFunc(
 		func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-			hostname := stripPort(req.URL.Host)
-			route := cfg.MatchRoute(hostname)
+			route := cfg.MatchRoute(req.URL.Host)
 			if route == nil {
-				logger.Warn("blocked request to unknown domain", "host", hostname)
+				logger.Warn("blocked request to unknown domain", "host", req.URL.Host)
 				return req, goproxy.NewResponse(
 					req, goproxy.ContentTypeText, http.StatusForbidden,
 					`{"error":"domain not allowed"}`,
@@ -254,6 +254,35 @@ func (s *Server) serveGateway(w http.ResponseWriter, r *http.Request, route *Rou
 	gw.ServeHTTP(w, r)
 }
 
+// buildRootCAPool creates an x509.CertPool containing the system CAs plus any
+// route-specific CAs (e.g., Kubernetes API server CAs from kubeconfig). This
+// allows the proxy to verify upstream TLS for servers with non-public CAs.
+func buildRootCAPool(cfg *Config, logger *slog.Logger) *x509.CertPool {
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		logger.Warn("failed to load system cert pool, using empty pool", "error", err)
+		pool = x509.NewCertPool()
+	}
+
+	for i := range cfg.Routes {
+		if cfg.Routes[i].CACert == "" {
+			continue
+		}
+		pemBytes, err := base64.StdEncoding.DecodeString(cfg.Routes[i].CACert)
+		if err != nil {
+			logger.Error("failed to base64-decode route CA cert", "domain", cfg.Routes[i].Domain, "error", err)
+			continue
+		}
+		if pool.AppendCertsFromPEM(pemBytes) {
+			logger.Info("loaded route CA cert", "domain", cfg.Routes[i].Domain)
+		} else {
+			logger.Error("failed to parse route CA cert PEM", "domain", cfg.Routes[i].Domain)
+		}
+	}
+
+	return pool
+}
+
 func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	certBlock, _ := pem.Decode(certPEM)
 	if certBlock == nil {
@@ -291,12 +320,4 @@ func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, erro
 	}
 
 	return cert, key, nil
-}
-
-func stripPort(hostPort string) string {
-	host, _, err := net.SplitHostPort(hostPort)
-	if err != nil {
-		return strings.ToLower(hostPort)
-	}
-	return strings.ToLower(host)
 }

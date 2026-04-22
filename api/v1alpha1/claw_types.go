@@ -21,16 +21,17 @@ import (
 )
 
 // CredentialType selects the credential injection mechanism used by the proxy.
-// +kubebuilder:validation:Enum=apiKey;bearer;gcp;pathToken;oauth2;none
+// +kubebuilder:validation:Enum=apiKey;bearer;gcp;pathToken;oauth2;none;kubernetes
 type CredentialType string
 
 const (
-	CredentialTypeAPIKey    CredentialType = "apiKey"
-	CredentialTypeBearer    CredentialType = "bearer"
-	CredentialTypeGCP       CredentialType = "gcp"
-	CredentialTypePathToken CredentialType = "pathToken"
-	CredentialTypeOAuth2    CredentialType = "oauth2"
-	CredentialTypeNone      CredentialType = "none"
+	CredentialTypeAPIKey     CredentialType = "apiKey"
+	CredentialTypeBearer     CredentialType = "bearer"
+	CredentialTypeGCP        CredentialType = "gcp"
+	CredentialTypePathToken  CredentialType = "pathToken"
+	CredentialTypeOAuth2     CredentialType = "oauth2"
+	CredentialTypeNone       CredentialType = "none"
+	CredentialTypeKubernetes CredentialType = "kubernetes"
 )
 
 // Condition types for Claw status.

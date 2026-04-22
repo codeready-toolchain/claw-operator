@@ -15,7 +15,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 **Spec Fields:**
 - `credentials` ([]CredentialSpec, optional): Array of credential configurations for proxy credential injection per domain. Each entry defines a credential with:
   - `name` (string, required, minLength=1): Unique identifier for this credential
-  - `type` (CredentialType, required): Credential injection mechanism. Enum: `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `none`
+  - `type` (CredentialType, required): Credential injection mechanism. Enum: `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `none`, `kubernetes`
   - `secretRef` (SecretRef, optional): Reference to Kubernetes Secret holding credential value. Required for all types except `none`. SecretRef has fields `name` (Secret name, minLength=1) and `key` (data key, minLength=1)
   - `domain` (string, optional): Domain to match against request Host header. Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot). Optional for known providers (google, anthropic) and gcp type — the operator infers the default
   - `defaultHeaders` (map[string]string, optional): Headers injected on every proxied request (e.g., "anthropic-version: 2023-06-01")
@@ -50,6 +50,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 - `CredentialTypePathToken = "pathToken"` — Token injection into URL path
 - `CredentialTypeOAuth2 = "oauth2"` — Client credentials token exchange
 - `CredentialTypeNone = "none"` — Proxy allowlist, no authentication
+- `CredentialTypeKubernetes = "kubernetes"` — Kubernetes API server auth via kubeconfig (token-based only). The Secret holds a standard kubeconfig file; the operator parses it to extract cluster servers, contexts, and tokens. A sanitized kubeconfig (tokens replaced with placeholder) is mounted on the gateway pod. The proxy injects real tokens per `hostname:port`
 
 **Validation Rules:**
 - CE validation ensures type-specific config fields are present when required
@@ -124,6 +125,7 @@ The operator uses a **single unified controller** that manages all resources usi
 - Gracefully skips resources whose CRDs aren't registered (e.g., Route on vanilla Kubernetes)
 - Updates status conditions (Ready, CredentialsResolved, ProxyConfigured) based on Deployment readiness and credential validation
 - Supports proxy image override via `ProxyImage` field (set from `PROXY_IMAGE` env var on the manager)
+- Supports kubectl image override via `KubectlImage` field (set from `KUBECTL_IMAGE` env var on the manager, default `bitnami/kubectl:1.30`); when kubernetes credentials are present, adds an init container that copies kubectl into a shared emptyDir volume mounted at `/opt/kube-tools` on the gateway container
 - Configures proxy with multi-credential support for different LLM API domains
 
 **Key benefits:**
@@ -154,15 +156,25 @@ PHASE 1: Gateway Secret
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply Secret (Patch with Apply)
   ↓
-3b. resolveProviderDefaults for each credential
-   ├─ Known apiKey providers (google, anthropic): fill domain and apiKey.header if not set
-   ├─ GCP credentials: fill domain ".googleapis.com" if not set
-   ├─ Explicit values are preserved (escape hatch)
-   └─ Error if domain or apiKey still missing after defaults
+3b. resolveAndApplyCredentials(ctx, instance)
+   ├─ resolveProviderDefaults for each credential
+   │  ├─ Known apiKey providers (google, anthropic): fill domain and apiKey.header if not set
+   │  ├─ GCP credentials: fill domain ".googleapis.com" if not set
+   │  ├─ Kubernetes credentials: skip domain requirement (domains from kubeconfig)
+   │  ├─ Explicit values are preserved (escape hatch)
+   │  └─ Error if domain or apiKey still missing after defaults
+   ├─ resolveCredentials: validate Secrets, parse kubeconfig for kubernetes type
+   │  └─ Returns []resolvedCredential with parsed kubeconfigData
+   ├─ applySanitizedKubeconfig (if any kubernetes credentials):
+   │  ├─ Replace all tokens with "proxy-managed-token" placeholder
+   │  ├─ Create/update ConfigMap "claw-kube-config" with sanitized kubeconfig
+   │  └─ Set owner reference for garbage collection
+   └─ applyProxyCA: generate self-signed ECDSA CA for MITM proxy
   ↓
-3c. applyProxyResources(ctx, instance)
+3c. applyProxyResources(ctx, instance, resolvedCreds)
    ├─ generateProxyConfig: build proxy config JSON (routes, injectors, gateway paths)
-   │  └─ usesVertexSDK credentials skip gateway route (no PathPrefix/Upstream)
+   │  ├─ usesVertexSDK credentials skip gateway route (no PathPrefix/Upstream)
+   │  └─ Kubernetes routes include `caCert` (base64-encoded CA PEM) from kubeconfig's `certificate-authority-data`
    ├─ applyProxyConfigMap: server-side apply proxy config ConfigMap
    ├─ applyVertexADCConfigMap (if any Vertex SDK credentials exist):
    │  ├─ Create ConfigMap "claw-vertex-adc" with stub authorized_user ADC JSON
@@ -199,6 +211,12 @@ PHASE 3: ConfigMap Injection and Remaining Resources
  │  ├─ Add GOOGLE_APPLICATION_CREDENTIALS=/etc/vertex-adc/adc.json env var to gateway container
  │  ├─ Add ANTHROPIC_VERTEX_PROJECT_ID env var (from GCP config)
  │  └─ Mount claw-vertex-adc ConfigMap as read-only volume at /etc/vertex-adc/
+   ├─ configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage) — when kubernetes credentials exist:
+ │  ├─ Add KUBECONFIG=/etc/kube/config env var to gateway container
+ │  ├─ Add PATH env var prepending /opt/kube-tools to standard PATH
+ │  ├─ Mount claw-kube-config ConfigMap as read-only volume at /etc/kube/
+ │  ├─ Add emptyDir volume (kubectl-bin) mounted at /opt/kube-tools on gateway
+ │  └─ Add init-kubectl init container that copies kubectl binary from kubectlImage to shared volume
  ├─ stampSecretVersionAnnotation(ctx, objects, instance)
  │  ├─ Fetch user's Secrets to get their ResourceVersions
  │  ├─ Find claw-proxy Deployment in parsed objects
@@ -220,6 +238,16 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ remapVertexProviderModels: rename "anthropic/..." model entries to "anthropic-vertex/..." when vertex variant exists but base provider does not
    ├─ filterAgentDefaultsForProviders: remove model entries whose provider is not in the injected providers map
    └─ Credentials without Provider are MITM-only (no provider entry)
+  ↓
+7c. injectKubernetesIntoAgentsMd(objects, resolvedCreds)
+   ├─ Collect contexts from all kubernetes credentials
+   ├─ Append "## Kubernetes Access" section to AGENTS.md in claw-config ConfigMap
+   └─ No-op when no kubernetes credentials present
+  ↓
+7d. injectKubePortsIntoNetworkPolicy(objects, resolvedCreds)
+   ├─ Collect unique non-443 ports from kubernetes credential clusters
+   ├─ Append port entries to claw-proxy-egress NetworkPolicy egress[0].ports[]
+   └─ No-op when all ports are 443 or no kubernetes credentials present
   ↓
 8. Filter for remaining resources (kind != "Route")
   ↓
@@ -261,10 +289,19 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in ConfigMap with Route host (or localhost fallback)
 - `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `openclaw.json`. Gateway-routed providers get a baseUrl through the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since MITM proxy handles credential injection transparently
 - `remapVertexProviderModels()` — renames model entries from "provider/model" to "provider-vertex/model" when a Vertex variant exists but the base provider does not (e.g., "anthropic/claude-sonnet-4-6" → "anthropic-vertex/claude-sonnet-4-6")
-- `resolveProviderDefaults()` — fills missing `domain` and `apiKey` fields for known providers (google, anthropic) before validation. Explicit values are preserved as escape hatch. Returns error if required fields are still missing
+- `resolveAndApplyCredentials()` — orchestrates credential resolution: resolves provider defaults, validates credentials (returning `[]resolvedCredential`), applies sanitized kubeconfig ConfigMap for kubernetes credentials, and applies proxy CA. Extracted from `Reconcile()` to reduce cyclomatic complexity
+- `resolveCredentials()` — validates all credentials and referenced Secrets. For `kubernetes` type, parses kubeconfig with `client-go/tools/clientcmd`, validates token-only auth, extracts cluster/context metadata. Returns `[]resolvedCredential` (replaces former `validateCredentials`)
+- `parseAndValidateKubeconfig()` — parses kubeconfig bytes, validates all users use token-based auth (rejects client certs, exec, auth provider), validates unique token per server `hostname:port`, returns `kubeconfigData`
+- `sanitizeKubeconfig()` — replaces all user tokens with `"proxy-managed-token"` placeholder, clears `TokenFile` fields, preserves clusters/contexts/namespaces/CA data
+- `applySanitizedKubeconfig()` — creates/updates the `claw-kube-config` ConfigMap with sanitized kubeconfig. Server-side apply with owner reference
+- `hasKubernetesCredentials()` — returns true when any resolved credential has type `kubernetes`
+- `resolveProviderDefaults()` — fills missing `domain` and `apiKey` fields for known providers (google, anthropic) before validation. Skips domain requirement for `kubernetes` type. Explicit values are preserved as escape hatch. Returns error if required fields are still missing
 - `resolveProviderInfo()` — returns upstream host and base path for a credential's provider. GCP credentials route through Vertex AI with the provider name as the publisher (works for google, anthropic, meta, etc.). Google + apiKey uses Gemini REST API. All others fall back to domain
 - `usesVertexSDK()` — returns true when a credential should use the native Vertex AI SDK (type == gcp && provider != "" && provider != "google")
 - `configureClawDeploymentForVertex()` — adds GOOGLE_APPLICATION_CREDENTIALS, ANTHROPIC_VERTEX_PROJECT_ID env vars and stub ADC volume mount to the claw deployment when Vertex SDK credentials exist
+- `configureClawDeploymentForKubernetes()` — when kubernetes credentials exist: mounts the sanitized kubeconfig ConfigMap (`claw-kube-config`) at `/etc/kube/`, sets `KUBECONFIG=/etc/kube/config` and `PATH` env vars, adds an `init-kubectl` init container that copies kubectl from the configured image into a shared emptyDir volume mounted at `/opt/kube-tools`
+- `injectKubePortsIntoNetworkPolicy()` — adds non-443 ports from kubeconfig cluster server URLs to the `claw-proxy-egress` NetworkPolicy. In-memory patching before apply, same pattern as `injectRouteHostIntoConfigMap`
+- `injectKubernetesIntoAgentsMd()` — appends a "Kubernetes Access" section to the AGENTS.md content in `claw-config` ConfigMap listing available contexts, clusters, namespaces, and current-context
 - `applyVertexADCConfigMap()` — creates/updates the stub ADC ConfigMap (claw-vertex-adc) with dummy authorized_user credentials for Vertex SDK token refresh bootstrap. Only created when Vertex SDK credentials exist
 - `applyProxyResources()` — generates proxy config, applies proxy ConfigMap and Vertex ADC ConfigMap. Returns proxy config JSON for hash stamping
 - `applyResources()` — applies list of unstructured objects using server-side apply
@@ -289,6 +326,9 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `GatewayTokenKeyName = "token"` — data key for gateway token in gateway Secret
 - `ClawGatewayContainerName = "gateway"` — container name in the claw deployment
 - `ClawVertexADCConfigMapName = "claw-vertex-adc"` — ConfigMap containing stub ADC for Vertex AI SDK
+- `ClawKubeConfigMapName = "claw-kube-config"` — ConfigMap containing sanitized kubeconfig for kubernetes credentials
+- `ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"` — proxy egress NetworkPolicy (dynamically patched for non-443 kubernetes ports)
+- `DefaultKubectlImage = "quay.io/openshift/origin-cli:4.21"` — default image for the init-kubectl init container; copies `oc` and `kubectl` to shared volume (overridable via `KUBECTL_IMAGE` env var)
 
 **NodePairingRequestApprovalReconciler** (`internal/controller/nodepairingrequestapproval_controller.go`):
 - Reconciles `NodePairingRequestApproval` CRs

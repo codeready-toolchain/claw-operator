@@ -24,6 +24,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -147,6 +148,55 @@ func TestNewServer(t *testing.T) {
 		srv, err := NewServer(cfg, certPEM, keyPEM, logger)
 		require.NoError(t, err)
 		assert.NotNil(t, srv.proxy)
+	})
+}
+
+func TestBuildRootCAPool(t *testing.T) {
+	logger := slog.Default()
+
+	t.Run("should include system CAs by default", func(t *testing.T) {
+		cfg := &Config{Routes: []Route{}}
+		pool := buildRootCAPool(cfg, logger)
+		require.NotNil(t, pool)
+	})
+
+	t.Run("should add route CA certs to pool", func(t *testing.T) {
+		caPEM, _ := generateTestCA(t)
+		encoded := base64.StdEncoding.EncodeToString(caPEM)
+
+		cfg := &Config{
+			Routes: []Route{
+				{Domain: "api.example.com:6443", Injector: "none", CACert: encoded},
+			},
+		}
+		pool := buildRootCAPool(cfg, logger)
+		require.NotNil(t, pool)
+
+		certPEM, keyPEM := generateTestCA(t)
+		srv, err := NewServer(cfg, certPEM, keyPEM, logger)
+		require.NoError(t, err)
+		require.NotNil(t, srv)
+	})
+
+	t.Run("should skip invalid base64 without crashing", func(t *testing.T) {
+		cfg := &Config{
+			Routes: []Route{
+				{Domain: "bad.example.com:6443", Injector: "kubernetes", CACert: "not-valid-base64!!!"},
+			},
+		}
+		pool := buildRootCAPool(cfg, logger)
+		require.NotNil(t, pool)
+	})
+
+	t.Run("should skip non-PEM content without crashing", func(t *testing.T) {
+		encoded := base64.StdEncoding.EncodeToString([]byte("not a PEM cert"))
+		cfg := &Config{
+			Routes: []Route{
+				{Domain: "bad.example.com:6443", Injector: "kubernetes", CACert: encoded},
+			},
+		}
+		pool := buildRootCAPool(cfg, logger)
+		require.NotNil(t, pool)
 	})
 }
 
