@@ -777,9 +777,14 @@ users:
 
 			// 7. Create Secret with kubeconfig
 			t.Log("creating kubeconfig Secret")
-			kubeconfigFile := filepath.Join("/tmp", "e2e-kubeconfig.yaml")
-			err = os.WriteFile(kubeconfigFile, []byte(kubeconfigYAML), os.FileMode(0o644))
+			f, err := os.CreateTemp("", "e2e-kubeconfig-*.yaml")
 			require.NoError(t, err)
+			kubeconfigFile := f.Name()
+			t.Cleanup(func() { os.Remove(kubeconfigFile) })
+			_, err = f.Write([]byte(kubeconfigYAML))
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+			require.NoError(t, os.Chmod(kubeconfigFile, 0o600))
 
 			cmd = exec.Command("kubectl", "delete", "secret", kubeSecretNm,
 				"-n", userNamespace, "--ignore-not-found")

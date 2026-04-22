@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -140,8 +141,9 @@ func pullAndLoadImage(image, kindCluster string) error {
 	tarFile := fmt.Sprintf("tmp/%s.tar", strings.ReplaceAll(
 		strings.ReplaceAll(image, "/", "_"), ":", "_"))
 
-	fmt.Printf("Pulling gateway image %s...\n", image)
-	if err := runStreaming("podman", "pull", "--platform=linux/amd64", image); err != nil {
+	platform := fmt.Sprintf("linux/%s", runtime.GOARCH)
+	fmt.Printf("Pulling gateway image %s (%s)...\n", image, platform)
+	if err := runStreaming("podman", "pull", fmt.Sprintf("--platform=%s", platform), image); err != nil {
 		return fmt.Errorf("pull %s: %w", image, err)
 	}
 
