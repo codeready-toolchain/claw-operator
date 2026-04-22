@@ -70,7 +70,7 @@ spec:
           - name: PROXY_IMAGE
             value: claw-proxy:latest
           - name: KUBECTL_IMAGE
-            value: registry.k8s.io/kubectl:v1.34
+            value: registry.k8s.io/kubectl:v1.34.7
         ports: []
         securityContext:
           allowPrivilegeEscalation: false

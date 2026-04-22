@@ -75,7 +75,7 @@ const (
 	ClawVertexADCConfigMapName       = "claw-vertex-adc"
 	ClawKubeConfigMapName            = "claw-kube-config"
 	ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"
-	DefaultKubectlImage              = "registry.k8s.io/kubectl:v1.34"
+	DefaultKubectlImage              = "registry.k8s.io/kubectl:v1.34.7"
 	// Kubernetes resource kinds
 	RouteKind         = "Route"
 	DeploymentKind    = "Deployment"
