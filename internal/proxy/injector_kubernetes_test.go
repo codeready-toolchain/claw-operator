@@ -203,6 +203,73 @@ func TestKubernetesInjector(t *testing.T) {
 	})
 }
 
+func TestKubernetesInjectorIPv6(t *testing.T) {
+	t.Run("should inject token for IPv6 bracketed host", func(t *testing.T) {
+		path := writeTestKubeconfig(t,
+			map[string]string{"ipv6": "https://[::1]:6443"},
+			map[string]string{"admin": "ipv6-token"},
+			map[string][2]string{"ctx": {"ipv6", "admin"}},
+		)
+
+		inj, err := NewKubernetesInjector(&Route{
+			Domain:         "[::1]:6443",
+			Injector:       "kubernetes",
+			KubeconfigPath: path,
+		})
+		require.NoError(t, err)
+
+		req := &http.Request{
+			URL:    &url.URL{Host: "[::1]:6443"},
+			Header: http.Header{},
+		}
+		require.NoError(t, inj.Inject(req))
+		assert.Equal(t, "Bearer ipv6-token", req.Header.Get("Authorization"))
+	})
+
+	t.Run("should reject empty token at startup", func(t *testing.T) {
+		cfg := clientcmdapi.NewConfig()
+		cfg.Clusters["prod"] = &clientcmdapi.Cluster{Server: "https://api.example.com:6443"}
+		cfg.AuthInfos["empty"] = &clientcmdapi.AuthInfo{Token: ""}
+		cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "prod", AuthInfo: "empty"}
+		data, err := clientcmd.Write(*cfg)
+		require.NoError(t, err)
+
+		f, err := os.CreateTemp("", "kubeconfig-*.yaml")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = os.Remove(f.Name()) })
+		_, err = f.Write(data)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+
+		_, err = NewKubernetesInjector(&Route{
+			Domain:         "api.example.com:6443",
+			Injector:       "kubernetes",
+			KubeconfigPath: f.Name(),
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no token configured")
+	})
+}
+
+func TestNormalizeRequestHost(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"api.example.com:6443", "api.example.com:6443"},
+		{"api.example.com", "api.example.com:443"},
+		{"[::1]:6443", "::1:6443"},
+		{"[2001:db8::1]:8443", "2001:db8::1:8443"},
+		{"API.EXAMPLE.COM:8443", "api.example.com:8443"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeRequestHost(tt.input))
+		})
+	}
+}
+
 func TestNormalizeHost(t *testing.T) {
 	tests := []struct {
 		input string

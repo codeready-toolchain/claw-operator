@@ -103,6 +103,8 @@ func TestMatchRoutePortAware(t *testing.T) {
 			{Domain: "api.example.com:8443", Injector: "kubernetes"},
 			{Domain: "api.example.com", Injector: "bearer"},
 			{Domain: ".googleapis.com", Injector: "api_key"},
+			{Domain: "[::1]:6443", Injector: "kubernetes"},
+			{Domain: "[2001:db8::1]:8443", Injector: "kubernetes"},
 		},
 	}
 
@@ -118,6 +120,9 @@ func TestMatchRoutePortAware(t *testing.T) {
 		{name: "bare domain match without port", host: "api.example.com", wantDom: "api.example.com"},
 		{name: "suffix match still works with port-qualified routes", host: "storage.googleapis.com:443", wantDom: ".googleapis.com"},
 		{name: "no match on wrong port", host: "api.example.com:9999", wantDom: "api.example.com"},
+		{name: "IPv6 loopback with port", host: "[::1]:6443", wantDom: "[::1]:6443"},
+		{name: "IPv6 full address with port", host: "[2001:db8::1]:8443", wantDom: "[2001:db8::1]:8443"},
+		{name: "IPv6 no match on wrong port", host: "[::1]:9999", wantNil: true},
 	}
 
 	for _, tt := range tests {

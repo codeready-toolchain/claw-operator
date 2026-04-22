@@ -37,24 +37,19 @@ spec:
             - |
               set -e
               cp -r /app/dist/. /patched-dist/
-              candidates=$(grep -rl 'fetchWithWebToolsNetworkGuard({' /patched-dist --include='*.js' 2>/dev/null || true)
-              if [ -z "$candidates" ]; then
-                echo "[proxy-patch] ERROR: no files contain fetchWithWebToolsNetworkGuard({ — upstream may have changed" >&2
+              patched=0
+              guard_target='mode === GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY && hasProxyEnvConfigured()'
+              guard_files=$(grep -rl "$guard_target" /patched-dist --include='*.js' 2>/dev/null || true)
+              if [ -z "$guard_files" ]; then
+                echo "[proxy-patch] ERROR: no files contain SSRF guard conditional — upstream may have changed" >&2
                 exit 1
               fi
-              patched=0
-              for file in $candidates; do
-                if ! grep -q 'useEnvProxy:true' "$file" 2>/dev/null; then
-                  sed -i 's|fetchWithWebToolsNetworkGuard({|fetchWithWebToolsNetworkGuard({useEnvProxy:true,|g' "$file"
-                  echo "[proxy-patch] Patched: $file"
-                  patched=$((patched + 1))
-                fi
+              for file in $guard_files; do
+                sed -i "s|$guard_target|hasProxyEnvConfigured()|g" "$file"
+                echo "[proxy-patch] Patched SSRF guard: $file"
+                patched=$((patched + 1))
               done
-              if [ "$patched" -eq 0 ]; then
-                echo "[proxy-patch] All files already patched"
-              else
-                echo "[proxy-patch] Patched $patched file(s)"
-              fi
+              echo "[proxy-patch] Patched $patched file(s)"
           resources:
             requests:
               memory: 128Mi

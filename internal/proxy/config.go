@@ -19,6 +19,7 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 )
@@ -69,10 +70,10 @@ func LoadConfig(path string) (*Config, error) {
 func (c *Config) MatchRoute(host string) *Route {
 	hostLower := strings.ToLower(host)
 
-	// Extract hostname without port for bare domain matching
+	// Extract hostname without port (IPv6-safe)
 	hostname := hostLower
-	if idx := strings.LastIndex(hostname, ":"); idx != -1 {
-		hostname = hostname[:idx]
+	if h, _, err := net.SplitHostPort(hostLower); err == nil {
+		hostname = h
 	}
 
 	for i := range c.Routes {
@@ -82,7 +83,7 @@ func (c *Config) MatchRoute(host string) *Route {
 			if strings.HasSuffix(hostname, domain) || hostname == domain[1:] {
 				return &c.Routes[i]
 			}
-		} else if strings.Contains(domain, ":") {
+		} else if _, _, err := net.SplitHostPort(domain); err == nil {
 			// Port-qualified domain: match against full host:port
 			if hostLower == domain {
 				return &c.Routes[i]

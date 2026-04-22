@@ -18,6 +18,7 @@ package proxy
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,8 +53,8 @@ func NewKubernetesInjector(route *Route) (*KubernetesInjector, error) {
 		clusterServers[name] = cluster.Server
 	}
 
-	// Walk contexts to map server -> token
-	for _, ctx := range cfg.Contexts {
+	// Walk contexts to map server -> token, validating non-empty tokens
+	for ctxName, ctx := range cfg.Contexts {
 		serverURL, ok := clusterServers[ctx.Cluster]
 		if !ok {
 			continue
@@ -61,6 +62,9 @@ func NewKubernetesInjector(route *Route) (*KubernetesInjector, error) {
 		authInfo, ok := cfg.AuthInfos[ctx.AuthInfo]
 		if !ok {
 			continue
+		}
+		if authInfo.Token == "" {
+			return nil, fmt.Errorf("context %q (user %q) has no token configured", ctxName, ctx.AuthInfo)
 		}
 		key := normalizeHost(serverURL)
 		if key == "" {
@@ -78,10 +82,7 @@ func NewKubernetesInjector(route *Route) (*KubernetesInjector, error) {
 // Inject sets the Authorization header with the appropriate Bearer token
 // for the request's target hostname:port.
 func (k *KubernetesInjector) Inject(req *http.Request) error {
-	host := strings.ToLower(req.URL.Host)
-	if !strings.Contains(host, ":") {
-		host += ":443"
-	}
+	host := normalizeRequestHost(req.URL.Host)
 
 	token, ok := k.tokens[host]
 	if !ok {
@@ -95,6 +96,20 @@ func (k *KubernetesInjector) Inject(req *http.Request) error {
 	}
 
 	return nil
+}
+
+// normalizeRequestHost converts a request Host (which may be bracketed IPv6 like
+// "[::1]:6443") into the same "hostname:port" canonical form that normalizeHost
+// produces, so token lookups work for both IPv4 and IPv6.
+func normalizeRequestHost(rawHost string) string {
+	h, port, err := net.SplitHostPort(rawHost)
+	if err != nil {
+		// No port — treat entire value as hostname, default port 443
+		h = rawHost
+		port = "443"
+	}
+	// SplitHostPort strips brackets from IPv6; lowercase for consistency
+	return strings.ToLower(h) + ":" + port
 }
 
 // normalizeHost extracts "hostname:port" from a server URL, defaulting port to "443".

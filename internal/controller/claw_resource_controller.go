@@ -689,11 +689,18 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 		}
 
 		ports, _, _ := unstructured.NestedSlice(httpsRule, "ports")
+
+		sortedPorts := make([]int, 0, len(uniquePorts))
 		for port := range uniquePorts {
 			portInt, err := strconv.Atoi(port)
 			if err != nil {
 				return fmt.Errorf("invalid port %q from kubeconfig: %w", port, err)
 			}
+			sortedPorts = append(sortedPorts, portInt)
+		}
+		sort.Ints(sortedPorts)
+
+		for _, portInt := range sortedPorts {
 			ports = append(ports, map[string]any{
 				"port":     int64(portInt),
 				"protocol": "TCP",

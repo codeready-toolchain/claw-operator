@@ -242,7 +242,8 @@ func parseAndValidateKubeconfig(data []byte) (*kubeconfigData, error) {
 		return nil, fmt.Errorf("failed to parse kubeconfig: %w", err)
 	}
 
-	// Validate all users use token auth only
+	// Validate all users use inline token auth only — reject file references and
+	// other auth mechanisms that won't work inside the proxy container.
 	for userName, authInfo := range cfg.AuthInfos {
 		if len(authInfo.ClientCertificateData) > 0 || authInfo.ClientCertificate != "" {
 			return nil, fmt.Errorf("user %q uses client certificate auth (not supported, use token auth)", userName)
@@ -253,7 +254,13 @@ func parseAndValidateKubeconfig(data []byte) (*kubeconfigData, error) {
 		if authInfo.AuthProvider != nil {
 			return nil, fmt.Errorf("user %q uses auth provider (not supported, use token auth)", userName)
 		}
-		if authInfo.Token == "" && len(authInfo.TokenFile) == 0 {
+		if authInfo.TokenFile != "" {
+			return nil, fmt.Errorf("user %q uses token-file auth (not supported, inline the token directly)", userName)
+		}
+		if authInfo.Username != "" || authInfo.Password != "" {
+			return nil, fmt.Errorf("user %q uses basic auth (not supported, use token auth)", userName)
+		}
+		if authInfo.Token == "" {
 			return nil, fmt.Errorf("user %q has no token configured", userName)
 		}
 	}
@@ -264,6 +271,10 @@ func parseAndValidateKubeconfig(data []byte) (*kubeconfigData, error) {
 	for clusterName, cluster := range cfg.Clusters {
 		if cluster.Server == "" {
 			return nil, fmt.Errorf("cluster %q has no server URL", clusterName)
+		}
+		if cluster.CertificateAuthority != "" {
+			return nil, fmt.Errorf("cluster %q uses certificate-authority file path (not supported, "+
+				"inline the CA with certificate-authority-data instead)", clusterName)
 		}
 		hostname, port, err := parseServerURL(cluster.Server)
 		if err != nil {

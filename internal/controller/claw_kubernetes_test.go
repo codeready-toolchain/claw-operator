@@ -225,7 +225,7 @@ func TestParseAndValidateKubeconfig(t *testing.T) {
 		assert.Equal(t, caData, kd.Clusters[0].CAData)
 	})
 
-	t.Run("should accept tokenFile-based auth", func(t *testing.T) {
+	t.Run("should reject tokenFile-based auth", func(t *testing.T) {
 		cfg := clientcmdapi.NewConfig()
 		cfg.Clusters["c"] = &clientcmdapi.Cluster{Server: "https://api.example.com:6443"}
 		cfg.AuthInfos["u"] = &clientcmdapi.AuthInfo{TokenFile: "/var/run/secrets/token"}
@@ -233,10 +233,38 @@ func TestParseAndValidateKubeconfig(t *testing.T) {
 		data, err := clientcmd.Write(*cfg)
 		require.NoError(t, err)
 
-		kd, err := parseAndValidateKubeconfig(data)
+		_, err = parseAndValidateKubeconfig(data)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "token-file auth")
+	})
+
+	t.Run("should reject basic auth (username/password)", func(t *testing.T) {
+		cfg := clientcmdapi.NewConfig()
+		cfg.Clusters["c"] = &clientcmdapi.Cluster{Server: "https://api.example.com:6443"}
+		cfg.AuthInfos["u"] = &clientcmdapi.AuthInfo{Username: "admin", Password: "secret"}
+		cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "c", AuthInfo: "u"}
+		data, err := clientcmd.Write(*cfg)
 		require.NoError(t, err)
-		require.Len(t, kd.Clusters, 1)
-		assert.Equal(t, "api.example.com", kd.Clusters[0].Hostname)
+
+		_, err = parseAndValidateKubeconfig(data)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "basic auth")
+	})
+
+	t.Run("should reject cluster with certificate-authority file path", func(t *testing.T) {
+		cfg := clientcmdapi.NewConfig()
+		cfg.Clusters["c"] = &clientcmdapi.Cluster{
+			Server:               "https://api.example.com:6443",
+			CertificateAuthority: "/etc/kubernetes/pki/ca.crt",
+		}
+		cfg.AuthInfos["u"] = &clientcmdapi.AuthInfo{Token: "my-token"}
+		cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "c", AuthInfo: "u"}
+		data, err := clientcmd.Write(*cfg)
+		require.NoError(t, err)
+
+		_, err = parseAndValidateKubeconfig(data)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "certificate-authority file path")
 	})
 }
 
