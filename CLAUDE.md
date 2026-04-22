@@ -328,7 +328,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `ClawVertexADCConfigMapName = "claw-vertex-adc"` — ConfigMap containing stub ADC for Vertex AI SDK
 - `ClawKubeConfigMapName = "claw-kube-config"` — ConfigMap containing sanitized kubeconfig for kubernetes credentials
 - `ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"` — proxy egress NetworkPolicy (dynamically patched for non-443 kubernetes ports)
-- `DefaultKubectlImage = "registry.k8s.io/kubectl:v1.34.7"` — default image for the init-kubectl init container (overridable via `KUBECTL_IMAGE` env var)
+- `DefaultKubectlImage = "quay.io/openshift/origin-cli:4.21"` — default image for the init-kubectl init container; copies `oc` and `kubectl` to shared volume (overridable via `KUBECTL_IMAGE` env var)
 
 **NodePairingRequestApprovalReconciler** (`internal/controller/nodepairingrequestapproval_controller.go`):
 - Reconciles `NodePairingRequestApproval` CRs

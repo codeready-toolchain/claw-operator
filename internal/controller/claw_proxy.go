@@ -729,7 +729,7 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 			"name":            "init-kubectl",
 			"image":           kubectlImage,
 			"imagePullPolicy": "IfNotPresent",
-			"command":         []any{"sh", "-c", "cp /bin/kubectl /tools/kubectl"},
+			"command":         []any{"sh", "-c", "cp /usr/bin/oc /usr/bin/kubectl /tools/"},
 			"securityContext": map[string]any{
 				"runAsNonRoot":             true,
 				"allowPrivilegeEscalation": false,
