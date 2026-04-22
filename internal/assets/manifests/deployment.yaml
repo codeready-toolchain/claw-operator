@@ -25,7 +25,6 @@ spec:
           image: ghcr.io/openclaw/openclaw:slim
           imagePullPolicy: IfNotPresent
           securityContext:
-            runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
@@ -64,7 +63,6 @@ spec:
           image: mirror.gcr.io/library/busybox:1.37
           imagePullPolicy: IfNotPresent
           securityContext:
-            runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
@@ -174,7 +172,6 @@ spec:
               mountPath: /etc/proxy-ca
               readOnly: true
           securityContext:
-            runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:

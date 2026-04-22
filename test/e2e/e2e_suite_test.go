@@ -148,6 +148,7 @@ func pullAndLoadImage(image, kindCluster string) error {
 	}
 
 	fmt.Printf("Loading gateway image into Kind cluster...\n")
+	_ = runStreaming("rm", "-f", tarFile)
 	if err := runStreaming("podman", "save", "-o", tarFile, image); err != nil {
 		return fmt.Errorf("save %s: %w", image, err)
 	}

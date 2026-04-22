@@ -638,6 +638,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
+				waitForPVCDeletion(t, userNamespace)
 			})
 
 			t.Log("creating the credential Secret")
@@ -713,6 +714,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "ns", kubeWorkspace, "--ignore-not-found")
 				_, _ = utils.Run(t, cmd)
+				waitForPVCDeletion(t, userNamespace)
 			})
 
 			// 1. Create workspace namespace
@@ -829,18 +831,17 @@ spec:
 				})
 			require.NoError(t, err, "Claw ProxyConfigured did not become True")
 
-			// Wait for proxy pods to be running
-			t.Log("waiting for proxy pod to be running")
-			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+			// Wait for both deployments to be fully available (readiness probes passing)
+			t.Log("waiting for claw-proxy deployment to be available")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
 				func(ctx context.Context) (bool, error) {
-					cmd := exec.Command("kubectl", "get", "pods",
-						"-l", "app=claw-proxy",
-						"-o", "jsonpath={.items[0].status.phase}",
+					cmd := exec.Command("kubectl", "get", "deployment", "claw-proxy",
+						"-o", "jsonpath={.status.availableReplicas}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
-					return err == nil && output == podPhaseRunning, nil
+					return err == nil && output == "1", nil
 				})
-			require.NoError(t, err, "proxy pod did not reach Running phase")
+			require.NoError(t, err, "claw-proxy deployment did not become available")
 
 			// 10. Extract MITM CA cert from claw-proxy-ca Secret
 			t.Log("extracting MITM CA cert")
@@ -1032,4 +1033,16 @@ type tokenRequest struct {
 	Status struct {
 		Token string `json:"token"`
 	} `json:"status"`
+}
+
+func waitForPVCDeletion(t *testing.T, namespace string) {
+	t.Helper()
+	ctx := context.Background()
+	_ = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "pvc", "claw-home-pvc",
+				"-n", namespace, "--no-headers")
+			_, err := utils.Run(t, cmd)
+			return err != nil, nil
+		})
 }
