@@ -69,6 +69,8 @@ spec:
         env:
           - name: PROXY_IMAGE
             value: claw-proxy:latest
+          - name: KUBECTL_IMAGE
+            value: registry.k8s.io/kubectl:v1.34
         ports: []
         securityContext:
           allowPrivilegeEscalation: false

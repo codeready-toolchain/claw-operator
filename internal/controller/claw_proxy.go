@@ -645,9 +645,10 @@ func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, cred
 	return fmt.Errorf("claw deployment not found in manifests")
 }
 
-// configureClawDeploymentForKubernetes mounts the sanitized kubeconfig ConfigMap and
-// sets KUBECONFIG env var on the claw (gateway) deployment when a kubernetes credential is present.
-func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, credentials []resolvedCredential) error {
+// configureClawDeploymentForKubernetes mounts the sanitized kubeconfig ConfigMap,
+// sets KUBECONFIG and PATH env vars, and adds an init container that copies kubectl
+// into a shared volume on the claw (gateway) deployment when a kubernetes credential is present.
+func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, credentials []resolvedCredential, kubectlImage string) error {
 	if !hasKubernetesCredentials(credentials) {
 		return nil
 	}
@@ -685,21 +686,65 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 		envVars, _, _ := unstructured.NestedSlice(container, "env")
 		volumeMounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
 		volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
+		initContainers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "initContainers")
 
-		envVars = append(envVars, map[string]any{
-			"name":  "KUBECONFIG",
-			"value": "/etc/kube/config",
-		})
+		envVars = append(envVars,
+			map[string]any{
+				"name":  "KUBECONFIG",
+				"value": "/etc/kube/config",
+			},
+			map[string]any{
+				"name":  "PATH",
+				"value": "/opt/kube-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+			},
+		)
 
-		volumeMounts = append(volumeMounts, map[string]any{
-			"name":      "kube-config",
-			"mountPath": "/etc/kube",
-			"readOnly":  true,
-		})
-		volumes = append(volumes, map[string]any{
-			"name": "kube-config",
-			"configMap": map[string]any{
-				"name": ClawKubeConfigMapName,
+		volumeMounts = append(volumeMounts,
+			map[string]any{
+				"name":      "kube-config",
+				"mountPath": "/etc/kube",
+				"readOnly":  true,
+			},
+			map[string]any{
+				"name":      "kubectl-bin",
+				"mountPath": "/opt/kube-tools",
+				"readOnly":  true,
+			},
+		)
+
+		volumes = append(volumes,
+			map[string]any{
+				"name": "kube-config",
+				"configMap": map[string]any{
+					"name": ClawKubeConfigMapName,
+				},
+			},
+			map[string]any{
+				"name":     "kubectl-bin",
+				"emptyDir": map[string]any{},
+			},
+		)
+
+		initContainers = append(initContainers, map[string]any{
+			"name":            "init-kubectl",
+			"image":           kubectlImage,
+			"imagePullPolicy": "IfNotPresent",
+			"command":         []any{"sh", "-c", "cp /bin/kubectl /tools/kubectl"},
+			"securityContext": map[string]any{
+				"runAsNonRoot":             true,
+				"allowPrivilegeEscalation": false,
+				"readOnlyRootFilesystem":   true,
+				"capabilities":             map[string]any{"drop": []any{"ALL"}},
+			},
+			"resources": map[string]any{
+				"requests": map[string]any{"memory": "32Mi", "cpu": "50m"},
+				"limits":   map[string]any{"memory": "64Mi", "cpu": "100m"},
+			},
+			"volumeMounts": []any{
+				map[string]any{
+					"name":      "kubectl-bin",
+					"mountPath": "/tools",
+				},
 			},
 		})
 
@@ -715,6 +760,9 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 		}
 		if err := unstructured.SetNestedSlice(obj.Object, volumes, "spec", "template", "spec", "volumes"); err != nil {
 			return fmt.Errorf("failed to set volumes on claw deployment: %w", err)
+		}
+		if err := unstructured.SetNestedSlice(obj.Object, initContainers, "spec", "template", "spec", "initContainers"); err != nil {
+			return fmt.Errorf("failed to set init containers on claw deployment: %w", err)
 		}
 
 		return nil

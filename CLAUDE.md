@@ -125,6 +125,7 @@ The operator uses a **single unified controller** that manages all resources usi
 - Gracefully skips resources whose CRDs aren't registered (e.g., Route on vanilla Kubernetes)
 - Updates status conditions (Ready, CredentialsResolved, ProxyConfigured) based on Deployment readiness and credential validation
 - Supports proxy image override via `ProxyImage` field (set from `PROXY_IMAGE` env var on the manager)
+- Supports kubectl image override via `KubectlImage` field (set from `KUBECTL_IMAGE` env var on the manager, default `bitnami/kubectl:1.30`); when kubernetes credentials are present, adds an init container that copies kubectl into a shared emptyDir volume mounted at `/opt/kube-tools` on the gateway container
 - Configures proxy with multi-credential support for different LLM API domains
 
 **Key benefits:**
@@ -210,9 +211,12 @@ PHASE 3: ConfigMap Injection and Remaining Resources
  │  ├─ Add GOOGLE_APPLICATION_CREDENTIALS=/etc/vertex-adc/adc.json env var to gateway container
  │  ├─ Add ANTHROPIC_VERTEX_PROJECT_ID env var (from GCP config)
  │  └─ Mount claw-vertex-adc ConfigMap as read-only volume at /etc/vertex-adc/
-   ├─ configureClawDeploymentForKubernetes(objects, resolvedCreds) — when kubernetes credentials exist:
+   ├─ configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage) — when kubernetes credentials exist:
  │  ├─ Add KUBECONFIG=/etc/kube/config env var to gateway container
- │  └─ Mount claw-kube-config ConfigMap as read-only volume at /etc/kube/
+ │  ├─ Add PATH env var prepending /opt/kube-tools to standard PATH
+ │  ├─ Mount claw-kube-config ConfigMap as read-only volume at /etc/kube/
+ │  ├─ Add emptyDir volume (kubectl-bin) mounted at /opt/kube-tools on gateway
+ │  └─ Add init-kubectl init container that copies kubectl binary from kubectlImage to shared volume
  ├─ stampSecretVersionAnnotation(ctx, objects, instance)
  │  ├─ Fetch user's Secrets to get their ResourceVersions
  │  ├─ Find claw-proxy Deployment in parsed objects
@@ -295,7 +299,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `resolveProviderInfo()` — returns upstream host and base path for a credential's provider. GCP credentials route through Vertex AI with the provider name as the publisher (works for google, anthropic, meta, etc.). Google + apiKey uses Gemini REST API. All others fall back to domain
 - `usesVertexSDK()` — returns true when a credential should use the native Vertex AI SDK (type == gcp && provider != "" && provider != "google")
 - `configureClawDeploymentForVertex()` — adds GOOGLE_APPLICATION_CREDENTIALS, ANTHROPIC_VERTEX_PROJECT_ID env vars and stub ADC volume mount to the claw deployment when Vertex SDK credentials exist
-- `configureClawDeploymentForKubernetes()` — mounts the sanitized kubeconfig ConfigMap (`claw-kube-config`) at `/etc/kube/` and sets `KUBECONFIG=/etc/kube/config` env var on the gateway container when kubernetes credentials exist
+- `configureClawDeploymentForKubernetes()` — when kubernetes credentials exist: mounts the sanitized kubeconfig ConfigMap (`claw-kube-config`) at `/etc/kube/`, sets `KUBECONFIG=/etc/kube/config` and `PATH` env vars, adds an `init-kubectl` init container that copies kubectl from the configured image into a shared emptyDir volume mounted at `/opt/kube-tools`
 - `injectKubePortsIntoNetworkPolicy()` — adds non-443 ports from kubeconfig cluster server URLs to the `claw-proxy-egress` NetworkPolicy. In-memory patching before apply, same pattern as `injectRouteHostIntoConfigMap`
 - `injectKubernetesIntoAgentsMd()` — appends a "Kubernetes Access" section to the AGENTS.md content in `claw-config` ConfigMap listing available contexts, clusters, namespaces, and current-context
 - `applyVertexADCConfigMap()` — creates/updates the stub ADC ConfigMap (claw-vertex-adc) with dummy authorized_user credentials for Vertex SDK token refresh bootstrap. Only created when Vertex SDK credentials exist
@@ -324,6 +328,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `ClawVertexADCConfigMapName = "claw-vertex-adc"` — ConfigMap containing stub ADC for Vertex AI SDK
 - `ClawKubeConfigMapName = "claw-kube-config"` — ConfigMap containing sanitized kubeconfig for kubernetes credentials
 - `ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"` — proxy egress NetworkPolicy (dynamically patched for non-443 kubernetes ports)
+- `DefaultKubectlImage = "registry.k8s.io/kubectl:v1.34"` — default image for the init-kubectl init container (overridable via `KUBECTL_IMAGE` env var)
 
 **NodePairingRequestApprovalReconciler** (`internal/controller/nodepairingrequestapproval_controller.go`):
 - Reconciles `NodePairingRequestApproval` CRs

@@ -75,6 +75,7 @@ const (
 	ClawVertexADCConfigMapName       = "claw-vertex-adc"
 	ClawKubeConfigMapName            = "claw-kube-config"
 	ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"
+	DefaultKubectlImage              = "registry.k8s.io/kubectl:v1.34"
 	// Kubernetes resource kinds
 	RouteKind         = "Route"
 	DeploymentKind    = "Deployment"
@@ -87,6 +88,7 @@ type ClawResourceReconciler struct {
 	client.Client
 	Scheme          *runtime.Scheme
 	ProxyImage      string
+	KubectlImage    string
 	ImagePullPolicy string
 }
 
@@ -302,7 +304,11 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if err := configureClawDeploymentForVertex(objects, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Vertex AI: %w", err)
 	}
-	if err := configureClawDeploymentForKubernetes(objects, resolvedCreds); err != nil {
+	kubectlImage := r.KubectlImage
+	if kubectlImage == "" {
+		kubectlImage = DefaultKubectlImage
+	}
+	if err := configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Kubernetes: %w", err)
 	}
 	return nil

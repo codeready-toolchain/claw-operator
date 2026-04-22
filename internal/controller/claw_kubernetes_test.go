@@ -483,7 +483,7 @@ func TestConfigureClawDeploymentForKubernetes(t *testing.T) {
 		return []*unstructured.Unstructured{dep}
 	}
 
-	t.Run("should add KUBECONFIG env and volume mount", func(t *testing.T) {
+	t.Run("should add KUBECONFIG env, PATH, volumes, and init container", func(t *testing.T) {
 		objects := makeDeployment()
 		creds := []resolvedCredential{
 			{
@@ -496,34 +496,45 @@ func TestConfigureClawDeploymentForKubernetes(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds))
+		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds, DefaultKubectlImage))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)
 
 		envVars := container["env"].([]any)
-		var kubeEnv map[string]any
+		envMap := map[string]string{}
 		for _, e := range envVars {
 			env := e.(map[string]any)
-			if env["name"] == "KUBECONFIG" {
-				kubeEnv = env
-			}
+			envMap[env["name"].(string)] = env["value"].(string)
 		}
-		require.NotNil(t, kubeEnv, "KUBECONFIG env var should be set")
-		assert.Equal(t, "/etc/kube/config", kubeEnv["value"])
+		assert.Equal(t, "/etc/kube/config", envMap["KUBECONFIG"])
+		assert.Contains(t, envMap["PATH"], "/opt/kube-tools")
 
 		volumeMounts := container["volumeMounts"].([]any)
-		require.Len(t, volumeMounts, 1)
-		vm := volumeMounts[0].(map[string]any)
-		assert.Equal(t, "kube-config", vm["name"])
-		assert.Equal(t, "/etc/kube", vm["mountPath"])
+		require.Len(t, volumeMounts, 2)
+		vmNames := map[string]string{}
+		for _, vm := range volumeMounts {
+			m := vm.(map[string]any)
+			vmNames[m["name"].(string)] = m["mountPath"].(string)
+		}
+		assert.Equal(t, "/etc/kube", vmNames["kube-config"])
+		assert.Equal(t, "/opt/kube-tools", vmNames["kubectl-bin"])
 
 		volumes, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "volumes")
-		require.Len(t, volumes, 1)
-		vol := volumes[0].(map[string]any)
-		assert.Equal(t, "kube-config", vol["name"])
-		cmRef := vol["configMap"].(map[string]any)
-		assert.Equal(t, ClawKubeConfigMapName, cmRef["name"])
+		require.Len(t, volumes, 2)
+		volNames := map[string]bool{}
+		for _, v := range volumes {
+			vol := v.(map[string]any)
+			volNames[vol["name"].(string)] = true
+		}
+		assert.True(t, volNames["kube-config"])
+		assert.True(t, volNames["kubectl-bin"])
+
+		initContainers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "initContainers")
+		require.Len(t, initContainers, 1)
+		initC := initContainers[0].(map[string]any)
+		assert.Equal(t, "init-kubectl", initC["name"])
+		assert.Equal(t, DefaultKubectlImage, initC["image"])
 	})
 
 	t.Run("should be no-op when no kubernetes credentials exist", func(t *testing.T) {
@@ -538,7 +549,7 @@ func TestConfigureClawDeploymentForKubernetes(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds))
+		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds, DefaultKubectlImage))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)
@@ -966,35 +977,40 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 
 		for _, container := range deployment.Spec.Template.Spec.Containers {
 			if container.Name == ClawGatewayContainerName {
-				var foundEnv bool
+				envMap := map[string]string{}
 				for _, env := range container.Env {
-					if env.Name == "KUBECONFIG" {
-						foundEnv = true
-						assert.Equal(t, "/etc/kube/config", env.Value)
-					}
+					envMap[env.Name] = env.Value
 				}
-				assert.True(t, foundEnv, "gateway container should have KUBECONFIG env var")
+				assert.Equal(t, "/etc/kube/config", envMap["KUBECONFIG"], "KUBECONFIG env var")
+				assert.Contains(t, envMap["PATH"], "/opt/kube-tools", "PATH should include kubectl dir")
 
-				var foundMount bool
+				mountMap := map[string]string{}
 				for _, mount := range container.VolumeMounts {
-					if mount.Name == "kube-config" {
-						foundMount = true
-						assert.Equal(t, "/etc/kube", mount.MountPath)
-						assert.True(t, mount.ReadOnly)
-					}
+					mountMap[mount.Name] = mount.MountPath
 				}
-				assert.True(t, foundMount, "gateway container should have kube-config volume mount")
+				assert.Equal(t, "/etc/kube", mountMap["kube-config"], "kube-config volume mount")
+				assert.Equal(t, "/opt/kube-tools", mountMap["kubectl-bin"], "kubectl-bin volume mount")
 			}
 		}
 
-		var foundVol bool
+		volNames := map[string]bool{}
 		for _, vol := range deployment.Spec.Template.Spec.Volumes {
+			volNames[vol.Name] = true
 			if vol.Name == "kube-config" && vol.ConfigMap != nil {
-				foundVol = true
 				assert.Equal(t, ClawKubeConfigMapName, vol.ConfigMap.Name)
 			}
 		}
-		assert.True(t, foundVol, "claw deployment should have kube-config ConfigMap volume")
+		assert.True(t, volNames["kube-config"], "should have kube-config volume")
+		assert.True(t, volNames["kubectl-bin"], "should have kubectl-bin emptyDir volume")
+
+		var foundInitKubectl bool
+		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
+			if ic.Name == "init-kubectl" {
+				foundInitKubectl = true
+				assert.Equal(t, DefaultKubectlImage, ic.Image)
+			}
+		}
+		assert.True(t, foundInitKubectl, "should have init-kubectl init container")
 	})
 
 	t.Run("should include kubernetes routes in proxy config ConfigMap", func(t *testing.T) {

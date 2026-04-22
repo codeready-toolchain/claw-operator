@@ -780,7 +780,7 @@ users:
 			f, err := os.CreateTemp("", "e2e-kubeconfig-*.yaml")
 			require.NoError(t, err)
 			kubeconfigFile := f.Name()
-			t.Cleanup(func() { os.Remove(kubeconfigFile) })
+			t.Cleanup(func() { _ = os.Remove(kubeconfigFile) })
 			_, err = f.Write([]byte(kubeconfigYAML))
 			require.NoError(t, err)
 			require.NoError(t, f.Close())
