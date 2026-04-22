@@ -38,14 +38,14 @@ spec:
               set -e
               cp -r /app/dist/. /patched-dist/
               patched=0
-              guard_target='mode === GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY && hasProxyEnvConfigured()'
-              guard_files=$(grep -rl "$guard_target" /patched-dist --include='*.js' 2>/dev/null || true)
+              guard_pattern='mode[[:space:]]*===[[:space:]]*GUARDED_FETCH_MODE\.TRUSTED_ENV_PROXY[[:space:]]*&&[[:space:]]*hasProxyEnvConfigured\(\)'
+              guard_files=$(grep -rEl "$guard_pattern" /patched-dist --include='*.js' 2>/dev/null || true)
               if [ -z "$guard_files" ]; then
                 echo "[proxy-patch] ERROR: no files contain SSRF guard conditional — upstream may have changed" >&2
                 exit 1
               fi
               for file in $guard_files; do
-                sed -i "s|$guard_target|hasProxyEnvConfigured()|g" "$file"
+                sed -Ei "s|$guard_pattern|hasProxyEnvConfigured()|g" "$file"
                 echo "[proxy-patch] Patched SSRF guard: $file"
                 patched=$((patched + 1))
               done
