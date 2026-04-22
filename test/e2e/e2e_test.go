@@ -631,6 +631,70 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "new pod did not reach Running phase")
 		})
 
+		t.Run("should patch SSRF guard in claw gateway init container", func(t *testing.T) {
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value",
+				"-n", userNamespace)
+			_, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create Secret")
+
+			t.Log("applying the Claw CR")
+			cmd = exec.Command("kubectl", "apply", "-f",
+				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for claw pod to reach Running")
+			ctx := context.Background()
+			var podName string
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+						"-o", "go-template={{ range .items }}"+
+							"{{ if not .metadata.deletionTimestamp }}"+
+							"{{ .metadata.name }} {{ .status.phase }}"+
+							"{{ \"\\n\" }}{{ end }}{{ end }}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					if err != nil {
+						return false, nil
+					}
+					for _, line := range utils.GetNonEmptyLines(output) {
+						parts := strings.Fields(line)
+						if len(parts) == 2 && parts[1] == podPhaseRunning {
+							podName = parts[0]
+							return true, nil
+						}
+					}
+					return false, nil
+				})
+			require.NoError(t, err, "claw pod did not reach Running — init containers may have failed")
+
+			t.Log("verifying patch-proxy init container logs")
+			cmd = exec.Command("kubectl", "logs", podName, "-c", "patch-proxy",
+				"-n", userNamespace)
+			logOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to get patch-proxy logs")
+			t.Logf("patch-proxy logs:\n%s", logOutput)
+
+			assert.Contains(t, logOutput, "[proxy-patch] Patched SSRF guard:",
+				"init container should report patching at least one file")
+			assert.NotContains(t, logOutput, "ERROR",
+				"init container should not report errors")
+		})
+
 		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {
 			const (
 				kubeWorkspace = "e2e-kube-workspace"

@@ -41,6 +41,10 @@ var (
 
 	// proxyImage is the credential proxy sidecar image, built and loaded alongside the operator.
 	proxyImage = "example.com/claw-proxy:latest"
+
+	// gatewayImage is the upstream OpenClaw image used by the claw deployment.
+	// Pre-loaded into Kind so e2e tests can verify init container patching.
+	gatewayImage = "ghcr.io/openclaw/openclaw:slim"
 )
 
 // TestMain runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -67,6 +71,11 @@ func TestMain(m *testing.M) {
 	}
 	if err := buildAndLoadImage("proxy", "container-build-proxy", "PROXY_IMG", proxyImage, kindCluster); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy image setup failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := pullAndLoadImage(gatewayImage, kindCluster); err != nil {
+		fmt.Fprintf(os.Stderr, "gateway image setup failed: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -122,6 +131,27 @@ func buildAndLoadImage(label, buildTarget, imgVar, image, kindCluster string) er
 	if err := runStreaming("kind", "load", "image-archive", tarFile,
 		"--name", kindCluster); err != nil {
 		return fmt.Errorf("load %s image into Kind: %w", label, err)
+	}
+	return nil
+}
+
+// pullAndLoadImage pulls a public container image and loads it into Kind.
+func pullAndLoadImage(image, kindCluster string) error {
+	tarFile := fmt.Sprintf("tmp/%s.tar", strings.ReplaceAll(
+		strings.ReplaceAll(image, "/", "_"), ":", "_"))
+
+	fmt.Printf("Pulling gateway image %s...\n", image)
+	if err := runStreaming("podman", "pull", "--platform=linux/amd64", image); err != nil {
+		return fmt.Errorf("pull %s: %w", image, err)
+	}
+
+	fmt.Printf("Loading gateway image into Kind cluster...\n")
+	if err := runStreaming("podman", "save", "-o", tarFile, image); err != nil {
+		return fmt.Errorf("save %s: %w", image, err)
+	}
+	if err := runStreaming("kind", "load", "image-archive", tarFile,
+		"--name", kindCluster); err != nil {
+		return fmt.Errorf("load %s into Kind: %w", image, err)
 	}
 	return nil
 }
