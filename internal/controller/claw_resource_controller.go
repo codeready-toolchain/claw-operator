@@ -628,7 +628,7 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 		}
 		return nil
 	}
-	return nil
+	return fmt.Errorf("NetworkPolicy %s not found in manifests", ClawProxyEgressNetworkPolicyName)
 }
 
 // injectKubernetesSkill writes a KUBERNETES.md key into the claw-config ConfigMap
@@ -652,6 +652,7 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 
 	var sb strings.Builder
 	sb.WriteString("---\n")
+	sb.WriteString("name: kubernetes\n")
 	sb.WriteString("description: \"Kubernetes/OpenShift cluster access. Use when the user asks about ")
 	sb.WriteString("deployments, pods, services, builds, routes, or any cluster resource.\"\n")
 	sb.WriteString("---\n\n")
@@ -687,7 +688,7 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 		}
 		return nil
 	}
-	return nil
+	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem

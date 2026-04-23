@@ -718,6 +718,7 @@ func TestInjectKubernetesSkill(t *testing.T) {
 		kubeMd, found, _ := unstructured.NestedString(objects[0].Object, "data", "KUBERNETES.md")
 		assert.True(t, found, "KUBERNETES.md should exist in ConfigMap data")
 		assert.True(t, strings.HasPrefix(kubeMd, "---\n"), "should start with YAML frontmatter")
+		assert.Contains(t, kubeMd, "name: kubernetes")
 		assert.Contains(t, kubeMd, "description:")
 		assert.Contains(t, kubeMd, "# Kubernetes Access")
 		assert.Contains(t, kubeMd, "`prod-ctx`")
