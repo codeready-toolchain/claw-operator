@@ -165,14 +165,14 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 		cm.SetKind(ConfigMapKind)
 		cm.SetName(ClawConfigMapName)
 		cm.Object["data"] = map[string]any{
-			"openclaw.json": jsonContent,
+			"operator.json": jsonContent,
 		}
 		return []*unstructured.Unstructured{cm}
 	}
 
 	getConfig := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
 		t.Helper()
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "openclaw.json")
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
 		require.NoError(t, err)
 		var config map[string]any
 		require.NoError(t, json.Unmarshal([]byte(raw), &config))
@@ -212,102 +212,6 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 		assert.Equal(t, "https://us-east5-aiplatform.googleapis.com", av["baseUrl"])
 		assert.Equal(t, "gcp-vertex-credentials", av["apiKey"])
 		assert.Equal(t, "anthropic-messages", av["api"])
-	})
-
-	t.Run("should remap model entries from anthropic to anthropic-vertex", func(t *testing.T) {
-		configJSON := `{
-			"models": {"providers": {}},
-			"agents": {
-				"defaults": {
-					"model": {"primary": "anthropic/claude-sonnet-4-6"},
-					"models": {
-						"anthropic/claude-sonnet-4-6": {"alias": "Claude Sonnet"},
-						"anthropic/claude-haiku-4-5": {"alias": "Claude Haiku"},
-						"google/gemini-flash": {"alias": "Gemini Flash"}
-					}
-				}
-			}
-		}`
-		objects := makeConfigMap(configJSON)
-		credentials := []clawv1alpha1.CredentialSpec{
-			{
-				Name:     "gemini",
-				Type:     clawv1alpha1.CredentialTypeAPIKey,
-				Provider: "google",
-				Domain:   "generativelanguage.googleapis.com",
-			},
-			{
-				Name:     "anthropic-vertex",
-				Type:     clawv1alpha1.CredentialTypeGCP,
-				Provider: "anthropic",
-				Domain:   ".googleapis.com",
-				GCP: &clawv1alpha1.GCPConfig{
-					Project:  "my-project",
-					Location: "us-east5",
-				},
-			},
-		}
-
-		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
-
-		config := getConfig(t, objects)
-		agents := config["agents"].(map[string]any)
-		defaults := agents["defaults"].(map[string]any)
-		modelAliases := defaults["models"].(map[string]any)
-
-		assert.NotContains(t, modelAliases, "anthropic/claude-sonnet-4-6", "original anthropic key should be removed")
-		assert.NotContains(t, modelAliases, "anthropic/claude-haiku-4-5", "original anthropic key should be removed")
-		assert.Contains(t, modelAliases, "anthropic-vertex/claude-sonnet-4-6", "remapped key should exist")
-		assert.Contains(t, modelAliases, "anthropic-vertex/claude-haiku-4-5", "remapped key should exist")
-		assert.Contains(t, modelAliases, "google/gemini-flash", "google key should be preserved")
-
-		primary := defaults["model"].(map[string]any)
-		assert.Equal(t, "anthropic-vertex/claude-sonnet-4-6", primary["primary"], "primary should be remapped")
-	})
-
-	t.Run("should not remap when both base and vertex providers exist", func(t *testing.T) {
-		configJSON := `{
-			"models": {"providers": {}},
-			"agents": {
-				"defaults": {
-					"model": {"primary": "anthropic/direct-model"},
-					"models": {
-						"anthropic/direct-model": {"alias": "Direct"}
-					}
-				}
-			}
-		}`
-		objects := makeConfigMap(configJSON)
-		credentials := []clawv1alpha1.CredentialSpec{
-			{
-				Name:     "claude-direct",
-				Type:     clawv1alpha1.CredentialTypeBearer,
-				Provider: "anthropic",
-				Domain:   "api.anthropic.com",
-			},
-			{
-				Name:     "claude-vertex",
-				Type:     clawv1alpha1.CredentialTypeGCP,
-				Provider: "anthropic",
-				Domain:   ".googleapis.com",
-				GCP: &clawv1alpha1.GCPConfig{
-					Project:  "my-project",
-					Location: "us-east5",
-				},
-			},
-		}
-
-		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
-
-		config := getConfig(t, objects)
-		agents := config["agents"].(map[string]any)
-		defaults := agents["defaults"].(map[string]any)
-		modelAliases := defaults["models"].(map[string]any)
-
-		assert.Contains(t, modelAliases, "anthropic/direct-model", "should keep base provider models when both exist")
-
-		primary := defaults["model"].(map[string]any)
-		assert.Equal(t, "anthropic/direct-model", primary["primary"], "primary should not be remapped")
 	})
 
 	t.Run("should reject duplicate vertex providers", func(t *testing.T) {

@@ -5,7 +5,7 @@ metadata:
   labels:
     app: claw
 data:
-  openclaw.json: |
+  operator.json: |
     {
       "gateway": {
         "mode": "local",
@@ -23,6 +23,11 @@ data:
       "models": {
         "providers": {}
       },
+      "cron": { "enabled": false }
+    }
+  openclaw.json: |
+    {
+      "$include": "./operator.json",
       "agents": {
         "defaults": {
           "model": { "primary": "google/gemini-3-flash-preview" },
@@ -41,8 +46,7 @@ data:
             "workspace": "~/.openclaw/workspace"
           }
         ]
-      },
-      "cron": { "enabled": false }
+      }
     }
   AGENTS.md: |
     # OpenClaw Assistant

@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -685,21 +684,19 @@ func TestInjectKubePortsIntoNetworkPolicy(t *testing.T) {
 	})
 }
 
-// --- injectKubernetesIntoAgentsMd tests ---
+// --- injectKubernetesContextFile tests ---
 
-func TestInjectKubernetesIntoAgentsMd(t *testing.T) {
-	makeCM := func(agentsMd string) []*unstructured.Unstructured {
+func TestInjectKubernetesContextFile(t *testing.T) {
+	makeCM := func() []*unstructured.Unstructured {
 		cm := &unstructured.Unstructured{}
 		cm.SetKind(ConfigMapKind)
 		cm.SetName(ClawConfigMapName)
-		cm.Object["data"] = map[string]any{
-			"AGENTS.md": agentsMd,
-		}
+		cm.Object["data"] = map[string]any{}
 		return []*unstructured.Unstructured{cm}
 	}
 
-	t.Run("should append kubernetes section to AGENTS.md", func(t *testing.T) {
-		objects := makeCM("# Existing content\n")
+	t.Run("should write KUBERNETES.md key into ConfigMap", func(t *testing.T) {
+		objects := makeCM()
 		creds := []resolvedCredential{
 			{
 				CredentialSpec: clawv1alpha1.CredentialSpec{
@@ -715,18 +712,18 @@ func TestInjectKubernetesIntoAgentsMd(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubernetesIntoAgentsMd(objects, creds))
+		require.NoError(t, injectKubernetesContextFile(objects, creds))
 
-		agentsMd, _, _ := unstructured.NestedString(objects[0].Object, "data", "AGENTS.md")
-		assert.Contains(t, agentsMd, "# Existing content")
-		assert.Contains(t, agentsMd, "## Kubernetes Access")
-		assert.Contains(t, agentsMd, "`prod-ctx`")
-		assert.Contains(t, agentsMd, "[current]")
-		assert.Contains(t, agentsMd, "namespace: staging")
+		kubeMd, found, _ := unstructured.NestedString(objects[0].Object, "data", "KUBERNETES.md")
+		assert.True(t, found, "KUBERNETES.md should exist in ConfigMap data")
+		assert.Contains(t, kubeMd, "# Kubernetes Access")
+		assert.Contains(t, kubeMd, "`prod-ctx`")
+		assert.Contains(t, kubeMd, "[current]")
+		assert.Contains(t, kubeMd, "namespace: staging")
 	})
 
 	t.Run("should be no-op with no kubernetes credentials", func(t *testing.T) {
-		objects := makeCM("# Original\n")
+		objects := makeCM()
 		creds := []resolvedCredential{
 			{
 				CredentialSpec: clawv1alpha1.CredentialSpec{
@@ -736,10 +733,10 @@ func TestInjectKubernetesIntoAgentsMd(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubernetesIntoAgentsMd(objects, creds))
+		require.NoError(t, injectKubernetesContextFile(objects, creds))
 
-		agentsMd, _, _ := unstructured.NestedString(objects[0].Object, "data", "AGENTS.md")
-		assert.Equal(t, "# Original\n", agentsMd)
+		_, found, _ := unstructured.NestedString(objects[0].Object, "data", "KUBERNETES.md")
+		assert.False(t, found, "KUBERNETES.md should not exist when no kubernetes credentials")
 	})
 }
 
@@ -813,7 +810,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		assert.Contains(t, sanitizedConfig, "api.prod.example.com", "cluster info should be preserved")
 	})
 
-	t.Run("should inject AGENTS.md with kubernetes context info", func(t *testing.T) {
+	t.Run("should inject KUBERNETES.md with context info", func(t *testing.T) {
 		t.Cleanup(func() {
 			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: testKubeSecretName, Namespace: namespace})
 			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: ClawKubeConfigMapName, Namespace: namespace})
@@ -856,10 +853,10 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 			}, cm) == nil
 		}, "ConfigMap should be created")
 
-		agentsMd := cm.Data["AGENTS.md"]
-		assert.True(t, strings.Contains(agentsMd, "Kubernetes Access"),
-			"AGENTS.md should contain Kubernetes Access section, got: %s", agentsMd)
-		assert.Contains(t, agentsMd, "prod-ctx")
+		kubeMd, ok := cm.Data["KUBERNETES.md"]
+		assert.True(t, ok, "KUBERNETES.md should exist in ConfigMap")
+		assert.Contains(t, kubeMd, "Kubernetes Access")
+		assert.Contains(t, kubeMd, "prod-ctx")
 	})
 
 	t.Run("should configure proxy deployment with kubernetes volume mount", func(t *testing.T) {

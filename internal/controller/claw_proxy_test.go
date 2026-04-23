@@ -669,7 +669,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		cm.SetKind(ConfigMapKind)
 		cm.SetName(ClawConfigMapName)
 		cm.Object["data"] = map[string]any{
-			"openclaw.json": jsonContent,
+			"operator.json": jsonContent,
 		}
 		return []*unstructured.Unstructured{cm}
 	}
@@ -678,7 +678,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 
 	getProviders := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
 		t.Helper()
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "openclaw.json")
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
 		require.NoError(t, err)
 		var config map[string]any
 		require.NoError(t, json.Unmarshal([]byte(raw), &config))
@@ -775,7 +775,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		objects := makeConfigMap(baseJSON)
 		require.NoError(t, injectProvidersIntoConfigMap(objects, nil))
 
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "openclaw.json")
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
 		require.NoError(t, err)
 		var config map[string]any
 		require.NoError(t, json.Unmarshal([]byte(raw), &config))
@@ -816,46 +816,6 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		assert.Contains(t, err.Error(), "google")
 	})
 
-	t.Run("should filter model aliases and pick deterministic fallback primary", func(t *testing.T) {
-		configJSON := `{
-			"models": {"providers": {}},
-			"agents": {
-				"defaults": {
-					"model": {"primary": "missing/model-a"},
-					"models": {
-						"anthropic/claude-sonnet": {"alias": "Sonnet"},
-						"google/gemini-flash": {"alias": "Flash"},
-						"missing/model-a": {"alias": "Missing A"},
-						"anthropic/claude-haiku": {"alias": "Haiku"}
-					}
-				}
-			}
-		}`
-		objects := makeConfigMap(configJSON)
-		credentials := []clawv1alpha1.CredentialSpec{
-			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
-			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
-		}
-
-		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
-
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "openclaw.json")
-		require.NoError(t, err)
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-
-		agents := config["agents"].(map[string]any)
-		defaults := agents["defaults"].(map[string]any)
-		modelAliases := defaults["models"].(map[string]any)
-
-		assert.NotContains(t, modelAliases, "missing/model-a", "missing provider model should be removed")
-		assert.Contains(t, modelAliases, "google/gemini-flash")
-		assert.Contains(t, modelAliases, "anthropic/claude-sonnet")
-		assert.Contains(t, modelAliases, "anthropic/claude-haiku")
-
-		primary := defaults["model"].(map[string]any)
-		assert.Equal(t, "anthropic/claude-haiku", primary["primary"], "fallback should be lexicographically first available model")
-	})
 }
 
 func TestCredEnvVarName(t *testing.T) {
@@ -941,11 +901,11 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 			}, cm) == nil
 		}, "ConfigMap should be created")
 
-		openclawJSON, ok := cm.Data["openclaw.json"]
-		require.True(t, ok, "openclaw.json should exist")
+		operatorJSON, ok := cm.Data["operator.json"]
+		require.True(t, ok, "operator.json should exist")
 
 		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(openclawJSON), &config))
+		require.NoError(t, json.Unmarshal([]byte(operatorJSON), &config))
 
 		models, ok := config["models"].(map[string]any)
 		require.True(t, ok, "models section should exist")
@@ -986,14 +946,14 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		}, "ConfigMap should be created")
 
 		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(cm.Data["openclaw.json"]), &config))
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
 
 		models := config["models"].(map[string]any)
 		providers := models["providers"].(map[string]any)
 		assert.Empty(t, providers, "providers should be empty when no credentials have provider set")
 	})
 
-	t.Run("should have empty providers and filtered model defaults for MITM-only credentials", func(t *testing.T) {
+	t.Run("should have empty providers for MITM-only credentials", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		createClawInstanceMITMOnly(t, ctx, ClawInstanceName, namespace)
 		reconciler := createClawReconciler()
@@ -1008,15 +968,10 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		}, "ConfigMap should be created")
 
 		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(cm.Data["openclaw.json"]), &config))
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
 
 		models := config["models"].(map[string]any)
 		providers := models["providers"].(map[string]any)
 		assert.Empty(t, providers, "providers should be empty for MITM-only credentials")
-
-		agents, _ := config["agents"].(map[string]any)
-		defaults, _ := agents["defaults"].(map[string]any)
-		modelAliases, _ := defaults["models"].(map[string]any)
-		assert.Empty(t, modelAliases, "model aliases should be empty when no providers are configured")
 	})
 }
