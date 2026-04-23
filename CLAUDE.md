@@ -23,7 +23,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
   - `gcp` (GCPConfig, optional): Required when type is `gcp`. Fields: `project` (GCP project ID, minLength=1), `location` (GCP region, minLength=1)
   - `pathToken` (PathTokenConfig, optional): Required when type is `pathToken`. Fields: `prefix` (URL path prefix, minLength=1)
   - `oauth2` (OAuth2Config, optional): Required when type is `oauth2`. Fields: `clientID` (minLength=1), `tokenURL` (minLength=1), `scopes` ([]string, optional)
-  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `openclaw.json`. When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
+  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `operator.json` (included by the user-owned `openclaw.json` via `$include`). When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
 
 **Status Fields:**
 - `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`claw-gateway-token`)
@@ -136,6 +136,20 @@ The operator uses a **single unified controller** that manages all resources usi
 - Graceful fallback: localhost CORS origin on vanilla Kubernetes (no Route CRD)
 - Future-proof: adding new resources only requires updating kustomization.yaml
 
+### Config layering via $include
+
+The `claw-config` ConfigMap uses a **split config** approach to preserve user and application changes across reconciles:
+
+**Operator-managed files** (always overwritten on PVC by init container):
+- `operator.json` — Gateway settings, CORS origins, providers, proxy config. Rewritten every reconcile.
+- `KUBERNETES.md` — Kubernetes context info (only when k8s credentials present). Always overwritten.
+
+**User-owned files** (seeded once, then owned by user/OpenClaw):
+- `openclaw.json` — Contains `"$include": "./operator.json"` plus agent defaults (model aliases, primary model, agent list). Seeded only if file doesn't exist on PVC. User and OpenClaw Control UI changes survive pod restarts.
+- `AGENTS.md` — System prompt. Seeded only if file doesn't exist on PVC.
+
+OpenClaw's `$include` mechanism deep-merges the included file with sibling keys at config load time. Sibling keys (user's root file) win over included values for primitives, objects merge recursively, arrays concatenate. The write-back logic avoids pulling included values into the root file on save.
+
 ### Reconciliation flow
 
 The controller uses a **three-phase reconciliation** approach to enable dynamic Route host injection into ConfigMap:
@@ -226,7 +240,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
   ↓
 7. injectRouteHostIntoConfigMap(objects, routeHost)
    ├─ Find claw-config ConfigMap in objects
-   ├─ Extract data["openclaw.json"] string
+   ├─ Extract data["operator.json"] string
    ├─ Replace "OPENCLAW_ROUTE_HOST" placeholder with routeHost (https://...)
    ├─ If routeHost is empty (vanilla Kubernetes): use "http://localhost:18789" fallback
    └─ Set modified JSON back into ConfigMap
@@ -235,13 +249,12 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ Filter credentials with Provider set
    ├─ For gateway-routed providers: resolveProviderInfo(cred) → upstream + basePath, build baseUrl via proxy
    ├─ For Vertex SDK providers (GCP + non-Google, e.g., anthropic): map to "{provider}-vertex" key with real Vertex AI URL, api mapping, and "gcp-vertex-credentials" apiKey
-   ├─ remapVertexProviderModels: rename "anthropic/..." model entries to "anthropic-vertex/..." when vertex variant exists but base provider does not
-   ├─ filterAgentDefaultsForProviders: remove model entries whose provider is not in the injected providers map
+   ├─ Write providers into data["operator.json"] (agent defaults are user-owned in openclaw.json seed)
    └─ Credentials without Provider are MITM-only (no provider entry)
   ↓
-7c. injectKubernetesIntoAgentsMd(objects, resolvedCreds)
+7c. injectKubernetesContextFile(objects, resolvedCreds)
    ├─ Collect contexts from all kubernetes credentials
-   ├─ Append "## Kubernetes Access" section to AGENTS.md in claw-config ConfigMap
+   ├─ Write data["KUBERNETES.md"] in claw-config ConfigMap (separate from user-owned AGENTS.md)
    └─ No-op when no kubernetes credentials present
   ↓
 7d. injectKubePortsIntoNetworkPolicy(objects, resolvedCreds)
@@ -286,10 +299,9 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `applyRouteOnly()` — applies only Route resource from Kustomize manifests (Phase 2)
 - `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
-- `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in ConfigMap with Route host (or localhost fallback)
-- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `openclaw.json`. Gateway-routed providers get a baseUrl through the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since MITM proxy handles credential injection transparently
-- `remapVertexProviderModels()` — renames model entries from "provider/model" to "provider-vertex/model" when a Vertex variant exists but the base provider does not (e.g., "anthropic/claude-sonnet-4-6" → "anthropic-vertex/claude-sonnet-4-6")
-- `resolveAndApplyCredentials()` — orchestrates credential resolution: resolves provider defaults, validates credentials (returning `[]resolvedCredential`), applies sanitized kubeconfig ConfigMap for kubernetes credentials, and applies proxy CA. Extracted from `Reconcile()` to reduce cyclomatic complexity
+- `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in `operator.json` with Route host (or localhost fallback)
+- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `operator.json`. Gateway-routed providers get a baseUrl through the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since MITM proxy handles credential injection transparently. Does not touch agent defaults (user-owned in openclaw.json seed)
+- `resolveAndApplyCredentials()` — orchestrates credential resolution: resolves provider defaults, validates credentials (returning `[]resolvedCredential`), applies sanitized kubeconfig ConfigMap for kubernetes credentials, and applies proxy CA
 - `resolveCredentials()` — validates all credentials and referenced Secrets. For `kubernetes` type, parses kubeconfig with `client-go/tools/clientcmd`, validates token-only auth, extracts cluster/context metadata. Returns `[]resolvedCredential` (replaces former `validateCredentials`)
 - `parseAndValidateKubeconfig()` — parses kubeconfig bytes, validates all users use token-based auth (rejects client certs, exec, auth provider), validates unique token per server `hostname:port`, returns `kubeconfigData`
 - `sanitizeKubeconfig()` — replaces all user tokens with `"proxy-managed-token"` placeholder, clears `TokenFile` fields, preserves clusters/contexts/namespaces/CA data
@@ -301,7 +313,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `configureClawDeploymentForVertex()` — adds GOOGLE_APPLICATION_CREDENTIALS, ANTHROPIC_VERTEX_PROJECT_ID env vars and stub ADC volume mount to the claw deployment when Vertex SDK credentials exist
 - `configureClawDeploymentForKubernetes()` — when kubernetes credentials exist: mounts the sanitized kubeconfig ConfigMap (`claw-kube-config`) at `/etc/kube/`, sets `KUBECONFIG=/etc/kube/config` and `PATH` env vars, adds an `init-kubectl` init container that copies kubectl from the configured image into a shared emptyDir volume mounted at `/opt/kube-tools`
 - `injectKubePortsIntoNetworkPolicy()` — adds non-443 ports from kubeconfig cluster server URLs to the `claw-proxy-egress` NetworkPolicy. In-memory patching before apply, same pattern as `injectRouteHostIntoConfigMap`
-- `injectKubernetesIntoAgentsMd()` — appends a "Kubernetes Access" section to the AGENTS.md content in `claw-config` ConfigMap listing available contexts, clusters, namespaces, and current-context
+- `injectKubernetesContextFile()` — writes a `KUBERNETES.md` key into the `claw-config` ConfigMap (separate from user-owned AGENTS.md) listing available contexts, clusters, namespaces, and current-context
 - `applyVertexADCConfigMap()` — creates/updates the stub ADC ConfigMap (claw-vertex-adc) with dummy authorized_user credentials for Vertex SDK token refresh bootstrap. Only created when Vertex SDK credentials exist
 - `applyProxyResources()` — generates proxy config, applies proxy ConfigMap and Vertex ADC ConfigMap. Returns proxy config JSON for hash stamping
 - `applyResources()` — applies list of unstructured objects using server-side apply
@@ -347,7 +359,7 @@ var ManifestsFS embed.FS
 
 The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
-- **configmap.yaml** — OpenClaw configuration
+- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, KUBERNETES.md for k8s context)
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
 - **deployment.yaml** — OpenClaw application pods (init container with full security context hardening)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)

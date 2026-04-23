@@ -429,6 +429,94 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				`controller_runtime_reconcile_total{controller="claw",result="success"}`)
 		})
 
+		t.Run("should create claw-config ConfigMap with split config layering", func(t *testing.T) {
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value",
+				"-n", userNamespace)
+			_, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create Secret")
+
+			t.Log("applying the Claw CR")
+			cmd = exec.Command("kubectl", "apply", "-f",
+				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for Claw Ready condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw ProxyConfigured did not become True")
+
+			t.Log("verifying operator.json has gateway config and providers")
+			cmd = exec.Command("kubectl", "get", "configmap", "claw-config",
+				"-o", "jsonpath={.data.operator\\.json}",
+				"-n", userNamespace)
+			operatorJSON, err := utils.Run(t, cmd)
+			require.NoError(t, err, "claw-config ConfigMap should exist with operator.json")
+			assert.Contains(t, operatorJSON, `"gateway"`,
+				"operator.json should contain gateway config")
+			assert.Contains(t, operatorJSON, `"providers"`,
+				"operator.json should contain providers section")
+			assert.NotContains(t, operatorJSON, `"agents"`,
+				"operator.json must not contain agents section (user-owned)")
+
+			var operatorConfig map[string]any
+			require.NoError(t, json.Unmarshal([]byte(operatorJSON), &operatorConfig),
+				"operator.json should be valid JSON")
+			models := operatorConfig["models"].(map[string]any)
+			providers := models["providers"].(map[string]any)
+			assert.NotEmpty(t, providers, "should have injected provider from credential")
+
+			t.Log("verifying openclaw.json seed has $include directive")
+			cmd = exec.Command("kubectl", "get", "configmap", "claw-config",
+				"-o", "jsonpath={.data.openclaw\\.json}",
+				"-n", userNamespace)
+			openclawJSON, err := utils.Run(t, cmd)
+			require.NoError(t, err, "claw-config ConfigMap should have openclaw.json")
+			assert.Contains(t, openclawJSON, `"$include"`,
+				"openclaw.json should contain $include directive")
+			assert.Contains(t, openclawJSON, `./operator.json`,
+				"$include should reference operator.json")
+			assert.Contains(t, openclawJSON, `"agents"`,
+				"openclaw.json seed should contain agents section")
+
+			t.Log("verifying AGENTS.md seed is present")
+			cmd = exec.Command("kubectl", "get", "configmap", "claw-config",
+				"-o", "jsonpath={.data.AGENTS\\.md}",
+				"-n", userNamespace)
+			agentsMd, err := utils.Run(t, cmd)
+			require.NoError(t, err, "claw-config ConfigMap should have AGENTS.md")
+			assert.Contains(t, agentsMd, "OpenClaw Assistant",
+				"AGENTS.md should contain seed content")
+
+			t.Log("verifying KUBERNETES.md is absent (no kubernetes credentials)")
+			cmd = exec.Command("kubectl", "get", "configmap", "claw-config",
+				"-o", "jsonpath={.data.KUBERNETES\\.md}",
+				"-n", userNamespace)
+			kubeMd, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Empty(t, kubeMd, "KUBERNETES.md should not exist without kubernetes credentials")
+		})
+
 		t.Run("should wire credential env var with correct Secret reference", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)

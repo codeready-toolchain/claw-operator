@@ -202,9 +202,9 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
 	}
 
-	// Inject Kubernetes context info into AGENTS.md
-	if err := injectKubernetesIntoAgentsMd(objects, resolvedCreds); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes info into AGENTS.md: %w", err)
+	// Inject Kubernetes context info as a separate KUBERNETES.md file
+	if err := injectKubernetesContextFile(objects, resolvedCreds); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes context file: %w", err)
 	}
 
 	// Inject non-443 ports from kubernetes credentials into proxy egress NetworkPolicy
@@ -448,34 +448,28 @@ func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*
 	return r.applyResources(ctx, routeObjects)
 }
 
-// injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in ConfigMap with actual Route host
-// If routeHost is empty (vanilla Kubernetes), uses localhost fallback
+// injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator.json with actual Route host.
+// If routeHost is empty (vanilla Kubernetes), uses localhost fallback.
 func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstructured.Unstructured, routeHost string) error {
-	// Determine replacement value
 	replacement := routeHost
 	if replacement == "" {
-		// Vanilla Kubernetes fallback
 		replacement = "http://localhost:18789"
 	}
 
-	// Find ConfigMap in objects
 	for _, obj := range objects {
 		if obj.GetKind() == ConfigMapKind && obj.GetName() == ClawConfigMapName {
-			// Extract openclaw.json data
-			openclawJSON, found, err := unstructured.NestedString(obj.Object, "data", "openclaw.json")
+			operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
 			if err != nil {
-				return fmt.Errorf("failed to extract openclaw.json from ConfigMap: %w", err)
+				return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
 			}
 			if !found {
-				return fmt.Errorf("openclaw.json not found in ConfigMap data")
+				return fmt.Errorf("operator.json not found in ConfigMap data")
 			}
 
-			// Replace placeholder with Route host
-			updatedJSON := strings.ReplaceAll(openclawJSON, "OPENCLAW_ROUTE_HOST", replacement)
+			updatedJSON := strings.ReplaceAll(operatorJSON, "OPENCLAW_ROUTE_HOST", replacement)
 
-			// Set modified JSON back into ConfigMap
-			if err := unstructured.SetNestedField(obj.Object, updatedJSON, "data", "openclaw.json"); err != nil {
-				return fmt.Errorf("failed to set updated openclaw.json in ConfigMap: %w", err)
+			if err := unstructured.SetNestedField(obj.Object, updatedJSON, "data", "operator.json"); err != nil {
+				return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
 			}
 
 			return nil
@@ -485,18 +479,18 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
 }
 
-// injectProvidersIntoConfigMap dynamically builds the models.providers section of openclaw.json
+// injectProvidersIntoConfigMap dynamically builds the models.providers section of operator.json
 // from credentials that have Provider set. Gateway-routed providers get a baseUrl pointing to
 // the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since traffic
 // flows through the MITM proxy which injects GCP credentials transparently.
+// Agent defaults (model aliases, primary model) are in the user-owned openclaw.json seed
+// and are not modified here — users control their own model preferences.
 func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
 	providers := map[string]any{}
 	for _, cred := range credentials {
 		if cred.Provider == "" {
 			continue
 		}
-		// PathToken uses PathPrefix for token injection in the URL path (e.g., /bot<TOKEN>/...),
-		// not for gateway routing — skip provider entry to avoid referencing a non-existent gateway route.
 		if cred.Type == clawv1alpha1.CredentialTypePathToken {
 			continue
 		}
@@ -534,17 +528,17 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 			continue
 		}
 
-		openclawJSON, found, err := unstructured.NestedString(obj.Object, "data", "openclaw.json")
+		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
 		if err != nil {
-			return fmt.Errorf("failed to extract openclaw.json from ConfigMap: %w", err)
+			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
 		}
 		if !found {
-			return fmt.Errorf("openclaw.json not found in ConfigMap data")
+			return fmt.Errorf("operator.json not found in ConfigMap data")
 		}
 
 		var config map[string]any
-		if err := json.Unmarshal([]byte(openclawJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse openclaw.json: %w", err)
+		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
+			return fmt.Errorf("failed to parse operator.json: %w", err)
 		}
 
 		models, _ := config["models"].(map[string]any)
@@ -554,106 +548,18 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 		}
 		models["providers"] = providers
 
-		remapVertexProviderModels(config, providers)
-		filterAgentDefaultsForProviders(config, providers)
-
 		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 		if err != nil {
-			return fmt.Errorf("failed to marshal openclaw.json: %w", err)
+			return fmt.Errorf("failed to marshal operator.json: %w", err)
 		}
 
-		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "openclaw.json"); err != nil {
-			return fmt.Errorf("failed to set updated openclaw.json in ConfigMap: %w", err)
+		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
+			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
 		}
 		return nil
 	}
 
 	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
-}
-
-// remapVertexProviderModels renames model entries in agents.defaults from "provider/model"
-// to "provider-vertex/model" when a Vertex variant exists but the base provider does not.
-// For example, "anthropic/claude-sonnet-4-6" becomes "anthropic-vertex/claude-sonnet-4-6"
-// when anthropic-vertex is configured but anthropic is not.
-func remapVertexProviderModels(config map[string]any, providers map[string]any) {
-	agents, _ := config["agents"].(map[string]any)
-	if agents == nil {
-		return
-	}
-	defaults, _ := agents["defaults"].(map[string]any)
-	if defaults == nil {
-		return
-	}
-
-	if modelMap, ok := defaults["models"].(map[string]any); ok {
-		for modelName, val := range modelMap {
-			providerKey, modelID, ok := strings.Cut(modelName, "/")
-			if !ok {
-				continue
-			}
-			vertexKey := providerKey + "-vertex"
-			_, hasBase := providers[providerKey]
-			_, hasVertex := providers[vertexKey]
-			if !hasBase && hasVertex {
-				delete(modelMap, modelName)
-				modelMap[vertexKey+"/"+modelID] = val
-			}
-		}
-	}
-
-	if primary, _ := defaults["model"].(map[string]any); primary != nil {
-		if primaryName, _ := primary["primary"].(string); primaryName != "" {
-			providerKey, modelID, ok := strings.Cut(primaryName, "/")
-			if ok {
-				vertexKey := providerKey + "-vertex"
-				_, hasBase := providers[providerKey]
-				_, hasVertex := providers[vertexKey]
-				if !hasBase && hasVertex {
-					primary["primary"] = vertexKey + "/" + modelID
-				}
-			}
-		}
-	}
-}
-
-// filterAgentDefaultsForProviders removes model entries from agents.defaults whose
-// provider (the part before "/" in the model name) is not in the injected providers map,
-// and clears agents.defaults.model.primary if its provider is not available.
-func filterAgentDefaultsForProviders(config map[string]any, providers map[string]any) {
-	agents, _ := config["agents"].(map[string]any)
-	if agents == nil {
-		return
-	}
-	defaults, _ := agents["defaults"].(map[string]any)
-	if defaults == nil {
-		return
-	}
-
-	if modelMap, ok := defaults["models"].(map[string]any); ok {
-		var available []string
-		for modelName := range modelMap {
-			providerKey, _, _ := strings.Cut(modelName, "/")
-			if _, exists := providers[providerKey]; !exists {
-				delete(modelMap, modelName)
-			} else {
-				available = append(available, modelName)
-			}
-		}
-		sort.Strings(available)
-
-		if primary, _ := defaults["model"].(map[string]any); primary != nil {
-			if primaryName, _ := primary["primary"].(string); primaryName != "" {
-				providerKey, _, _ := strings.Cut(primaryName, "/")
-				if _, exists := providers[providerKey]; !exists {
-					if len(available) > 0 {
-						primary["primary"] = available[0]
-					} else {
-						primary["primary"] = ""
-					}
-				}
-			}
-		}
-	}
 }
 
 // injectKubePortsIntoNetworkPolicy adds non-443 ports from kubernetes credentials to
@@ -725,9 +631,10 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 	return nil
 }
 
-// injectKubernetesIntoAgentsMd appends a Kubernetes section to AGENTS.md in the
-// claw-config ConfigMap when kubernetes credentials are present.
-func injectKubernetesIntoAgentsMd(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
+// injectKubernetesContextFile writes a KUBERNETES.md key into the claw-config ConfigMap
+// when kubernetes credentials are present. This file is always overwritten on the PVC
+// by the init container, while the user-owned AGENTS.md is left untouched.
+func injectKubernetesContextFile(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
 	var allContexts []kubeconfigContext
 	for _, rc := range resolvedCreds {
 		if rc.KubeConfig == nil {
@@ -739,44 +646,37 @@ func injectKubernetesIntoAgentsMd(objects []*unstructured.Unstructured, resolved
 		return nil
 	}
 
+	var sb strings.Builder
+	sb.WriteString("# Kubernetes Access\n\n")
+	sb.WriteString("You have access to Kubernetes clusters via `kubectl`. Your KUBECONFIG is\n")
+	sb.WriteString("pre-configured. Available contexts:\n")
+
+	sort.Slice(allContexts, func(i, j int) bool {
+		return allContexts[i].Name < allContexts[j].Name
+	})
+
+	for _, ctx := range allContexts {
+		entry := fmt.Sprintf("- `%s` (cluster: %s", ctx.Name, ctx.Cluster)
+		if ctx.Namespace != "" {
+			entry += ", namespace: " + ctx.Namespace
+		}
+		entry += ")"
+		if ctx.Current {
+			entry += " [current]"
+		}
+		sb.WriteString(entry + "\n")
+	}
+
+	sb.WriteString("\nUse `kubectl` commands to manage resources. The proxy handles authentication\n")
+	sb.WriteString("transparently — do not attempt to manage tokens or kubeconfig yourself.\n")
+
 	for _, obj := range objects {
 		if obj.GetKind() != ConfigMapKind || obj.GetName() != ClawConfigMapName {
 			continue
 		}
 
-		agentsMd, _, err := unstructured.NestedString(obj.Object, "data", "AGENTS.md")
-		if err != nil {
-			return fmt.Errorf("failed to extract AGENTS.md from ConfigMap: %w", err)
-		}
-
-		var sb strings.Builder
-		sb.WriteString(agentsMd)
-		sb.WriteString("\n## Kubernetes Access\n\n")
-		sb.WriteString("You have access to Kubernetes clusters via `kubectl`. Your KUBECONFIG is\n")
-		sb.WriteString("pre-configured. Available contexts:\n")
-
-		// Sort contexts for stable output
-		sort.Slice(allContexts, func(i, j int) bool {
-			return allContexts[i].Name < allContexts[j].Name
-		})
-
-		for _, ctx := range allContexts {
-			entry := fmt.Sprintf("- `%s` (cluster: %s", ctx.Name, ctx.Cluster)
-			if ctx.Namespace != "" {
-				entry += ", namespace: " + ctx.Namespace
-			}
-			entry += ")"
-			if ctx.Current {
-				entry += " [current]"
-			}
-			sb.WriteString(entry + "\n")
-		}
-
-		sb.WriteString("\nUse `kubectl` commands to manage resources. The proxy handles authentication\n")
-		sb.WriteString("transparently — do not attempt to manage tokens or kubeconfig yourself.\n")
-
-		if err := unstructured.SetNestedField(obj.Object, sb.String(), "data", "AGENTS.md"); err != nil {
-			return fmt.Errorf("failed to set AGENTS.md in ConfigMap: %w", err)
+		if err := unstructured.SetNestedField(obj.Object, sb.String(), "data", "KUBERNETES.md"); err != nil {
+			return fmt.Errorf("failed to set KUBERNETES.md in ConfigMap: %w", err)
 		}
 		return nil
 	}
