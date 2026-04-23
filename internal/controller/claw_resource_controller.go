@@ -202,9 +202,9 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
 	}
 
-	// Inject Kubernetes context info as a separate KUBERNETES.md file
-	if err := injectKubernetesContextFile(objects, resolvedCreds); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes context file: %w", err)
+	// Inject Kubernetes skill into ConfigMap for OpenClaw skill auto-discovery
+	if err := injectKubernetesSkill(objects, resolvedCreds); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes skill: %w", err)
 	}
 
 	// Inject non-443 ports from kubernetes credentials into proxy egress NetworkPolicy
@@ -628,13 +628,13 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 		}
 		return nil
 	}
-	return nil
+	return fmt.Errorf("NetworkPolicy %s not found in manifests", ClawProxyEgressNetworkPolicyName)
 }
 
-// injectKubernetesContextFile writes a KUBERNETES.md key into the claw-config ConfigMap
-// when kubernetes credentials are present. This file is always overwritten on the PVC
-// by the init container, while the user-owned AGENTS.md is left untouched.
-func injectKubernetesContextFile(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
+// injectKubernetesSkill writes a KUBERNETES.md key into the claw-config ConfigMap
+// when kubernetes credentials are present. The init container copies this into
+// skills/kubernetes/SKILL.md so OpenClaw auto-discovers it as a workspace skill.
+func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
 	var allContexts []kubeconfigContext
 	for _, rc := range resolvedCreds {
 		if rc.KubeConfig == nil {
@@ -646,14 +646,21 @@ func injectKubernetesContextFile(objects []*unstructured.Unstructured, resolvedC
 		return nil
 	}
 
-	var sb strings.Builder
-	sb.WriteString("# Kubernetes Access\n\n")
-	sb.WriteString("You have access to Kubernetes clusters via `kubectl`. Your KUBECONFIG is\n")
-	sb.WriteString("pre-configured. Available contexts:\n")
-
 	sort.Slice(allContexts, func(i, j int) bool {
 		return allContexts[i].Name < allContexts[j].Name
 	})
+
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.WriteString("name: kubernetes\n")
+	sb.WriteString("description: \"Kubernetes/OpenShift cluster access. Use when the user asks about ")
+	sb.WriteString("deployments, pods, services, builds, routes, or any cluster resource.\"\n")
+	sb.WriteString("---\n\n")
+	sb.WriteString("# Kubernetes Access\n\n")
+	sb.WriteString("You have access to Kubernetes/OpenShift clusters. Both `kubectl` and `oc` are\n")
+	sb.WriteString("available and your KUBECONFIG is pre-configured — authentication is handled\n")
+	sb.WriteString("transparently by the proxy.\n\n")
+	sb.WriteString("Available contexts:\n")
 
 	for _, ctx := range allContexts {
 		entry := fmt.Sprintf("- `%s` (cluster: %s", ctx.Name, ctx.Cluster)
@@ -667,8 +674,9 @@ func injectKubernetesContextFile(objects []*unstructured.Unstructured, resolvedC
 		sb.WriteString(entry + "\n")
 	}
 
-	sb.WriteString("\nUse `kubectl` commands to manage resources. The proxy handles authentication\n")
-	sb.WriteString("transparently — do not attempt to manage tokens or kubeconfig yourself.\n")
+	sb.WriteString("\nWhen the user asks about deployments, pods, services, routes, builds, logs,\n")
+	sb.WriteString("or anything cluster-related, use kubectl/oc directly to help them.\n\n")
+	sb.WriteString("Do not attempt to manage tokens, certificates, or kubeconfig yourself.\n")
 
 	for _, obj := range objects {
 		if obj.GetKind() != ConfigMapKind || obj.GetName() != ClawConfigMapName {
@@ -680,7 +688,7 @@ func injectKubernetesContextFile(objects []*unstructured.Unstructured, resolvedC
 		}
 		return nil
 	}
-	return nil
+	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem
