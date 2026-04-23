@@ -28,7 +28,7 @@ This ADR documents the decision to split configuration into operator-managed and
 | Q1 | Config separation strategy | Split into `operator.json` (operator-managed) and `openclaw.json` (user-owned with `$include`) | OpenClaw's `$include` + `deepMerge` handles composition natively. Write-back logic preserves `$include` directives (doesn't flatten). Rejected: custom JSON merge in init container (fragile, upstream `mergeMode: merge` requires Node.js), split ConfigMaps (OpenClaw expects a single config file), SSA partial ownership (can't own fields inside a JSON string value) |
 | Q2 | Where agent defaults live | User-owned `openclaw.json` seed | Model aliases, primary model, agent list, and workspace paths are user preferences. The operator should not overwrite these on every reconcile. The seed provides sensible defaults that users can customize freely |
 | Q3 | `AGENTS.md` handling | Conditional seed (copy only if missing on PVC) | Users and the OpenClaw application modify the system prompt at runtime. The operator provides initial content but must not clobber edits. Rejected: always-overwrite (destroys user edits), append-only (accumulates duplicates across reconciliations) |
-| Q4 | Kubernetes context delivery | Separate `KUBERNETES.md` file, always overwritten | Kubernetes context info (clusters, contexts, namespaces) is derived from the CR's credentials and must stay in sync. A separate file avoids conflicting with user edits to `AGENTS.md`. Always-overwritten because the content is purely operator-derived |
+| Q4 | Kubernetes context delivery | OpenClaw skill at `skills/kubernetes/SKILL.md`, always overwritten | Kubernetes context info (clusters, contexts, namespaces) is derived from the CR's credentials and must stay in sync. Delivered as an OpenClaw skill for auto-discovery. Always-overwritten because the content is purely operator-derived |
 | Q5 | Model remapping and filtering removal | Removed `remapVertexProviderModels` and `filterAgentDefaultsForProviders` | These functions modified the `agents.defaults` section (model aliases, primary model) which is now user-owned in `openclaw.json`. The operator no longer has access to or responsibility for this section. Users control their own model preferences via the seed or Control UI |
 | Q6 | Init container seeding logic | Shell conditionals in busybox, no merge tools | `[ -f target ] || cp source target` is the simplest correct approach. No dependencies beyond a POSIX shell. The upstream community operator's `mergeMode: merge` uses a Node.js script — unnecessary complexity when `$include` handles composition at the application layer |
 
@@ -43,7 +43,7 @@ claw-config ConfigMap (rebuilt every reconcile via SSA)
 ├── operator.json          ← operator-managed: gateway, providers, CORS, cron
 ├── openclaw.json          ← seed: user-owned config with $include directive
 ├── AGENTS.md              ← seed: initial system prompt
-└── KUBERNETES.md          ← operator-managed (only when kubernetes credentials exist)
+└── KUBERNETES.md          ← operator-managed skill (only when kubernetes credentials exist)
 ```
 
 ```
@@ -52,7 +52,7 @@ claw-home-pvc (persistent across pod restarts)
 ├── openclaw.json          ← seeded once, then user-owned
 └── workspace/
     ├── AGENTS.md           ← seeded once, then user-owned
-    └── KUBERNETES.md       ← always overwritten from ConfigMap (when present)
+    └── skills/kubernetes/SKILL.md  ← always overwritten from ConfigMap (when present)
 ```
 
 ### Config Composition via $include
@@ -95,7 +95,8 @@ mkdir -p /home/node/.openclaw/workspace
 
 # Conditionally copy operator-managed workspace files
 if [ -f /config/KUBERNETES.md ]; then
-  cp /config/KUBERNETES.md /home/node/.openclaw/workspace/KUBERNETES.md
+  mkdir -p /home/node/.openclaw/workspace/skills/kubernetes
+  cp /config/KUBERNETES.md /home/node/.openclaw/workspace/skills/kubernetes/SKILL.md
 fi
 ```
 
@@ -115,8 +116,8 @@ injectProvidersIntoConfigMap(objects, credentials)
  ├─ Only credentials with provider set generate entries
  ├─ Does NOT touch agents.defaults (lives in user-owned openclaw.json)
  ↓
-injectKubernetesContextFile(objects, resolvedCreds)
- ├─ Adds KUBERNETES.md key to ConfigMap (if kubernetes credentials exist)
+injectKubernetesSkill(objects, resolvedCreds)
+ ├─ Adds KUBERNETES.md key to ConfigMap as OpenClaw skill (if kubernetes credentials exist)
  ├─ No-op when no kubernetes credentials
  ↓
 applyResources()

@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -684,9 +685,9 @@ func TestInjectKubePortsIntoNetworkPolicy(t *testing.T) {
 	})
 }
 
-// --- injectKubernetesContextFile tests ---
+// --- injectKubernetesSkill tests ---
 
-func TestInjectKubernetesContextFile(t *testing.T) {
+func TestInjectKubernetesSkill(t *testing.T) {
 	makeCM := func() []*unstructured.Unstructured {
 		cm := &unstructured.Unstructured{}
 		cm.SetKind(ConfigMapKind)
@@ -695,7 +696,7 @@ func TestInjectKubernetesContextFile(t *testing.T) {
 		return []*unstructured.Unstructured{cm}
 	}
 
-	t.Run("should write KUBERNETES.md key into ConfigMap", func(t *testing.T) {
+	t.Run("should write KUBERNETES.md key with skill frontmatter into ConfigMap", func(t *testing.T) {
 		objects := makeCM()
 		creds := []resolvedCredential{
 			{
@@ -712,14 +713,18 @@ func TestInjectKubernetesContextFile(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubernetesContextFile(objects, creds))
+		require.NoError(t, injectKubernetesSkill(objects, creds))
 
 		kubeMd, found, _ := unstructured.NestedString(objects[0].Object, "data", "KUBERNETES.md")
 		assert.True(t, found, "KUBERNETES.md should exist in ConfigMap data")
+		assert.True(t, strings.HasPrefix(kubeMd, "---\n"), "should start with YAML frontmatter")
+		assert.Contains(t, kubeMd, "description:")
 		assert.Contains(t, kubeMd, "# Kubernetes Access")
 		assert.Contains(t, kubeMd, "`prod-ctx`")
 		assert.Contains(t, kubeMd, "[current]")
 		assert.Contains(t, kubeMd, "namespace: staging")
+		assert.Contains(t, kubeMd, "`oc`")
+		assert.Contains(t, kubeMd, "`kubectl`")
 	})
 
 	t.Run("should be no-op with no kubernetes credentials", func(t *testing.T) {
@@ -733,7 +738,7 @@ func TestInjectKubernetesContextFile(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubernetesContextFile(objects, creds))
+		require.NoError(t, injectKubernetesSkill(objects, creds))
 
 		_, found, _ := unstructured.NestedString(objects[0].Object, "data", "KUBERNETES.md")
 		assert.False(t, found, "KUBERNETES.md should not exist when no kubernetes credentials")

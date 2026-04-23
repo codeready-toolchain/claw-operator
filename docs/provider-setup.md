@@ -232,6 +232,7 @@ The `kubernetes` credential type lets the AI assistant interact with Kubernetes 
 **1. Create a ServiceAccount with RBAC:**
 
 ```sh
+oc create namespace my-workspace
 oc create sa claw-assistant -n my-workspace
 oc create rolebinding claw-assistant-edit \
   --clusterrole=edit \

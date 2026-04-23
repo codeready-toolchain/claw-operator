@@ -142,7 +142,7 @@ The `claw-config` ConfigMap uses a **split config** approach to preserve user an
 
 **Operator-managed files** (always overwritten on PVC by init container):
 - `operator.json` — Gateway settings, CORS origins, providers, proxy config. Rewritten every reconcile.
-- `KUBERNETES.md` — Kubernetes context info (only when k8s credentials present). Always overwritten.
+- `KUBERNETES.md` — Kubernetes skill file (only when k8s credentials present). Always overwritten. Init container copies to `skills/kubernetes/SKILL.md` for OpenClaw auto-discovery.
 
 **User-owned files** (seeded once, then owned by user/OpenClaw):
 - `openclaw.json` — Contains `"$include": "./operator.json"` plus agent defaults (model aliases, primary model, agent list). Seeded only if file doesn't exist on PVC. User and OpenClaw Control UI changes survive pod restarts.
@@ -252,9 +252,10 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ Write providers into data["operator.json"] (agent defaults are user-owned in openclaw.json seed)
    └─ Credentials without Provider are MITM-only (no provider entry)
   ↓
-7c. injectKubernetesContextFile(objects, resolvedCreds)
+7c. injectKubernetesSkill(objects, resolvedCreds)
    ├─ Collect contexts from all kubernetes credentials
-   ├─ Write data["KUBERNETES.md"] in claw-config ConfigMap (separate from user-owned AGENTS.md)
+   ├─ Write data["KUBERNETES.md"] in claw-config ConfigMap with OpenClaw skill frontmatter
+   ├─ Init container copies to skills/kubernetes/SKILL.md for auto-discovery
    └─ No-op when no kubernetes credentials present
   ↓
 7d. injectKubePortsIntoNetworkPolicy(objects, resolvedCreds)
@@ -313,7 +314,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `configureClawDeploymentForVertex()` — adds GOOGLE_APPLICATION_CREDENTIALS, ANTHROPIC_VERTEX_PROJECT_ID env vars and stub ADC volume mount to the claw deployment when Vertex SDK credentials exist
 - `configureClawDeploymentForKubernetes()` — when kubernetes credentials exist: mounts the sanitized kubeconfig ConfigMap (`claw-kube-config`) at `/etc/kube/`, sets `KUBECONFIG=/etc/kube/config` and `PATH` env vars, adds an `init-kubectl` init container that copies kubectl from the configured image into a shared emptyDir volume mounted at `/opt/kube-tools`
 - `injectKubePortsIntoNetworkPolicy()` — adds non-443 ports from kubeconfig cluster server URLs to the `claw-proxy-egress` NetworkPolicy. In-memory patching before apply, same pattern as `injectRouteHostIntoConfigMap`
-- `injectKubernetesContextFile()` — writes a `KUBERNETES.md` key into the `claw-config` ConfigMap (separate from user-owned AGENTS.md) listing available contexts, clusters, namespaces, and current-context
+- `injectKubernetesSkill()` — writes a `KUBERNETES.md` key into the `claw-config` ConfigMap with OpenClaw skill frontmatter listing available contexts, clusters, namespaces, and current-context. Init container copies to `skills/kubernetes/SKILL.md` for auto-discovery
 - `applyVertexADCConfigMap()` — creates/updates the stub ADC ConfigMap (claw-vertex-adc) with dummy authorized_user credentials for Vertex SDK token refresh bootstrap. Only created when Vertex SDK credentials exist
 - `applyProxyResources()` — generates proxy config, applies proxy ConfigMap and Vertex ADC ConfigMap. Returns proxy config JSON for hash stamping
 - `applyResources()` — applies list of unstructured objects using server-side apply
@@ -359,7 +360,7 @@ var ManifestsFS embed.FS
 
 The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
-- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, KUBERNETES.md for k8s context)
+- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, KUBERNETES.md for k8s skill)
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
 - **deployment.yaml** — OpenClaw application pods (init container with full security context hardening)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)
