@@ -354,33 +354,13 @@ func (r *ClawResourceReconciler) applyProxyResources(ctx context.Context, instan
 	return proxyConfigJSON, nil
 }
 
-func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstructured, error) {
-	// Write all manifest files (including kustomization.yaml) to in-memory filesystem
-	fs := filesys.MakeFsInMemory()
-	manifestFiles := map[string][]byte{
-		"manifests/kustomization.yaml":         readEmbeddedFile("manifests/kustomization.yaml"),
-		"manifests/configmap.yaml":             readEmbeddedFile("manifests/configmap.yaml"),
-		"manifests/pvc.yaml":                   readEmbeddedFile("manifests/pvc.yaml"),
-		"manifests/deployment.yaml":            readEmbeddedFile("manifests/deployment.yaml"),
-		"manifests/service.yaml":               readEmbeddedFile("manifests/service.yaml"),
-		"manifests/route.yaml":                 readEmbeddedFile("manifests/route.yaml"),
-		"manifests/proxy-configmap.yaml":       readEmbeddedFile("manifests/proxy-configmap.yaml"),
-		"manifests/proxy-deployment.yaml":      readEmbeddedFile("manifests/proxy-deployment.yaml"),
-		"manifests/proxy-service.yaml":         readEmbeddedFile("manifests/proxy-service.yaml"),
-		"manifests/networkpolicy.yaml":         readEmbeddedFile("manifests/networkpolicy.yaml"),
-		"manifests/ingress-networkpolicy.yaml": readEmbeddedFile("manifests/ingress-networkpolicy.yaml"),
-	}
-	for path, content := range manifestFiles {
-		if err := fs.WriteFile(path, content); err != nil {
-			return nil, fmt.Errorf("failed to write manifest to in-memory filesystem: %w", err)
-		}
-	}
-
+// buildKustomizeFromPath builds kustomize manifests from a specific component directory
+func (r *ClawResourceReconciler) buildKustomizeFromPath(fsys filesys.FileSystem, componentPath string) ([]*unstructured.Unstructured, error) {
 	// Build manifests using Kustomize
 	kustomizer := krusty.MakeKustomizer(krusty.MakeDefaultOptions())
-	resMap, err := kustomizer.Run(fs, "manifests")
+	resMap, err := kustomizer.Run(fsys, componentPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to run kustomize build: %w", err)
+		return nil, fmt.Errorf("failed to run kustomize build for %s: %w", componentPath, err)
 	}
 	// Convert resource map to unstructured objects
 	resources, err := resMap.AsYaml()
@@ -394,6 +374,66 @@ func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstr
 	}
 
 	return objects, nil
+}
+
+func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstructured, error) {
+	// Write all manifest files to in-memory filesystem
+	fs := filesys.MakeFsInMemory()
+
+	// TODO: could we have something more generic here?
+	// For example, we could use a glob to get all the manifests in a directory
+	// and then write them to the in-memory filesystem
+	// Claw component manifests
+	clawManifests := map[string][]byte{
+		"manifests/claw/kustomization.yaml":  readEmbeddedFile("manifests/claw/kustomization.yaml"),
+		"manifests/claw/configmap.yaml":      readEmbeddedFile("manifests/claw/configmap.yaml"),
+		"manifests/claw/pvc.yaml":            readEmbeddedFile("manifests/claw/pvc.yaml"),
+		"manifests/claw/deployment.yaml":     readEmbeddedFile("manifests/claw/deployment.yaml"),
+		"manifests/claw/service.yaml":        readEmbeddedFile("manifests/claw/service.yaml"),
+		"manifests/claw/route.yaml":          readEmbeddedFile("manifests/claw/route.yaml"),
+		"manifests/claw/network-policy.yaml": readEmbeddedFile("manifests/claw/network-policy.yaml"),
+	}
+
+	// Proxy component manifests
+	proxyManifests := map[string][]byte{
+		"manifests/claw-proxy/kustomization.yaml":    readEmbeddedFile("manifests/claw-proxy/kustomization.yaml"),
+		"manifests/claw-proxy/proxy-configmap.yaml":  readEmbeddedFile("manifests/claw-proxy/proxy-configmap.yaml"),
+		"manifests/claw-proxy/proxy-deployment.yaml": readEmbeddedFile("manifests/claw-proxy/proxy-deployment.yaml"),
+		"manifests/claw-proxy/proxy-service.yaml":    readEmbeddedFile("manifests/claw-proxy/proxy-service.yaml"),
+		"manifests/claw-proxy/network-policies.yaml": readEmbeddedFile("manifests/claw-proxy/network-policies.yaml"),
+	}
+
+	// Write all files to in-memory filesystem
+	allManifests := make(map[string][]byte)
+	for k, v := range clawManifests {
+		allManifests[k] = v
+	}
+	for k, v := range proxyManifests {
+		allManifests[k] = v
+	}
+
+	for path, content := range allManifests {
+		if err := fs.WriteFile(path, content); err != nil {
+			return nil, fmt.Errorf("failed to write manifest to in-memory filesystem: %w", err)
+		}
+	}
+
+	// Build claw component
+	clawObjects, err := r.buildKustomizeFromPath(fs, "manifests/claw")
+	if err != nil {
+		return nil, err
+	}
+
+	// Build proxy component
+	proxyObjects, err := r.buildKustomizeFromPath(fs, "manifests/claw-proxy")
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge both object lists
+	allObjects := append(clawObjects, proxyObjects...)
+
+	return allObjects, nil
 }
 
 // applyResources applies a list of unstructured objects using server-side apply

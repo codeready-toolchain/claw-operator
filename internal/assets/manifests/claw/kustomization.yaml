@@ -11,11 +11,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - route.yaml
-  - proxy-configmap.yaml
-  - proxy-deployment.yaml
-  - proxy-service.yaml
-  - networkpolicy.yaml
-  - ingress-networkpolicy.yaml
+  - network-policy.yaml
 
 images:
   - name: ghcr.io/openclaw/openclaw
