@@ -78,6 +78,8 @@ func TestMatchRoute(t *testing.T) {
 	}{
 		{name: "exact match", host: "api.example.com", wantDom: "api.example.com"},
 		{name: "exact match with port", host: "api.example.com:443", wantDom: "api.example.com"},
+		{name: "npm registry exact match", host: "registry.npmjs.org", wantDom: "registry.npmjs.org"},
+		{name: "npm registry exact match with port", host: "registry.npmjs.org:443", wantDom: "registry.npmjs.org"},
 		{name: "suffix match", host: "generativelanguage.googleapis.com", wantDom: ".googleapis.com"},
 		{name: "suffix match bare domain", host: "googleapis.com", wantDom: ".googleapis.com"},
 		{name: "no match", host: "unknown.example.org", wantNil: true},
