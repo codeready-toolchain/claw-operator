@@ -16,3 +16,8 @@ resources:
   - proxy-service.yaml
   - networkpolicy.yaml
   - ingress-networkpolicy.yaml
+
+images:
+  - name: ghcr.io/openclaw/openclaw
+    newName: ghcr.io/openclaw/openclaw
+    newTag: 2026.4.23-slim
