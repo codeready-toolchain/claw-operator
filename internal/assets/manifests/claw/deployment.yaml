@@ -131,6 +131,8 @@ spec:
               value: localhost,127.0.0.1,claw-proxy
             - name: NODE_USE_ENV_PROXY
               value: "1"
+            - name: NPM_CONFIG_CACHE
+              value: /tmp/.npm
             - name: NODE_EXTRA_CA_CERTS
               value: /etc/proxy-ca/ca.crt
             - name: SSL_CERT_FILE

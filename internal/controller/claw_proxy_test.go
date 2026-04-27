@@ -295,11 +295,12 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 4)
+		require.Len(t, cfg.Routes, 5)
 		assert.Equal(t, "api.example.com", cfg.Routes[0].Domain, "exact match should come first")
 		assert.Equal(t, "openrouter.ai", cfg.Routes[1].Domain, "builtin exact should come before suffix")
-		assert.Equal(t, "registry.npmjs.org", cfg.Routes[2].Domain, "builtin exact should come before suffix")
-		assert.Equal(t, ".example.com", cfg.Routes[3].Domain, "suffix match should come last")
+		assert.Equal(t, "raw.githubusercontent.com", cfg.Routes[2].Domain, "builtin exact should come before suffix")
+		assert.Equal(t, "registry.npmjs.org", cfg.Routes[3].Domain, "builtin exact should come before suffix")
+		assert.Equal(t, ".example.com", cfg.Routes[4].Domain, "suffix match should come last")
 	})
 
 	t.Run("should generate config with none route", func(t *testing.T) {
@@ -401,7 +402,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 4, "2 credential routes + 2 builtin passthrough")
+		require.Len(t, cfg.Routes, 5, "2 credential routes + 3 builtin passthrough")
 	})
 
 	t.Run("should preserve pathToken prefix and skip gateway routing when provider is set", func(t *testing.T) {
@@ -502,6 +503,17 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 		assert.Equal(t, "none", route.Injector)
 	})
 
+	t.Run("should include raw.githubusercontent.com with path restriction", func(t *testing.T) {
+		data, err := generateProxyConfig(nil) //nolint:staticcheck
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "raw.githubusercontent.com")
+		assert.Equal(t, "none", route.Injector)
+		assert.Equal(t, []string{"/BerriAI/litellm/"}, route.AllowedPaths)
+	})
+
 	t.Run("should include registry.npmjs.org as none route with no credentials", func(t *testing.T) {
 		data, err := generateProxyConfig(nil) //nolint:staticcheck
 		require.NoError(t, err)
@@ -511,6 +523,37 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 		require.Len(t, cfg.Routes, len(builtinPassthroughDomains))
 		route := findRouteByDomain(t, cfg.Routes, "registry.npmjs.org")
 		assert.Equal(t, "none", route.Injector)
+	})
+
+	t.Run("should have no path restriction on unrestricted builtins", func(t *testing.T) {
+		data, err := generateProxyConfig(nil) //nolint:staticcheck
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "openrouter.ai")
+		assert.Empty(t, route.AllowedPaths)
+		route = findRouteByDomain(t, cfg.Routes, "registry.npmjs.org")
+		assert.Empty(t, route.AllowedPaths)
+	})
+
+	t.Run("should propagate AllowedPaths from user credential", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:         "github",
+				Type:         clawv1alpha1.CredentialTypeNone,
+				Domain:       "api.github.com",
+				AllowedPaths: []string{"/repos/myorg/"},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials))
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "api.github.com")
+		assert.Equal(t, []string{"/repos/myorg/"}, route.AllowedPaths)
 	})
 
 	t.Run("should skip builtin route when user credential covers the domain", func(t *testing.T) {
@@ -876,6 +919,27 @@ func TestOpenClawProxyConfigMap(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(data), &cfg))
 		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
 		assert.Equal(t, "api_key", route.Injector)
+	})
+
+	t.Run("should include path-restricted raw.githubusercontent.com builtin after reconciliation", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      ClawProxyConfigMapName,
+				Namespace: namespace,
+			}, cm) == nil
+		}, "proxy config ConfigMap should be created")
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["proxy-config.json"]), &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "raw.githubusercontent.com")
+		assert.Equal(t, "none", route.Injector)
+		assert.Equal(t, []string{"/BerriAI/litellm/"}, route.AllowedPaths)
 	})
 
 	t.Run("should include gateway fields in proxy config when credential has provider", func(t *testing.T) {

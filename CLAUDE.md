@@ -24,6 +24,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
   - `pathToken` (PathTokenConfig, optional): Required when type is `pathToken`. Fields: `prefix` (URL path prefix, minLength=1)
   - `oauth2` (OAuth2Config, optional): Required when type is `oauth2`. Fields: `clientID` (minLength=1), `tokenURL` (minLength=1), `scopes` ([]string, optional)
   - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `operator.json` (included by the user-owned `openclaw.json` via `$include`). When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
+  - `allowedPaths` ([]string, optional): Restricts which URL paths the proxy permits for this domain. Each entry is a path prefix (e.g., "/v1/api/"). If empty, all paths are allowed. Used by builtin passthrough domains (e.g., `raw.githubusercontent.com` is restricted to `/BerriAI/litellm/`) and available for user-defined credentials.
 
 **Status Fields:**
 - `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`claw-gateway-token`)

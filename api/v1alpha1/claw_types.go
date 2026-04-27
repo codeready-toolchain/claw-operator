@@ -167,6 +167,11 @@ type CredentialSpec struct {
 	// When omitted, the credential is used for MITM forward proxy only (no provider entry).
 	// +optional
 	Provider string `json:"provider,omitempty"`
+
+	// AllowedPaths restricts which URL paths the proxy permits for this domain.
+	// Each entry is a path prefix (e.g., "/v1/api/"). If empty, all paths are allowed.
+	// +optional
+	AllowedPaths []string `json:"allowedPaths,omitempty"`
 }
 
 // ClawSpec defines the desired state of Claw

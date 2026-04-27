@@ -42,6 +42,22 @@ type Route struct {
 	DefaultHeaders map[string]string `json:"defaultHeaders,omitempty"`
 	KubeconfigPath string            `json:"kubeconfigPath,omitempty"`
 	CACert         string            `json:"caCert,omitempty"`
+	AllowedPaths   []string          `json:"allowedPaths,omitempty"`
+}
+
+// PathAllowed reports whether the request path is permitted by this route.
+// If AllowedPaths is empty the route is unrestricted. Otherwise the path
+// must start with at least one of the listed prefixes.
+func (r *Route) PathAllowed(path string) bool {
+	if len(r.AllowedPaths) == 0 {
+		return true
+	}
+	for _, prefix := range r.AllowedPaths {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Config is the top-level proxy configuration.

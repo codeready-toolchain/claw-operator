@@ -41,6 +41,21 @@ func TestLoadConfig(t *testing.T) {
 		assert.Equal(t, "bearer", cfg.Routes[0].Injector)
 	})
 
+	t.Run("should deserialize allowedPaths", func(t *testing.T) {
+		f, err := os.CreateTemp("", "proxy-config-*.json")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = os.Remove(f.Name()) })
+
+		_, err = f.WriteString(`{"routes":[{"domain":"raw.githubusercontent.com","injector":"none","allowedPaths":["/BerriAI/litellm/"]}]}`)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+
+		cfg, err := LoadConfig(f.Name())
+		require.NoError(t, err)
+		require.Len(t, cfg.Routes, 1)
+		assert.Equal(t, []string{"/BerriAI/litellm/"}, cfg.Routes[0].AllowedPaths)
+	})
+
 	t.Run("should return error for missing file", func(t *testing.T) {
 		_, err := LoadConfig("/nonexistent/path.json")
 		require.Error(t, err)
@@ -95,6 +110,30 @@ func TestMatchRoute(t *testing.T) {
 				require.NotNil(t, route)
 				assert.Equal(t, tt.wantDom, route.Domain)
 			}
+		})
+	}
+}
+
+func TestPathAllowed(t *testing.T) {
+	tests := []struct {
+		name         string
+		allowedPaths []string
+		path         string
+		want         bool
+	}{
+		{name: "empty list allows all", allowedPaths: nil, path: "/anything", want: true},
+		{name: "matching prefix allows", allowedPaths: []string{"/BerriAI/litellm/"}, path: "/BerriAI/litellm/main/model_prices.json", want: true},
+		{name: "exact prefix match allows", allowedPaths: []string{"/BerriAI/litellm/"}, path: "/BerriAI/litellm/", want: true},
+		{name: "non-matching prefix rejects", allowedPaths: []string{"/BerriAI/litellm/"}, path: "/evil-repo/malware/payload", want: false},
+		{name: "multiple prefixes any match allows", allowedPaths: []string{"/foo/", "/bar/"}, path: "/bar/baz", want: true},
+		{name: "multiple prefixes none match rejects", allowedPaths: []string{"/foo/", "/bar/"}, path: "/qux/baz", want: false},
+		{name: "partial prefix does not match", allowedPaths: []string{"/BerriAI/litellm/"}, path: "/BerriAI/litellm-fork/main/file", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := &Route{AllowedPaths: tt.allowedPaths}
+			assert.Equal(t, tt.want, route.PathAllowed(tt.path))
 		})
 	}
 }

@@ -62,6 +62,7 @@ type proxyRoute struct {
 	DefaultHeaders map[string]string `json:"defaultHeaders,omitempty"`
 	KubeconfigPath string            `json:"kubeconfigPath,omitempty"`
 	CACert         string            `json:"caCert,omitempty"`
+	AllowedPaths   []string          `json:"allowedPaths,omitempty"`
 }
 
 // proxyConfig is the top-level proxy configuration JSON.
@@ -164,12 +165,21 @@ func resolveProviderInfo(cred clawv1alpha1.CredentialSpec) providerInfo {
 	return providerInfo{Upstream: "https://" + domain}
 }
 
+// builtinPassthrough defines a domain the proxy always allows without credential injection.
+type builtinPassthrough struct {
+	Domain       string
+	AllowedPaths []string
+}
+
 // builtinPassthroughDomains are domains the proxy always allows without credential
-// injection. OpenClaw's gateway fetches model pricing from OpenRouter's public API
-// to power cost estimation in the UI.
-var builtinPassthroughDomains = []string{
-	"openrouter.ai",
-	"registry.npmjs.org",
+// injection. These support core gateway functionality:
+//   - openrouter.ai: model pricing API for cost estimation in the UI
+//   - raw.githubusercontent.com: LiteLLM model pricing data (path-restricted to the LiteLLM repo)
+//   - registry.npmjs.org: npm packages for plugin runtime dependencies
+var builtinPassthroughDomains = []builtinPassthrough{
+	{Domain: "openrouter.ai"},
+	{Domain: "raw.githubusercontent.com", AllowedPaths: []string{"/BerriAI/litellm/"}},
+	{Domain: "registry.npmjs.org"},
 }
 
 // generateProxyConfig builds the proxy config JSON from resolved credentials.
@@ -182,9 +192,9 @@ func generateProxyConfig(credentials []resolvedCredential) ([]byte, error) {
 		coveredDomains[strings.ToLower(rc.Domain)] = true
 	}
 
-	for _, domain := range builtinPassthroughDomains {
-		if !coveredDomains[domain] {
-			exact = append(exact, proxyRoute{Domain: domain, Injector: "none"})
+	for _, bp := range builtinPassthroughDomains {
+		if !coveredDomains[bp.Domain] {
+			exact = append(exact, proxyRoute{Domain: bp.Domain, Injector: "none", AllowedPaths: bp.AllowedPaths})
 		}
 	}
 
@@ -214,6 +224,7 @@ func generateProxyConfig(credentials []resolvedCredential) ([]byte, error) {
 		route := proxyRoute{
 			Domain:         cred.Domain,
 			DefaultHeaders: cred.DefaultHeaders,
+			AllowedPaths:   cred.AllowedPaths,
 		}
 
 		switch cred.Type {

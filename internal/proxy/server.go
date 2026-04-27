@@ -115,6 +115,14 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 				)
 			}
 
+			if !route.PathAllowed(req.URL.Path) {
+				logger.Warn("blocked request to restricted path", "host", req.URL.Host, "path", req.URL.Path)
+				return req, goproxy.NewResponse(
+					req, goproxy.ContentTypeText, http.StatusForbidden,
+					`{"error":"path not allowed"}`,
+				)
+			}
+
 			StripAuthHeaders(req)
 
 			// GCP token vending: Google's SDK tries to fetch its own OAuth2 token
