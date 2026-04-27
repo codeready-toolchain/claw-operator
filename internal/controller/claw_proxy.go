@@ -169,6 +169,7 @@ func resolveProviderInfo(cred clawv1alpha1.CredentialSpec) providerInfo {
 // to power cost estimation in the UI.
 var builtinPassthroughDomains = []string{
 	"openrouter.ai",
+	"registry.npmjs.org",
 }
 
 // generateProxyConfig builds the proxy config JSON from resolved credentials.
