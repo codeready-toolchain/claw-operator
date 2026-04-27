@@ -295,10 +295,11 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 3)
+		require.Len(t, cfg.Routes, 4)
 		assert.Equal(t, "api.example.com", cfg.Routes[0].Domain, "exact match should come first")
 		assert.Equal(t, "openrouter.ai", cfg.Routes[1].Domain, "builtin exact should come before suffix")
-		assert.Equal(t, ".example.com", cfg.Routes[2].Domain, "suffix match should come last")
+		assert.Equal(t, "registry.npmjs.org", cfg.Routes[2].Domain, "builtin exact should come before suffix")
+		assert.Equal(t, ".example.com", cfg.Routes[3].Domain, "suffix match should come last")
 	})
 
 	t.Run("should generate config with none route", func(t *testing.T) {
@@ -400,7 +401,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 3, "2 credential routes + 1 builtin passthrough")
+		require.Len(t, cfg.Routes, 4, "2 credential routes + 2 builtin passthrough")
 	})
 
 	t.Run("should preserve pathToken prefix and skip gateway routing when provider is set", func(t *testing.T) {
@@ -501,6 +502,17 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 		assert.Equal(t, "none", route.Injector)
 	})
 
+	t.Run("should include registry.npmjs.org as none route with no credentials", func(t *testing.T) {
+		data, err := generateProxyConfig(nil) //nolint:staticcheck
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		require.Len(t, cfg.Routes, len(builtinPassthroughDomains))
+		route := findRouteByDomain(t, cfg.Routes, "registry.npmjs.org")
+		assert.Equal(t, "none", route.Injector)
+	})
+
 	t.Run("should skip builtin route when user credential covers the domain", func(t *testing.T) {
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
@@ -513,6 +525,11 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 				Domain:   "openrouter.ai",
 				Provider: "openrouter",
 			},
+			{
+				Name:   "npm",
+				Type:   clawv1alpha1.CredentialTypeNone,
+				Domain: "registry.npmjs.org",
+			},
 		}
 
 		data, err := generateProxyConfig(toResolved(credentials))
@@ -521,13 +538,12 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
 
-		var count int
+		counts := make(map[string]int)
 		for _, r := range cfg.Routes {
-			if r.Domain == "openrouter.ai" {
-				count++
-			}
+			counts[r.Domain]++
 		}
-		assert.Equal(t, 1, count, "should not duplicate openrouter.ai when user already has it")
+		assert.Equal(t, 1, counts["openrouter.ai"], "should not duplicate openrouter.ai when user already has it")
+		assert.Equal(t, 1, counts["registry.npmjs.org"], "should not duplicate registry.npmjs.org when user already has it")
 
 		route := findRouteByDomain(t, cfg.Routes, "openrouter.ai")
 		assert.Equal(t, "bearer", route.Injector, "user credential should take precedence")

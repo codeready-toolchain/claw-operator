@@ -66,6 +66,7 @@ func TestMatchRoute(t *testing.T) {
 			{Domain: "api.example.com", Injector: "bearer"},
 			{Domain: ".googleapis.com", Injector: "api_key"},
 			{Domain: "openrouter.ai", Injector: "bearer"},
+			{Domain: "registry.npmjs.org", Injector: "none"},
 		},
 	}
 
