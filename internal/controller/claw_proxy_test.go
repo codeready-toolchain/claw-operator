@@ -295,12 +295,19 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 5)
-		assert.Equal(t, "api.example.com", cfg.Routes[0].Domain, "exact match should come first")
-		assert.Equal(t, "openrouter.ai", cfg.Routes[1].Domain, "builtin exact should come before suffix")
-		assert.Equal(t, "raw.githubusercontent.com", cfg.Routes[2].Domain, "builtin exact should come before suffix")
-		assert.Equal(t, "registry.npmjs.org", cfg.Routes[3].Domain, "builtin exact should come before suffix")
-		assert.Equal(t, ".example.com", cfg.Routes[4].Domain, "suffix match should come last")
+		expectedDomains := []string{
+			"api.example.com",
+			"openrouter.ai",
+			"raw.githubusercontent.com",
+			"registry.npmjs.org",
+			".example.com",
+		}
+		require.Len(t, cfg.Routes, len(expectedDomains))
+		assert.Equal(t, expectedDomains[0], cfg.Routes[0].Domain, "exact match should come first")
+		assert.Equal(t, expectedDomains[1], cfg.Routes[1].Domain, "builtin exact should come before suffix")
+		assert.Equal(t, expectedDomains[2], cfg.Routes[2].Domain, "builtin exact should come before suffix")
+		assert.Equal(t, expectedDomains[3], cfg.Routes[3].Domain, "builtin exact should come before suffix")
+		assert.Equal(t, expectedDomains[4], cfg.Routes[4].Domain, "suffix match should come last")
 	})
 
 	t.Run("should generate config with none route", func(t *testing.T) {
@@ -402,7 +409,8 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		require.Len(t, cfg.Routes, 5, "2 credential routes + 3 builtin passthrough")
+		expectedCount := 2 + len(builtinPassthroughDomains)
+		require.Len(t, cfg.Routes, expectedCount, "2 credential routes + builtin passthrough")
 	})
 
 	t.Run("should preserve pathToken prefix and skip gateway routing when provider is set", func(t *testing.T) {

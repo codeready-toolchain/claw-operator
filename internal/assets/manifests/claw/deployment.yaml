@@ -105,11 +105,21 @@ spec:
             - sh
             - -c
             - |
-              echo "[wait-for-proxy] waiting for claw-proxy:8080..."
-              until nc -z claw-proxy 8080 2>/dev/null; do
+              TIMEOUT_SECONDS=120
+              elapsed=0
+              echo "[wait-for-proxy] waiting for claw-proxy:8080 (timeout ${TIMEOUT_SECONDS}s)..."
+              while ! nc -z claw-proxy 8080 2>/dev/null; do
+                elapsed=$((elapsed + 1))
+                if [ "$elapsed" -ge "$TIMEOUT_SECONDS" ]; then
+                  echo "[wait-for-proxy] ERROR: claw-proxy:8080 not reachable after ${TIMEOUT_SECONDS}s"
+                  exit 1
+                fi
+                if [ $((elapsed % 15)) -eq 0 ]; then
+                  echo "[wait-for-proxy] still waiting... (${elapsed}s/${TIMEOUT_SECONDS}s)"
+                fi
                 sleep 1
               done
-              echo "[wait-for-proxy] proxy is up"
+              echo "[wait-for-proxy] proxy is up (after ${elapsed}s)"
           resources:
             requests:
               memory: 16Mi
@@ -177,24 +187,24 @@ spec:
             limits:
               memory: 2Gi
               cpu: "1"
+          startupProbe:
+            tcpSocket:
+              port: 18789
+            failureThreshold: 60
+            periodSeconds: 5
           livenessProbe:
-            exec:
-              command:
-                - node
-                - -e
-                - "require('http').get('http://127.0.0.1:18789/healthz', r => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"
-            initialDelaySeconds: 60
+            httpGet:
+              path: /healthz
+              port: 18789
             periodSeconds: 30
-            timeoutSeconds: 10
+            timeoutSeconds: 15
+            failureThreshold: 5
           readinessProbe:
-            exec:
-              command:
-                - node
-                - -e
-                - "require('http').get('http://127.0.0.1:18789/readyz', r => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"
-            initialDelaySeconds: 15
+            httpGet:
+              path: /healthz
+              port: 18789
             periodSeconds: 10
-            timeoutSeconds: 5
+            timeoutSeconds: 10
           volumeMounts:
             - name: patched-dist
               mountPath: /app/dist
