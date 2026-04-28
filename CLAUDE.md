@@ -363,7 +363,7 @@ The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
 - **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, KUBERNETES.md for k8s skill)
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
-- **deployment.yaml** — OpenClaw application pods (init container with full security context hardening)
+- **deployment.yaml** — OpenClaw application pods (init containers with readOnlyRootFilesystem, gateway without; PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` for persistent tool state; `wait-for-proxy` init container ensures proxy is ready before gateway starts)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)
 - **route.yaml** — OpenShift Route for external HTTPS access (skipped on non-OpenShift)
 - **proxy-configmap.yaml** — Nginx configuration for LLM API proxy
@@ -495,6 +495,6 @@ t.Cleanup(func() {
 ## Conventions
 
 - Owner references are set on all created resources via `controllerutil.SetControllerReference`
-- Pod security: non-root (uid 65532), restricted seccomp, all capabilities dropped (both init and main containers)
+- Pod security: non-root (uid 65532), restricted seccomp, all capabilities dropped. Init containers and the proxy use `readOnlyRootFilesystem: true`. The gateway container does not — it runs dynamic AI agent tools that write to unpredictable `$HOME` paths. PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` provide persistent writable storage for tool state
 - Linting config in `.golangci.yml` — notable: `lll`, `dupl` enabled
 - License header required (template in `hack/boilerplate.go.txt`)

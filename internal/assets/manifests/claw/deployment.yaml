@@ -73,7 +73,7 @@ spec:
             - -c
             - |
               cp /config/operator.json /home/node/.openclaw/operator.json
-              mkdir -p /home/node/.openclaw/workspace
+              mkdir -p /home/node/.openclaw/workspace /home/node/.openclaw/.local /home/node/.openclaw/.cache /home/node/.openclaw/.config/codex
               [ -f /home/node/.openclaw/openclaw.json ] || cp /config/openclaw.json /home/node/.openclaw/openclaw.json
               [ -f /home/node/.openclaw/workspace/AGENTS.md ] || cp /config/AGENTS.md /home/node/.openclaw/workspace/AGENTS.md
               if [ -f /config/KUBERNETES.md ]; then
@@ -92,6 +92,31 @@ spec:
               mountPath: /home/node/.openclaw
             - name: config
               mountPath: /config
+        - name: wait-for-proxy
+          image: mirror.gcr.io/library/busybox:1.37
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - sh
+            - -c
+            - |
+              echo "[wait-for-proxy] waiting for claw-proxy:8080..."
+              until nc -z claw-proxy 8080 2>/dev/null; do
+                sleep 1
+              done
+              echo "[wait-for-proxy] proxy is up"
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 10m
+            limits:
+              memory: 32Mi
+              cpu: 50m
       containers:
         - name: gateway
           image: ghcr.io/openclaw/openclaw:slim
@@ -132,7 +157,9 @@ spec:
             - name: NODE_USE_ENV_PROXY
               value: "1"
             - name: NPM_CONFIG_CACHE
-              value: /tmp/.npm
+              value: /home/node/.cache/npm
+            - name: CODEX_HOME
+              value: /home/node/.config/codex
             - name: NODE_EXTRA_CA_CERTS
               value: /etc/proxy-ca/ca.crt
             - name: SSL_CERT_FILE
@@ -173,6 +200,15 @@ spec:
               mountPath: /app/dist
             - name: claw-home
               mountPath: /home/node/.openclaw
+            - name: claw-home
+              mountPath: /home/node/.local
+              subPath: .local
+            - name: claw-home
+              mountPath: /home/node/.cache
+              subPath: .cache
+            - name: claw-home
+              mountPath: /home/node/.config
+              subPath: .config
             - name: tmp-volume
               mountPath: /tmp
             - name: proxy-ca
@@ -180,7 +216,6 @@ spec:
               readOnly: true
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
