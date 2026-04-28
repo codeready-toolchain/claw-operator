@@ -143,6 +143,7 @@ The `claw-config` ConfigMap uses a **split config** approach to preserve user an
 
 **Operator-managed files** (always overwritten on PVC by init container):
 - `operator.json` — Gateway settings, CORS origins, providers, proxy config. Rewritten every reconcile.
+- `PROXY_SETUP.md` — Proxy architecture skill file (always present). Explains the proxy security model and how to configure access to external services (WhatsApp, custom domains). Init container copies to `skills/proxy/SKILL.md` for OpenClaw auto-discovery.
 - `KUBERNETES.md` — Kubernetes skill file (only when k8s credentials present). Always overwritten. Init container copies to `skills/kubernetes/SKILL.md` for OpenClaw auto-discovery.
 
 **User-owned files** (seeded once, then owned by user/OpenClaw):
@@ -361,7 +362,7 @@ var ManifestsFS embed.FS
 
 The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
-- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, KUBERNETES.md for k8s skill)
+- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, PROXY_SETUP.md for proxy architecture skill, KUBERNETES.md for k8s skill)
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
 - **deployment.yaml** — OpenClaw application pods (init containers with readOnlyRootFilesystem, gateway without; PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` for persistent tool state; `wait-for-proxy` init container ensures proxy is ready before gateway starts)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)

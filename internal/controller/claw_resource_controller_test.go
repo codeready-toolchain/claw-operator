@@ -187,6 +187,30 @@ func TestClawConfigMapController(t *testing.T) {
 			assert.Contains(t, agentsMd, "OpenClaw Assistant")
 		})
 
+		t.Run("should have PROXY_SETUP.md skill content", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			configMap := &corev1.ConfigMap{}
+			waitFor(t, timeout, interval, func() bool {
+				return k8sClient.Get(ctx, client.ObjectKey{
+					Name:      ClawConfigMapName,
+					Namespace: namespace,
+				}, configMap) == nil
+			}, "ConfigMap should be created")
+
+			proxyMd, ok := configMap.Data["PROXY_SETUP.md"]
+			assert.True(t, ok, "PROXY_SETUP.md key must exist")
+			assert.Contains(t, proxyMd, "Proxy Architecture")
+			assert.Contains(t, proxyMd, "type: none")
+			assert.Contains(t, proxyMd, ".whatsapp.com")
+		})
+
 		t.Run("should not have KUBERNETES.md when no kubernetes credentials", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
@@ -918,6 +942,8 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 				"openclaw.json should only be seeded if missing")
 			assert.Contains(t, initConfigScript, "[ -f /home/node/.openclaw/workspace/AGENTS.md ] || cp",
 				"AGENTS.md should only be seeded if missing")
+			assert.Contains(t, initConfigScript, "cp /config/PROXY_SETUP.md /home/node/.openclaw/workspace/skills/proxy/SKILL.md",
+				"PROXY_SETUP.md should always be copied to proxy skill directory")
 			assert.Contains(t, initConfigScript, "if [ -f /config/KUBERNETES.md ]",
 				"KUBERNETES.md should be copied only when present in ConfigMap")
 		})

@@ -76,6 +76,8 @@ spec:
               mkdir -p /home/node/.openclaw/workspace /home/node/.openclaw/.local /home/node/.openclaw/.cache /home/node/.openclaw/.config/codex
               [ -f /home/node/.openclaw/openclaw.json ] || cp /config/openclaw.json /home/node/.openclaw/openclaw.json
               [ -f /home/node/.openclaw/workspace/AGENTS.md ] || cp /config/AGENTS.md /home/node/.openclaw/workspace/AGENTS.md
+              mkdir -p /home/node/.openclaw/workspace/skills/proxy
+              cp /config/PROXY_SETUP.md /home/node/.openclaw/workspace/skills/proxy/SKILL.md
               if [ -f /config/KUBERNETES.md ]; then
                 mkdir -p /home/node/.openclaw/workspace/skills/kubernetes
                 cp /config/KUBERNETES.md /home/node/.openclaw/workspace/skills/kubernetes/SKILL.md

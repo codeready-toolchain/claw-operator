@@ -52,3 +52,96 @@ data:
     # OpenClaw Assistant
 
     You are a helpful AI assistant running in OpenShift.
+  PROXY_SETUP.md: |
+    ---
+    name: proxy-setup
+    description: "Network proxy architecture and how to configure access to external services like WhatsApp."
+    ---
+
+    # Proxy Architecture
+
+    You are running in an OpenShift cluster behind a credential-injecting MITM proxy.
+    All outbound traffic from this pod goes through the proxy via `HTTP_PROXY`/`HTTPS_PROXY`
+    environment variables. The proxy blocks any domain that is not explicitly configured.
+
+    LLM provider credentials (API keys, OAuth tokens, GCP service account tokens) are
+    injected by the proxy — you never see real secrets. For non-LLM services that need
+    network access without credential injection, the proxy can allowlist domains using
+    `type: none` credential entries.
+
+    ## When the user wants to integrate with an external service
+
+    If a service is not working or the user asks to enable a new integration, the most
+    likely cause is that the proxy is blocking the required domains. Tell the user they
+    need to update their Claw custom resource to add the appropriate credential entries.
+
+    **Important:** Each `oc apply` of the Claw CR **replaces** the entire `credentials`
+    list. The user must include all existing credentials when applying — otherwise they
+    will be removed.
+
+    Walk the user through these steps:
+
+    1. Retrieve the current Claw instance:
+
+    ```sh
+    oc get claw instance -n <namespace> -o yaml
+    ```
+
+    The output will look something like this (the `credentials` list varies):
+
+    ```yaml
+    apiVersion: claw.sandbox.redhat.com/v1alpha1
+    kind: Claw
+    metadata:
+      name: instance
+    spec:
+      credentials:
+        - name: gemini
+          type: apiKey
+          secretRef:
+            name: gemini-api-key
+            key: api-key
+          provider: google
+    ```
+
+    2. Add the new credential entries to the existing `credentials` list (see known
+    integrations below for the exact entries needed).
+
+    3. Apply the updated CR:
+
+    ```sh
+    oc apply -n <namespace> -f updated-claw.yaml
+    ```
+
+    ## Known integrations
+
+    ### WhatsApp
+
+    WhatsApp Web uses phone-based QR pairing (not API keys). The proxy only needs to
+    allowlist the domains — no credential injection is required.
+
+    Add these entries to the `credentials` list:
+
+    ```yaml
+        - name: whatsapp
+          type: none
+          domain: ".whatsapp.com"
+        - name: whatsapp-net
+          type: none
+          domain: ".whatsapp.net"
+    ```
+
+    After the user updates the Claw CR, the remaining steps are:
+    1. Install the WhatsApp plugin: `openclaw plugins install @openclaw/whatsapp`
+    2. Link the device: `openclaw channels login --channel whatsapp`
+    3. Scan the QR code with their phone (WhatsApp → Linked Devices)
+
+    ## Custom domains
+
+    For any other external service, the user can add a `type: none` entry with the
+    appropriate `domain`. A leading dot (e.g., `.example.com`) matches all subdomains.
+    An exact domain (e.g., `api.example.com`) matches only that host.
+
+    If the service requires credential injection (API key, bearer token), use the
+    corresponding credential type (`apiKey`, `bearer`, `oauth2`, `pathToken`) with a
+    `secretRef` pointing to a Kubernetes Secret containing the credential.
