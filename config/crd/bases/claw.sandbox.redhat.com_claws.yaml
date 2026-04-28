@@ -53,6 +53,13 @@ spec:
                   description: CredentialSpec defines a single credential entry for
                     proxy injection.
                   properties:
+                    allowedPaths:
+                      description: |-
+                        AllowedPaths restricts which URL paths the proxy permits for this domain.
+                        Each entry is a path prefix (e.g., "/v1/api/"). If empty, all paths are allowed.
+                      items:
+                        type: string
+                      type: array
                     apiKey:
                       description: APIKey configures custom header injection. Required
                         when type is "apiKey".

@@ -1,21 +1,18 @@
 # Claw Operator
 
-A Kubernetes operator that manages [OpenClaw](https://github.com/openclaw/openclaw) instances on OpenShift. It handles deployment, credential injection for LLM providers, HTTPS routing, and gateway authentication through a single `Claw` custom resource.
+An OpenShift-oriented Kubernetes operator that manages [OpenClaw](https://github.com/openclaw/openclaw) instances. It handles deployment, credential injection for LLM providers, HTTPS routing, and gateway authentication through a single `Claw` custom resource. While the operator can run on vanilla Kubernetes, it is designed for OpenShift where the restricted Security Context Constraint (SCC) provides the primary pod security boundary -- non-root UID enforcement, SELinux confinement, seccomp filtering, and privilege escalation prevention are all handled by the platform.
 
 ## Security
 
 The operator applies multiple layers of defense:
 
-- **Sandboxing** -- each Claw instance runs in its own namespace with OpenShift's restricted SCC enforced automatically (UID isolation, SELinux, seccomp).
-- **Secret isolation** -- OpenClaw pods never see API keys or tokens. Credentials are only mounted in the proxy, which runs as a separate Deployment. The OpenClaw container has no Secret mounts and no environment variables containing credential values.
+- **OpenShift restricted SCC** -- each pod runs under the restricted SCC which enforces non-root UIDs, SELinux labels, seccomp `RuntimeDefault`, and blocks privilege escalation. All containers additionally drop all Linux capabilities and disable service account token mounting.
+- **Secret isolation** -- OpenClaw pods never see API keys or tokens. Credentials are stored in user-managed Kubernetes Secrets and injected by the proxy (a separate Deployment) into outbound requests.
+- **External secret management** -- credential Secrets are user-managed and fully compatible with [External Secrets Operator](https://external-secrets.io/), Sealed Secrets, or HashiCorp Vault. Using an external secret manager is recommended for production.
 - **Network isolation** -- OpenClaw pods cannot reach the internet directly; all outbound traffic is forced through the credential proxy via NetworkPolicy. The proxy only allows HTTPS (port 443) egress and rejects any domain not explicitly configured.
 - **Ingress restriction** -- only the OpenShift router namespace can reach the gateway port (NetworkPolicy on ingress).
-- **Credential injection** -- API keys and tokens are stored in user-managed Kubernetes Secrets and referenced by the proxy only (`secretKeyRef`/volume mount). The operator never reads or copies credential values.
 - **Gateway authentication** -- a cryptographically random 256-bit token is auto-generated per instance and required for all gateway access.
 - **Device pairing** -- remote browser connections require a one-time approval via CLI before they can interact with the instance.
-- **Pod hardening** -- all containers run as non-root, drop all Linux capabilities, use a read-only root filesystem, and set `seccompProfile: RuntimeDefault`.
-- **Minimal privileges** -- service account tokens are not mounted (`automountServiceAccountToken: false`).
-- **External secret management** -- credential Secrets are user-managed and fully compatible with [External Secrets Operator](https://external-secrets.io/), Sealed Secrets, or HashiCorp Vault. Using an external secret manager is recommended for production.
 
 ## Quick Start
 

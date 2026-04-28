@@ -24,6 +24,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
   - `pathToken` (PathTokenConfig, optional): Required when type is `pathToken`. Fields: `prefix` (URL path prefix, minLength=1)
   - `oauth2` (OAuth2Config, optional): Required when type is `oauth2`. Fields: `clientID` (minLength=1), `tokenURL` (minLength=1), `scopes` ([]string, optional)
   - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `operator.json` (included by the user-owned `openclaw.json` via `$include`). When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
+  - `allowedPaths` ([]string, optional): Restricts which URL paths the proxy permits for this domain. Each entry is a path prefix (e.g., "/v1/api/"). If empty, all paths are allowed. Used by builtin passthrough domains (e.g., `raw.githubusercontent.com` is restricted to `/BerriAI/litellm/`) and available for user-defined credentials.
 
 **Status Fields:**
 - `gatewayTokenSecretRef` (string, optional): Name of the Secret containing the gateway authentication token (`claw-gateway-token`)
@@ -362,7 +363,7 @@ The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
 - **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, KUBERNETES.md for k8s skill)
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
-- **deployment.yaml** — OpenClaw application pods (init container with full security context hardening)
+- **deployment.yaml** — OpenClaw application pods (init containers with readOnlyRootFilesystem, gateway without; PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` for persistent tool state; `wait-for-proxy` init container ensures proxy is ready before gateway starts)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)
 - **route.yaml** — OpenShift Route for external HTTPS access (skipped on non-OpenShift)
 - **proxy-configmap.yaml** — Nginx configuration for LLM API proxy
@@ -494,6 +495,6 @@ t.Cleanup(func() {
 ## Conventions
 
 - Owner references are set on all created resources via `controllerutil.SetControllerReference`
-- Pod security: non-root (uid 65532), restricted seccomp, all capabilities dropped (both init and main containers)
+- Pod security: non-root (uid 65532), restricted seccomp, all capabilities dropped. Init containers and the proxy use `readOnlyRootFilesystem: true`. The gateway container does not — it runs dynamic AI agent tools that write to unpredictable `$HOME` paths. PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` provide persistent writable storage for tool state
 - Linting config in `.golangci.yml` — notable: `lll`, `dupl` enabled
 - License header required (template in `hack/boilerplate.go.txt`)
