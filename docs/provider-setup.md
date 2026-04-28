@@ -1,6 +1,6 @@
 # Provider Setup
 
-This guide covers configuring LLM providers and external services for use with Claw. Each section walks through creating the necessary Secret and Claw CR configuration.
+This guide covers configuring LLM providers, external services, and messaging channels for use with Claw. Each section walks through creating the necessary Secret and Claw CR configuration.
 
 All examples assume you have set your target namespace:
 
@@ -368,3 +368,43 @@ The `kubernetes` credential uses the proxy's existing **MITM forward proxy mode*
 5. Re-encrypts and forwards to the upstream API server
 
 The gateway pod **cannot** reach any API server directly — egress is restricted to the proxy by NetworkPolicy. The assistant never sees real tokens; only the sanitized kubeconfig with placeholder values.
+
+## WhatsApp
+
+OpenClaw supports WhatsApp as a messaging channel via WhatsApp Web (the Baileys library). The gateway maintains a linked-device session over WebSocket to WhatsApp's servers.
+
+All gateway egress goes through the credential-injecting proxy, which blocks unknown domains by default. To allow WhatsApp traffic, add two `type: none` credentials that allowlist the required domains:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        name: gemini-api-key
+        key: api-key
+      provider: google
+    - name: whatsapp
+      type: none
+      domain: ".whatsapp.com"
+    - name: whatsapp-net
+      type: none
+      domain: ".whatsapp.net"
+EOF
+```
+
+The leading dot makes these suffix matches — `.whatsapp.com` covers `web.whatsapp.com` (WebSocket), `api.whatsapp.com`, and fallback hosts; `.whatsapp.net` covers `mmg.whatsapp.net` (media), `pps.whatsapp.net` (profile pictures), and CDN subdomains.
+
+No Secret is needed. WhatsApp Web uses phone-based QR pairing, not API keys — the session state is managed by OpenClaw on the gateway pod's persistent storage. The `none` type tells the proxy to allow traffic to these domains without injecting any credentials.
+
+After deploying, enable WhatsApp inside OpenClaw:
+
+1. Open the OpenClaw Control UI
+2. Enable the WhatsApp plugin (`openclaw plugins install @openclaw/whatsapp`)
+3. Run `openclaw channels login --channel whatsapp` to get a QR code
+4. Scan the QR code with your phone (WhatsApp → Linked Devices)
