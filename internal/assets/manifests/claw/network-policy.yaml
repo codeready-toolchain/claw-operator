@@ -15,6 +15,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               policy-group.network.openshift.io/ingress: ""
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/host-network: ""
       ports:
         - port: 18789
           protocol: TCP
