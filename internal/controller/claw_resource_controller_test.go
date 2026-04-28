@@ -209,6 +209,7 @@ func TestClawConfigMapController(t *testing.T) {
 			assert.Contains(t, proxyMd, "Proxy Architecture")
 			assert.Contains(t, proxyMd, "type: none")
 			assert.Contains(t, proxyMd, ".whatsapp.com")
+			assert.Contains(t, proxyMd, ".whatsapp.net")
 		})
 
 		t.Run("should not have KUBERNETES.md when no kubernetes credentials", func(t *testing.T) {
