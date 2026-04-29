@@ -578,8 +578,9 @@ func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, cred
 		return nil
 	}
 
+	gatewayName := getClawDeploymentName(instanceName)
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || strings.HasSuffix(obj.GetName(), "-proxy") {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
 			continue
 		}
 
@@ -666,8 +667,9 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 		return nil
 	}
 
+	gatewayName := getClawDeploymentName(instanceName)
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || strings.HasSuffix(obj.GetName(), "-proxy") {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
 			continue
 		}
 

@@ -437,7 +437,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
 
 	// Inject Route host into ConfigMap
-	if err := r.injectRouteHostIntoConfigMap(objects, routeHost); err != nil {
+	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
 	}
 
@@ -447,12 +447,12 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Inject Kubernetes skill into ConfigMap for OpenClaw skill auto-discovery
-	if err := injectKubernetesSkill(objects, resolvedCreds); err != nil {
+	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes skill: %w", err)
 	}
 
 	// Inject non-443 ports from kubernetes credentials into proxy egress NetworkPolicy
-	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds); err != nil {
+	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
 	}
 
@@ -462,7 +462,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if obj.GetKind() == RouteKind {
 			continue
 		}
-		if obj.GetKind() == ConfigMapKind && strings.HasSuffix(obj.GetName(), "-proxy-config") {
+		if obj.GetKind() == ConfigMapKind && obj.GetName() == getProxyConfigMapName(instance.Name) {
 			continue
 		}
 		remainingObjects = append(remainingObjects, obj)
@@ -741,14 +741,15 @@ func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*
 
 // injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator.json with actual Route host.
 // If routeHost is empty (vanilla Kubernetes), uses localhost fallback.
-func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstructured.Unstructured, routeHost string) error {
+func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstructured.Unstructured, routeHost, instanceName string) error {
 	replacement := routeHost
 	if replacement == "" {
 		replacement = "http://localhost:18789"
 	}
 
+	configMapName := getConfigMapName(instanceName)
 	for _, obj := range objects {
-		if obj.GetKind() == ConfigMapKind && strings.HasSuffix(obj.GetName(), "-config") {
+		if obj.GetKind() == ConfigMapKind && obj.GetName() == configMapName {
 			operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
 			if err != nil {
 				return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
@@ -767,7 +768,7 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 		}
 	}
 
-	return fmt.Errorf("ConfigMap with suffix '-config' not found in manifests")
+	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 }
 
 // injectProvidersIntoConfigMap dynamically builds the models.providers section of operator.json
@@ -816,8 +817,9 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance
 		}
 	}
 
+	configMapName := getConfigMapName(instance.Name)
 	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || !strings.HasSuffix(obj.GetName(), "-config") {
+		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
 			continue
 		}
 
@@ -852,13 +854,13 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance
 		return nil
 	}
 
-	return fmt.Errorf("ConfigMap with suffix '-config' not found in manifests")
+	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 }
 
 // injectKubePortsIntoNetworkPolicy adds non-443 ports from kubernetes credentials to
 // the proxy egress NetworkPolicy. This allows the proxy to reach API servers on
 // non-standard ports (e.g., 6443).
-func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
+func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential, instanceName string) error {
 	uniquePorts := map[string]bool{}
 	for _, rc := range resolvedCreds {
 		if rc.KubeConfig == nil {
@@ -874,8 +876,9 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 		return nil
 	}
 
+	npName := getProxyEgressNetworkPolicyName(instanceName)
 	for _, obj := range objects {
-		if obj.GetKind() != NetworkPolicyKind || !strings.HasSuffix(obj.GetName(), "-proxy-egress") {
+		if obj.GetKind() != NetworkPolicyKind || obj.GetName() != npName {
 			continue
 		}
 
@@ -921,13 +924,13 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 		}
 		return nil
 	}
-	return fmt.Errorf("NetworkPolicy with suffix '-proxy-egress' not found in manifests")
+	return fmt.Errorf("NetworkPolicy %q not found in manifests", npName)
 }
 
 // injectKubernetesSkill writes a KUBERNETES.md key into the claw-config ConfigMap
 // when kubernetes credentials are present. The init container copies this into
 // skills/kubernetes/SKILL.md so OpenClaw auto-discovers it as a workspace skill.
-func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
+func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential, instanceName string) error {
 	var allContexts []kubeconfigContext
 	for _, rc := range resolvedCreds {
 		if rc.KubeConfig == nil {
@@ -971,8 +974,9 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 	sb.WriteString("or anything cluster-related, use kubectl/oc directly to help them.\n\n")
 	sb.WriteString("Do not attempt to manage tokens, certificates, or kubeconfig yourself.\n")
 
+	configMapName := getConfigMapName(instanceName)
 	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || !strings.HasSuffix(obj.GetName(), "-config") {
+		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
 			continue
 		}
 
@@ -981,7 +985,7 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 		}
 		return nil
 	}
-	return fmt.Errorf("ConfigMap with suffix '-config' not found in manifests")
+	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem
@@ -1042,8 +1046,10 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 		return nil
 	}
 
-	// Skip operator-managed secrets (gateway token secrets end with "-gateway-token")
-	if strings.HasSuffix(secret.Name, "-gateway-token") {
+	// Skip operator-managed secrets (owned by a Claw controller).
+	// These are already handled by Owns(&corev1.Secret{}) in the controller setup.
+	if metav1.GetControllerOf(secret) != nil &&
+		metav1.GetControllerOf(secret).Kind == ClawResourceKind {
 		return nil
 	}
 

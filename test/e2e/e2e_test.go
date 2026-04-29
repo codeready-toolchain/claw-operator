@@ -338,7 +338,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
-				waitForPVCDeletion(t, userNamespace)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the credential Secret")
@@ -447,7 +447,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
-				waitForPVCDeletion(t, userNamespace)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the credential Secret")
@@ -536,7 +536,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
-				waitForPVCDeletion(t, userNamespace)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the credential Secret")
@@ -615,7 +615,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "llm-key-2", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
-				waitForPVCDeletion(t, userNamespace)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the first credential Secret")
@@ -740,7 +740,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
-				waitForPVCDeletion(t, userNamespace)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the credential Secret")
@@ -807,7 +807,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			)
 
 			// Ensure clean state from previous tests before creating resources
-			waitForPVCDeletion(t, userNamespace)
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 
 			t.Cleanup(func() {
 				collectDebugInfo(t)
@@ -819,7 +819,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "ns", kubeWorkspace, "--ignore-not-found")
 				_, _ = utils.Run(t, cmd)
-				waitForPVCDeletion(t, userNamespace)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			// 1. Create workspace namespace
@@ -1141,17 +1141,23 @@ type tokenRequest struct {
 	} `json:"status"`
 }
 
-func waitForPVCDeletion(t *testing.T, namespace string) {
+func waitForPVCDeletion(t *testing.T) error {
 	t.Helper()
 	ctx := context.Background()
-	err := wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+	return wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
 		func(ctx context.Context) (bool, error) {
 			cmd := exec.Command("kubectl", "get", "pvc", pvcName,
-				"-n", namespace, "--no-headers")
-			_, err := utils.Run(t, cmd)
-			return err != nil, nil
+				"-n", userNamespace, "--no-headers")
+			output, err := utils.Run(t, cmd)
+			if err != nil {
+				if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found") {
+					return true, nil
+				}
+				return false, nil
+			}
+			if strings.TrimSpace(output) == "" {
+				return true, nil
+			}
+			return false, nil
 		})
-	if err != nil {
-		t.Logf("warning: PVC %s in %s not fully deleted: %v", pvcName, namespace, err)
-	}
 }

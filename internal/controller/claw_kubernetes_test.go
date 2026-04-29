@@ -597,7 +597,7 @@ func TestInjectKubePortsIntoNetworkPolicy(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubePortsIntoNetworkPolicy(objects, creds))
+		require.NoError(t, injectKubePortsIntoNetworkPolicy(objects, creds, testInstanceName))
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		rule := egress[0].(map[string]any)
@@ -630,7 +630,7 @@ func TestInjectKubePortsIntoNetworkPolicy(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubePortsIntoNetworkPolicy(objects, creds))
+		require.NoError(t, injectKubePortsIntoNetworkPolicy(objects, creds, testInstanceName))
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		rule := egress[0].(map[string]any)
@@ -649,7 +649,7 @@ func TestInjectKubePortsIntoNetworkPolicy(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubePortsIntoNetworkPolicy(objects, creds))
+		require.NoError(t, injectKubePortsIntoNetworkPolicy(objects, creds, testInstanceName))
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		rule := egress[0].(map[string]any)
@@ -679,7 +679,7 @@ func TestInjectKubePortsIntoNetworkPolicy(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubePortsIntoNetworkPolicy(objects, creds))
+		require.NoError(t, injectKubePortsIntoNetworkPolicy(objects, creds, testInstanceName))
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		rule := egress[0].(map[string]any)
@@ -716,7 +716,7 @@ func TestInjectKubernetesSkill(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubernetesSkill(objects, creds))
+		require.NoError(t, injectKubernetesSkill(objects, creds, testInstanceName))
 
 		kubeMd, found, _ := unstructured.NestedString(objects[0].Object, "data", "KUBERNETES.md")
 		assert.True(t, found, "KUBERNETES.md should exist in ConfigMap data")
@@ -742,7 +742,7 @@ func TestInjectKubernetesSkill(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectKubernetesSkill(objects, creds))
+		require.NoError(t, injectKubernetesSkill(objects, creds, testInstanceName))
 
 		_, found, _ := unstructured.NestedString(objects[0].Object, "data", "KUBERNETES.md")
 		assert.False(t, found, "KUBERNETES.md should not exist when no kubernetes credentials")

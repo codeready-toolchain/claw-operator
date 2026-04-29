@@ -123,24 +123,30 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func deleteAndWaitAllResources(t *testing.T, namespace string) {
+func deleteAndWaitAllResources(t *testing.T, namespace string, instanceNames ...string) {
 	t.Helper()
 	instanceName := testInstanceName
+	if len(instanceNames) > 0 {
+		instanceName = instanceNames[0]
+	}
 	resources := []struct {
 		obj client.Object
 		key client.ObjectKey
 	}{
 		{&clawv1alpha1.Claw{}, client.ObjectKey{Name: instanceName, Namespace: namespace}},
 		{&corev1.ConfigMap{}, client.ObjectKey{Name: getConfigMapName(instanceName), Namespace: namespace}},
+		{&corev1.ConfigMap{}, client.ObjectKey{Name: getProxyConfigMapName(instanceName), Namespace: namespace}},
+		{&corev1.Secret{}, client.ObjectKey{Name: getProxyCAConfigMapName(instanceName), Namespace: namespace}},
 		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: getEgressNetworkPolicyName(instanceName), Namespace: namespace}},
 		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: getIngressNetworkPolicyName(instanceName), Namespace: namespace}},
+		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: getProxyEgressNetworkPolicyName(instanceName), Namespace: namespace}},
 		{&corev1.Secret{}, client.ObjectKey{Name: getGatewaySecretName(instanceName), Namespace: namespace}},
 		{&corev1.Secret{}, client.ObjectKey{Name: aiModelSecret, Namespace: namespace}},
 		{&corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: getPVCName(instanceName), Namespace: namespace}},
 		{&corev1.Service{}, client.ObjectKey{Name: getServiceName(instanceName), Namespace: namespace}},
 		{&appsv1.Deployment{}, client.ObjectKey{Name: getClawDeploymentName(instanceName), Namespace: namespace}},
-		{&corev1.Service{}, client.ObjectKey{Name: getProxyServiceName(testInstanceName), Namespace: namespace}},
-		{&appsv1.Deployment{}, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}},
+		{&corev1.Service{}, client.ObjectKey{Name: getProxyServiceName(instanceName), Namespace: namespace}},
+		{&appsv1.Deployment{}, client.ObjectKey{Name: getProxyDeploymentName(instanceName), Namespace: namespace}},
 	}
 
 	for _, r := range resources {
