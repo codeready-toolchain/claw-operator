@@ -55,8 +55,9 @@ var (
 )
 
 const (
-	timeout  = time.Second * 10
-	interval = time.Millisecond * 250
+	timeout          = time.Second * 10
+	interval         = time.Millisecond * 250
+	testInstanceName = "test-claw" // Default instance name for tests
 )
 
 // waitFor polls a condition function until it returns true or timeout is exceeded.
@@ -124,21 +125,22 @@ func TestMain(m *testing.M) {
 
 func deleteAndWaitAllResources(t *testing.T, namespace string) {
 	t.Helper()
+	instanceName := testInstanceName
 	resources := []struct {
 		obj client.Object
 		key client.ObjectKey
 	}{
-		{&clawv1alpha1.Claw{}, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}},
-		{&corev1.ConfigMap{}, client.ObjectKey{Name: ClawConfigMapName, Namespace: namespace}},
-		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: ClawNetworkPolicyName, Namespace: namespace}},
-		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: ClawIngressNetworkPolicyName, Namespace: namespace}},
-		{&corev1.Secret{}, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}},
+		{&clawv1alpha1.Claw{}, client.ObjectKey{Name: instanceName, Namespace: namespace}},
+		{&corev1.ConfigMap{}, client.ObjectKey{Name: getConfigMapName(instanceName), Namespace: namespace}},
+		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: getEgressNetworkPolicyName(instanceName), Namespace: namespace}},
+		{&netv1.NetworkPolicy{}, client.ObjectKey{Name: getIngressNetworkPolicyName(instanceName), Namespace: namespace}},
+		{&corev1.Secret{}, client.ObjectKey{Name: getGatewaySecretName(instanceName), Namespace: namespace}},
 		{&corev1.Secret{}, client.ObjectKey{Name: aiModelSecret, Namespace: namespace}},
-		{&corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}},
-		{&corev1.Service{}, client.ObjectKey{Name: ClawServiceName, Namespace: namespace}},
-		{&appsv1.Deployment{}, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}},
-		{&corev1.Service{}, client.ObjectKey{Name: ClawProxyServiceName, Namespace: namespace}},
-		{&appsv1.Deployment{}, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}},
+		{&corev1.PersistentVolumeClaim{}, client.ObjectKey{Name: getPVCName(instanceName), Namespace: namespace}},
+		{&corev1.Service{}, client.ObjectKey{Name: getServiceName(instanceName), Namespace: namespace}},
+		{&appsv1.Deployment{}, client.ObjectKey{Name: getClawDeploymentName(instanceName), Namespace: namespace}},
+		{&corev1.Service{}, client.ObjectKey{Name: getProxyServiceName(testInstanceName), Namespace: namespace}},
+		{&appsv1.Deployment{}, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}},
 	}
 
 	for _, r := range resources {

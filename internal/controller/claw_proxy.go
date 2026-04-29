@@ -293,7 +293,7 @@ func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instan
 	logger := log.FromContext(ctx)
 
 	cm := &corev1.ConfigMap{}
-	cm.SetName(ClawProxyConfigMapName)
+	cm.SetName(getProxyConfigMapName(instance.Name))
 	cm.SetNamespace(instance.Namespace)
 	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
 	cm.Data = map[string]string{
@@ -329,9 +329,10 @@ func hasVertexSDKCredentials(credentials []resolvedCredential) bool {
 // OpenClaw pod's Vertex SDK to bootstrap GCP token refresh. The stub contains
 // dummy credentials — the MITM proxy replaces tokens with real ones.
 func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) error {
+	configMapName := getVertexADCConfigMapName(instance.Name)
 	if !hasVertexSDKCredentials(resolvedCreds) {
 		existing := &corev1.ConfigMap{}
-		if err := r.Get(ctx, client.ObjectKey{Name: ClawVertexADCConfigMapName, Namespace: instance.Namespace}, existing); err == nil {
+		if err := r.Get(ctx, client.ObjectKey{Name: configMapName, Namespace: instance.Namespace}, existing); err == nil {
 			log.FromContext(ctx).Info("Cleaning up orphaned Vertex ADC ConfigMap")
 			return r.Delete(ctx, existing)
 		}
@@ -341,7 +342,7 @@ func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, in
 	logger := log.FromContext(ctx)
 
 	cm := &corev1.ConfigMap{}
-	cm.SetName(ClawVertexADCConfigMapName)
+	cm.SetName(configMapName)
 	cm.SetNamespace(instance.Namespace)
 	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
 	cm.Data = map[string]string{
@@ -371,7 +372,7 @@ func configureProxyImage(objects []*unstructured.Unstructured, image string) err
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+		if obj.GetKind() != DeploymentKind || !strings.HasSuffix(obj.GetName(), "-proxy") {
 			continue
 		}
 
@@ -444,7 +445,7 @@ func configureImagePullPolicy(objects []*unstructured.Unstructured, policy strin
 // kustomize objects in-place before they are applied via SSA.
 func configureProxyForCredentials(objects []*unstructured.Unstructured, credentials []resolvedCredential) error {
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+		if obj.GetKind() != DeploymentKind || !strings.HasSuffix(obj.GetName(), "-proxy") {
 			continue
 		}
 
@@ -578,7 +579,7 @@ func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, cred
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawDeploymentName {
+		if obj.GetKind() != DeploymentKind || strings.HasSuffix(obj.GetName(), "-proxy") {
 			continue
 		}
 
@@ -666,7 +667,7 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawDeploymentName {
+		if obj.GetKind() != DeploymentKind || strings.HasSuffix(obj.GetName(), "-proxy") {
 			continue
 		}
 
@@ -786,7 +787,7 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 // rollouts when the proxy config changes.
 func stampProxyConfigHash(objects []*unstructured.Unstructured, hash string) error {
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+		if obj.GetKind() != DeploymentKind || !strings.HasSuffix(obj.GetName(), "-proxy") {
 			continue
 		}
 
@@ -833,7 +834,7 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+		if obj.GetKind() != DeploymentKind || !strings.HasSuffix(obj.GetName(), "-proxy") {
 			continue
 		}
 
@@ -856,9 +857,10 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 // If the Secret is missing or lacks valid data, a new P-256 ECDSA CA is generated.
 func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	logger := log.FromContext(ctx)
+	secretName := getProxyCAConfigMapName(instance.Name)
 
 	existing := &corev1.Secret{}
-	err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: ClawProxyCACertSecretName}, existing)
+	err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: secretName}, existing)
 	if err == nil {
 		if len(existing.Data["ca.crt"]) > 0 && len(existing.Data["ca.key"]) > 0 {
 			logger.Info("Proxy CA secret already exists, skipping generation")
@@ -874,7 +876,7 @@ func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *cla
 	}
 
 	secret := &corev1.Secret{}
-	secret.SetName(ClawProxyCACertSecretName)
+	secret.SetName(secretName)
 	secret.SetNamespace(instance.Namespace)
 	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
 	secret.Data = map[string][]byte{

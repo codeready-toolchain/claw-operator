@@ -39,28 +39,28 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 
 	t.Run("should succeed with valid apiKey credential", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 	})
 
 	t.Run("should succeed with zero credentials", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 	})
 
 	t.Run("should fail when Secret does not exist", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -74,7 +74,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 
 		reconciler := createClawReconciler()
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{Name: ClawInstanceName, Namespace: namespace},
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "credential validation failed")
@@ -93,7 +93,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -107,7 +107,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 
 		reconciler := createClawReconciler()
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{Name: ClawInstanceName, Namespace: namespace},
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key \"api-key\" not found")
@@ -117,7 +117,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -129,14 +129,14 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 	})
 
 	t.Run("should reject creation when secretRef is nil for apiKey type via CEL validation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -155,7 +155,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -174,7 +174,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -188,11 +188,11 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 
 		reconciler := createClawReconciler()
 		_, _ = reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{Name: ClawInstanceName, Namespace: namespace},
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
 		})
 
 		updated := &clawv1alpha1.Claw{}
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, updated))
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: testInstanceName, Namespace: namespace}, updated))
 
 		var credFound, readyFound bool
 		for _, c := range updated.Status.Conditions {
@@ -214,12 +214,12 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 
 	t.Run("should set CredentialsResolved condition", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		updatedInstance := &clawv1alpha1.Claw{}
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, updatedInstance))
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: testInstanceName, Namespace: namespace}, updatedInstance))
 
 		var found bool
 		for _, c := range updatedInstance.Status.Conditions {
@@ -235,12 +235,12 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 
 	t.Run("should set ProxyConfigured condition", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		updatedInstance := &clawv1alpha1.Claw{}
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, updatedInstance))
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: testInstanceName, Namespace: namespace}, updatedInstance))
 
 		var found bool
 		for _, c := range updatedInstance.Status.Conditions {
@@ -259,7 +259,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 
 func TestOpenClawCredentialSecretReference(t *testing.T) {
 	t.Run("When reconciling Claw with credential references", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should configure proxy deployment with credential env vars", func(t *testing.T) {
@@ -274,7 +274,7 @@ func TestOpenClawCredentialSecretReference(t *testing.T) {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawProxyDeploymentName,
+					Name:      getProxyDeploymentName(testInstanceName),
 					Namespace: namespace,
 				}, deployment)
 				if err != nil {
@@ -306,7 +306,7 @@ func TestOpenClawCredentialSecretReference(t *testing.T) {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawProxyDeploymentName,
+					Name:      getProxyDeploymentName(testInstanceName),
 					Namespace: namespace,
 				}, deployment)
 				if err != nil {
@@ -328,7 +328,10 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 	buildObjects := func(t *testing.T) []*unstructured.Unstructured {
 		t.Helper()
 		reconciler := createClawReconciler()
-		objects, err := reconciler.buildKustomizedObjects()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 		return objects
 	}
@@ -336,7 +339,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 	findProxyContainer := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
 		t.Helper()
 		for _, obj := range objects {
-			if obj.GetKind() == DeploymentKind && obj.GetName() == ClawProxyDeploymentName {
+			if obj.GetKind() == DeploymentKind && obj.GetName() == getProxyDeploymentName(testInstanceName) {
 				containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
 				require.NotEmpty(t, containers)
 				c, ok := containers[0].(map[string]any)
@@ -351,7 +354,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 	findVolumes := func(t *testing.T, objects []*unstructured.Unstructured) []any {
 		t.Helper()
 		for _, obj := range objects {
-			if obj.GetKind() == DeploymentKind && obj.GetName() == ClawProxyDeploymentName {
+			if obj.GetKind() == DeploymentKind && obj.GetName() == getProxyDeploymentName(testInstanceName) {
 				vols, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
 				return vols
 			}
@@ -458,13 +461,13 @@ func TestStampSecretVersionAnnotation(t *testing.T) {
 	t.Run("should stamp Secret ResourceVersion on proxy pod template", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		deployment := &appsv1.Deployment{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
-			Name:      ClawProxyDeploymentName,
+			Name:      getProxyDeploymentName(testInstanceName),
 			Namespace: namespace,
 		}, deployment))
 
@@ -479,13 +482,13 @@ func TestStampSecretVersionAnnotation(t *testing.T) {
 	t.Run("should update annotation when Secret data changes", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		deployment := &appsv1.Deployment{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
-			Name:      ClawProxyDeploymentName,
+			Name:      getProxyDeploymentName(testInstanceName),
 			Namespace: namespace,
 		}, deployment))
 		geminiSecretVersionKey := clawv1alpha1.AnnotationPrefixSecretVersion + "gemini" + clawv1alpha1.AnnotationSuffixSecretVersion
@@ -502,10 +505,10 @@ func TestStampSecretVersionAnnotation(t *testing.T) {
 		require.NoError(t, k8sClient.Update(ctx, secret))
 
 		// Reconcile again
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
-			Name:      ClawProxyDeploymentName,
+			Name:      getProxyDeploymentName(testInstanceName),
 			Namespace: namespace,
 		}, deployment))
 		newRV := deployment.Spec.Template.Annotations[geminiSecretVersionKey]
@@ -517,7 +520,7 @@ func TestStampSecretVersionAnnotation(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -529,11 +532,11 @@ func TestStampSecretVersionAnnotation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		deployment := &appsv1.Deployment{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
-			Name:      ClawProxyDeploymentName,
+			Name:      getProxyDeploymentName(testInstanceName),
 			Namespace: namespace,
 		}, deployment))
 
@@ -550,7 +553,7 @@ func TestFindClawsReferencingSecret(t *testing.T) {
 
 	t.Run("should map referenced secret to Claw reconcile request", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
 
 		secret := &corev1.Secret{}
@@ -559,13 +562,13 @@ func TestFindClawsReferencingSecret(t *testing.T) {
 
 		requests := reconciler.findClawsReferencingSecret(ctx, secret)
 		require.Len(t, requests, 1)
-		assert.Equal(t, ClawInstanceName, requests[0].Name)
+		assert.Equal(t, testInstanceName, requests[0].Name)
 		assert.Equal(t, namespace, requests[0].Namespace)
 	})
 
 	t.Run("should return empty for unreferenced secret", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
 
 		secret := &corev1.Secret{}
@@ -578,7 +581,7 @@ func TestFindClawsReferencingSecret(t *testing.T) {
 
 	t.Run("should skip gateway secret", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
 
 		secret := &corev1.Secret{}

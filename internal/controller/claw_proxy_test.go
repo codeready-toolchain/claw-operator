@@ -50,14 +50,14 @@ func TestClawProxyCA(t *testing.T) {
 
 	t.Run("should create proxy CA Secret on first reconciliation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		secret := &corev1.Secret{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawProxyCACertSecretName,
+				Name:      getProxyCAConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, secret) == nil
 		}, "proxy CA Secret should be created")
@@ -68,14 +68,14 @@ func TestClawProxyCA(t *testing.T) {
 
 	t.Run("should create valid X.509 CA certificate", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		secret := &corev1.Secret{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawProxyCACertSecretName,
+				Name:      getProxyCAConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, secret) == nil
 		}, "proxy CA Secret should be created")
@@ -91,24 +91,24 @@ func TestClawProxyCA(t *testing.T) {
 
 	t.Run("should not regenerate CA on subsequent reconciliations", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		secret := &corev1.Secret{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawProxyCACertSecretName,
+				Name:      getProxyCAConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, secret) == nil
 		}, "proxy CA Secret should be created")
 		initialCert := string(secret.Data["ca.crt"])
 
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		secret2 := &corev1.Secret{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
-			Name:      ClawProxyCACertSecretName,
+			Name:      getProxyCAConfigMapName(testInstanceName),
 			Namespace: namespace,
 		}, secret2))
 		assert.Equal(t, initialCert, string(secret2.Data["ca.crt"]), "CA cert should not change")
@@ -116,21 +116,21 @@ func TestClawProxyCA(t *testing.T) {
 
 	t.Run("should set owner reference on proxy CA Secret", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		secret := &corev1.Secret{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawProxyCACertSecretName,
+				Name:      getProxyCAConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, secret) == nil
 		}, "proxy CA Secret should be created")
 
 		require.NotEmpty(t, secret.OwnerReferences, "CA Secret should have owner references")
 		assert.Equal(t, ClawResourceKind, secret.OwnerReferences[0].Kind)
-		assert.Equal(t, ClawInstanceName, secret.OwnerReferences[0].Name)
+		assert.Equal(t, testInstanceName, secret.OwnerReferences[0].Name)
 	})
 }
 
@@ -605,7 +605,10 @@ func TestConfigureProxyImage(t *testing.T) {
 	buildObjects := func(t *testing.T) []*unstructured.Unstructured {
 		t.Helper()
 		reconciler := createClawReconciler()
-		objects, err := reconciler.buildKustomizedObjects()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 		return objects
 	}
@@ -613,7 +616,7 @@ func TestConfigureProxyImage(t *testing.T) {
 	getProxyImage := func(t *testing.T, objects []*unstructured.Unstructured) string {
 		t.Helper()
 		for _, obj := range objects {
-			if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+			if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(testInstanceName) {
 				continue
 			}
 			containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
@@ -734,7 +737,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
 		cm := &unstructured.Unstructured{}
 		cm.SetKind(ConfigMapKind)
-		cm.SetName(ClawConfigMapName)
+		cm.SetName(getConfigMapName(testInstanceName))
 		cm.Object["data"] = map[string]any{
 			"operator.json": jsonContent,
 		}
@@ -908,14 +911,14 @@ func TestOpenClawProxyConfigMap(t *testing.T) {
 
 	t.Run("should create proxy config ConfigMap after reconciliation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawProxyConfigMapName,
+				Name:      getProxyConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "proxy config ConfigMap should be created")
@@ -931,14 +934,14 @@ func TestOpenClawProxyConfigMap(t *testing.T) {
 
 	t.Run("should include path-restricted raw.githubusercontent.com builtin after reconciliation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawProxyConfigMapName,
+				Name:      getProxyConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "proxy config ConfigMap should be created")
@@ -952,14 +955,14 @@ func TestOpenClawProxyConfigMap(t *testing.T) {
 
 	t.Run("should include gateway fields in proxy config when credential has provider", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawProxyConfigMapName,
+				Name:      getProxyConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "proxy config ConfigMap should be created")
@@ -977,14 +980,14 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 
 	t.Run("should inject dynamic providers into ConfigMap after reconciliation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstance(t, ctx, ClawInstanceName, namespace)
+		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawConfigMapName,
+				Name:      getConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "ConfigMap should be created")
@@ -1011,7 +1014,7 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -1023,12 +1026,12 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawConfigMapName,
+				Name:      getConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "ConfigMap should be created")
@@ -1043,14 +1046,14 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 
 	t.Run("should have empty providers for MITM-only credentials", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstanceMITMOnly(t, ctx, ClawInstanceName, namespace)
+		createClawInstanceMITMOnly(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawConfigMapName,
+				Name:      getConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "ConfigMap should be created")

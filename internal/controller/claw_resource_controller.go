@@ -54,7 +54,6 @@ import (
 
 const (
 	ClawResourceKind = "Claw"
-	ClawInstanceName = "instance"
 
 	// Core resources
 	ClawConfigMapName                = "claw-config"
@@ -82,6 +81,127 @@ const (
 	ConfigMapKind     = "ConfigMap"
 	NetworkPolicyKind = "NetworkPolicy"
 )
+
+// setDynamicNamesAndLabels sets resource names and instance labels based on Claw instance name
+func setDynamicNamesAndLabels(objects []*unstructured.Unstructured, instanceName string) error {
+	instanceLabel := "claw.sandbox.redhat.com/instance"
+
+	for _, obj := range objects {
+		kind := obj.GetKind()
+		name := obj.GetName()
+
+		// Set dynamic name based on resource kind
+		switch {
+		case kind == DeploymentKind && strings.HasSuffix(name, "-proxy"):
+			obj.SetName(getProxyDeploymentName(instanceName))
+		case kind == DeploymentKind:
+			obj.SetName(getClawDeploymentName(instanceName))
+		case kind == "Service" && strings.HasSuffix(name, "-proxy"):
+			obj.SetName(getProxyServiceName(instanceName))
+		case kind == "Service":
+			obj.SetName(getServiceName(instanceName))
+		case kind == RouteKind:
+			obj.SetName(getRouteName(instanceName))
+		case kind == ConfigMapKind && strings.Contains(name, "proxy"):
+			obj.SetName(getProxyConfigMapName(instanceName))
+		case kind == ConfigMapKind:
+			obj.SetName(getConfigMapName(instanceName))
+		case kind == "PersistentVolumeClaim":
+			obj.SetName(getPVCName(instanceName))
+		case kind == NetworkPolicyKind && strings.Contains(name, "ingress"):
+			obj.SetName(getIngressNetworkPolicyName(instanceName))
+		case kind == NetworkPolicyKind && strings.Contains(name, "proxy"):
+			obj.SetName(getProxyEgressNetworkPolicyName(instanceName))
+		case kind == NetworkPolicyKind:
+			obj.SetName(getEgressNetworkPolicyName(instanceName))
+		}
+
+		// Add instance label to all resources
+		labels := obj.GetLabels()
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		labels[instanceLabel] = instanceName
+		obj.SetLabels(labels)
+
+		// Update NetworkPolicy pod selectors to include instance label
+		if kind == NetworkPolicyKind {
+			podSelector, found, err := unstructured.NestedMap(obj.Object, "spec", "podSelector", "matchLabels")
+			if err != nil {
+				return fmt.Errorf("failed to get podSelector from NetworkPolicy: %w", err)
+			}
+			if found && podSelector != nil {
+				podSelector[instanceLabel] = instanceName
+				if err := unstructured.SetNestedMap(obj.Object, podSelector, "spec", "podSelector", "matchLabels"); err != nil {
+					return fmt.Errorf("failed to set podSelector on NetworkPolicy: %w", err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// Resource naming helper functions
+func getClawDeploymentName(instanceName string) string {
+	return instanceName
+}
+
+func getProxyDeploymentName(instanceName string) string {
+	return instanceName + "-proxy"
+}
+
+func getGatewaySecretName(instanceName string) string {
+	return instanceName + "-gateway-token"
+}
+
+func getConfigMapName(instanceName string) string {
+	return instanceName + "-config"
+}
+
+func getPVCName(instanceName string) string {
+	return instanceName + "-home-pvc"
+}
+
+func getServiceName(instanceName string) string {
+	return instanceName
+}
+
+func getProxyServiceName(instanceName string) string {
+	return instanceName + "-proxy"
+}
+
+func getRouteName(instanceName string) string {
+	return instanceName
+}
+
+func getProxyCAConfigMapName(instanceName string) string {
+	return instanceName + "-proxy-ca"
+}
+
+func getVertexADCConfigMapName(instanceName string) string {
+	return instanceName + "-vertex-adc"
+}
+
+func getKubeConfigMapName(instanceName string) string {
+	return instanceName + "-kube-config"
+}
+
+func getIngressNetworkPolicyName(instanceName string) string {
+	return instanceName + "-ingress"
+}
+
+func getEgressNetworkPolicyName(instanceName string) string {
+	return instanceName + "-egress"
+}
+
+func getProxyEgressNetworkPolicyName(instanceName string) string {
+	return instanceName + "-proxy-egress"
+}
+
+func getProxyConfigMapName(instanceName string) string {
+	return instanceName + "-proxy-config"
+}
 
 // ClawResourceReconciler reconciles all resources for Claw
 type ClawResourceReconciler struct {
@@ -120,12 +240,6 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Only reconcile resources named "instance"
-	if instance.Name != ClawInstanceName {
-		logger.Info("Skipping reconciliation for Claw with non-matching name", "name", instance.Name)
-		return ctrl.Result{}, nil
-	}
-
 	// Create or update the gateway Secret with token
 	if err := r.applyGatewaySecret(ctx, instance); err != nil {
 		logger.Error(err, "Failed to apply gateway secret")
@@ -145,7 +259,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Build kustomized objects
-	objects, err := r.buildKustomizedObjects()
+	objects, err := r.buildKustomizedObjects(instance)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -218,7 +332,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if obj.GetKind() == RouteKind {
 			continue
 		}
-		if obj.GetKind() == ConfigMapKind && obj.GetName() == ClawProxyConfigMapName {
+		if obj.GetKind() == ConfigMapKind && strings.HasSuffix(obj.GetName(), "-proxy-config") {
 			continue
 		}
 		remainingObjects = append(remainingObjects, obj)
@@ -376,7 +490,7 @@ func (r *ClawResourceReconciler) buildKustomizeFromPath(fsys filesys.FileSystem,
 	return objects, nil
 }
 
-func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstructured, error) {
+func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.Claw) ([]*unstructured.Unstructured, error) {
 	// Write all manifest files to in-memory filesystem
 	fs := filesys.MakeFsInMemory()
 
@@ -432,6 +546,11 @@ func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstr
 
 	// Merge both object lists
 	allObjects := append(clawObjects, proxyObjects...)
+
+	// Set dynamic names and labels on all resources
+	if err := setDynamicNamesAndLabels(allObjects, instance.Name); err != nil {
+		return nil, fmt.Errorf("failed to set dynamic names and labels: %w", err)
+	}
 
 	return allObjects, nil
 }
@@ -497,7 +616,7 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() == ConfigMapKind && obj.GetName() == ClawConfigMapName {
+		if obj.GetKind() == ConfigMapKind && strings.HasSuffix(obj.GetName(), "-config") {
 			operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
 			if err != nil {
 				return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
@@ -516,7 +635,7 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 		}
 	}
 
-	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
+	return fmt.Errorf("ConfigMap with suffix '-config' not found in manifests")
 }
 
 // injectProvidersIntoConfigMap dynamically builds the models.providers section of operator.json
@@ -564,7 +683,7 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != ClawConfigMapName {
+		if obj.GetKind() != ConfigMapKind || !strings.HasSuffix(obj.GetName(), "-config") {
 			continue
 		}
 
@@ -599,7 +718,7 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 		return nil
 	}
 
-	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
+	return fmt.Errorf("ConfigMap with suffix '-config' not found in manifests")
 }
 
 // injectKubePortsIntoNetworkPolicy adds non-443 ports from kubernetes credentials to
@@ -622,7 +741,7 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() != NetworkPolicyKind || obj.GetName() != ClawProxyEgressNetworkPolicyName {
+		if obj.GetKind() != NetworkPolicyKind || !strings.HasSuffix(obj.GetName(), "-proxy-egress") {
 			continue
 		}
 
@@ -668,7 +787,7 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 		}
 		return nil
 	}
-	return fmt.Errorf("NetworkPolicy %s not found in manifests", ClawProxyEgressNetworkPolicyName)
+	return fmt.Errorf("NetworkPolicy with suffix '-proxy-egress' not found in manifests")
 }
 
 // injectKubernetesSkill writes a KUBERNETES.md key into the claw-config ConfigMap
@@ -719,7 +838,7 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 	sb.WriteString("Do not attempt to manage tokens, certificates, or kubeconfig yourself.\n")
 
 	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != ClawConfigMapName {
+		if obj.GetKind() != ConfigMapKind || !strings.HasSuffix(obj.GetName(), "-config") {
 			continue
 		}
 
@@ -728,7 +847,7 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 		}
 		return nil
 	}
-	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
+	return fmt.Errorf("ConfigMap with suffix '-config' not found in manifests")
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem
@@ -789,8 +908,8 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 		return nil
 	}
 
-	// Skip operator-managed secrets (claw-gateway-token for gateway token)
-	if secret.Name == ClawGatewaySecretName {
+	// Skip operator-managed secrets (gateway token secrets end with "-gateway-token")
+	if strings.HasSuffix(secret.Name, "-gateway-token") {
 		return nil
 	}
 
@@ -803,10 +922,6 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 	// Find Claw CRs that reference this Secret
 	var requests []reconcile.Request
 	for _, instance := range openClawList.Items {
-		if instance.Name != ClawInstanceName {
-			continue
-		}
-
 		for _, cred := range instance.Spec.Credentials {
 			if cred.SecretRef != nil && cred.SecretRef.Name == secret.Name {
 				requests = append(requests, reconcile.Request{

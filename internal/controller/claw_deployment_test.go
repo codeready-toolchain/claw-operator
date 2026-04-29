@@ -32,7 +32,7 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 	makeDeployment := func() []*unstructured.Unstructured {
 		dep := &unstructured.Unstructured{}
 		dep.SetKind(DeploymentKind)
-		dep.SetName(ClawDeploymentName)
+		dep.SetName(getClawDeploymentName(testInstanceName))
 		dep.Object["spec"] = map[string]any{
 			"template": map[string]any{
 				"spec": map[string]any{

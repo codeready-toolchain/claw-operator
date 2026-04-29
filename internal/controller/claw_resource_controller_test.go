@@ -43,7 +43,7 @@ import (
 func TestClawConfigMapController(t *testing.T) {
 
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create ConfigMap for Claw named 'instance'", func(t *testing.T) {
@@ -58,7 +58,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap)
 				return err == nil
@@ -77,7 +77,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap)
 				if err != nil {
@@ -106,7 +106,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -139,7 +139,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -177,7 +177,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -199,7 +199,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -224,7 +224,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -254,7 +254,7 @@ func TestClawConfigMapController(t *testing.T) {
 
 			configMap := &corev1.ConfigMap{}
 			err := k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawConfigMapName,
+				Name:      getConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, configMap)
 			require.Error(t, err, "ConfigMap should not have been created for non-instance Claw")
@@ -267,7 +267,7 @@ func TestClawConfigMapController(t *testing.T) {
 func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create PVC for Claw named 'instance'", func(t *testing.T) {
@@ -282,7 +282,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			pvc := &corev1.PersistentVolumeClaim{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawPVCName,
+					Name:      getPVCName(testInstanceName),
 					Namespace: namespace,
 				}, pvc)
 				return err == nil
@@ -301,7 +301,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			pvc := &corev1.PersistentVolumeClaim{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawPVCName,
+					Name:      getPVCName(testInstanceName),
 					Namespace: namespace,
 				}, pvc)
 				if err != nil {
@@ -325,20 +325,20 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 
 		t.Run("should skip PVC creation for non-matching names", func(t *testing.T) {
 			instance := &clawv1alpha1.Claw{}
-			err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, instance)
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: testInstanceName, Namespace: namespace}, instance)
 			if err == nil {
 				_ = k8sClient.Delete(ctx, instance)
 			}
 
 			pvc := &corev1.PersistentVolumeClaim{}
-			err = k8sClient.Get(ctx, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}, pvc)
+			err = k8sClient.Get(ctx, client.ObjectKey{Name: getPVCName(testInstanceName), Namespace: namespace}, pvc)
 			if err == nil {
 				pvc.Finalizers = []string{}
 				_ = k8sClient.Update(ctx, pvc)
 				_ = k8sClient.Delete(ctx, pvc)
 
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}, pvc)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getPVCName(testInstanceName), Namespace: namespace}, pvc)
 					return err != nil
 				}, "PVC should be deleted before test")
 			}
@@ -356,7 +356,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 			pvc = &corev1.PersistentVolumeClaim{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}, pvc)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getPVCName(testInstanceName), Namespace: namespace}, pvc)
 				return apierrors.IsNotFound(err)
 			}, "PVC should not have been created for non-instance Claw")
 		})
@@ -368,7 +368,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 func TestOpenClawDeploymentController(t *testing.T) {
 
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create Deployment for Claw named 'instance'", func(t *testing.T) {
@@ -383,7 +383,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawDeploymentName,
+					Name:      getClawDeploymentName(testInstanceName),
 					Namespace: namespace,
 				}, deployment)
 				return err == nil
@@ -402,7 +402,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawDeploymentName,
+					Name:      getClawDeploymentName(testInstanceName),
 					Namespace: namespace,
 				}, deployment)
 				return err == nil
@@ -410,7 +410,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawDeploymentName,
+					Name:      getClawDeploymentName(testInstanceName),
 					Namespace: namespace,
 				}, deployment)
 				if err != nil {
@@ -440,7 +440,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			np := &netv1.NetworkPolicy{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawIngressNetworkPolicyName,
+					Name:      getIngressNetworkPolicyName(testInstanceName),
 					Namespace: namespace,
 				}, np)
 				return err == nil
@@ -475,7 +475,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 
 			deployment := &appsv1.Deployment{}
 			err := k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawDeploymentName,
+				Name:      getClawDeploymentName(testInstanceName),
 				Namespace: namespace,
 			}, deployment)
 			require.Error(t, err, "Deployment should not have been created for non-instance Claw")
@@ -488,7 +488,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 func TestOpenClawGatewaySecretController(t *testing.T) {
 
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create gateway Secret when Claw instance is reconciled", func(t *testing.T) {
@@ -503,7 +503,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				return err == nil
@@ -524,7 +524,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -551,7 +551,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				return err == nil && len(secret.Data[GatewayTokenKeyName]) > 0
@@ -563,7 +563,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret = &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -586,7 +586,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				return err == nil && len(secret.Data[GatewayTokenKeyName]) > 0
@@ -600,7 +600,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			newSecret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, newSecret)
 				if err != nil {
@@ -623,7 +623,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -664,7 +664,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -693,7 +693,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -726,7 +726,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		t.Run("should replace OPENCLAW_ROUTE_HOST placeholder with Route host", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(ClawConfigMapName)
+			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
 				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
 			}
@@ -752,7 +752,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		t.Run("should replace all occurrences of OPENCLAW_ROUTE_HOST placeholder", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(ClawConfigMapName)
+			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
 				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST","OPENCLAW_ROUTE_HOST"]}}}`,
 			}
@@ -777,7 +777,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		t.Run("should use localhost fallback when routeHost is empty", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(ClawConfigMapName)
+			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
 				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
 			}
@@ -800,7 +800,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	})
 
 	t.Run("When reconciling with Route CRD not registered", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create ConfigMap with localhost fallback when Route CRD not available", func(t *testing.T) {
@@ -857,7 +857,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap)
 				if err != nil {
@@ -873,7 +873,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	})
 
 	t.Run("Proxy deployment configuration", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should build kustomized objects with proxy deployment", func(t *testing.T) {
@@ -887,12 +887,15 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			objects, err := reconciler.buildKustomizedObjects()
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			objects, err := reconciler.buildKustomizedObjects(instance)
 			require.NoError(t, err, "buildKustomizedObjects failed")
 
 			var proxyDeployment *unstructured.Unstructured
 			for _, obj := range objects {
-				if obj.GetKind() == DeploymentKind && obj.GetName() == ClawProxyDeploymentName {
+				if obj.GetKind() == DeploymentKind && obj.GetName() == getProxyDeploymentName(resourceName) {
 					proxyDeployment = obj
 					break
 				}
@@ -909,12 +912,15 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	t.Run("Init container config seeding", func(t *testing.T) {
 		t.Run("should always copy operator.json and conditionally seed user files", func(t *testing.T) {
 			reconciler := createClawReconciler()
-			objects, err := reconciler.buildKustomizedObjects()
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = testInstanceName
+			instance.Namespace = namespace
+			objects, err := reconciler.buildKustomizedObjects(instance)
 			require.NoError(t, err)
 
 			var deployment *unstructured.Unstructured
 			for _, obj := range objects {
-				if obj.GetKind() == DeploymentKind && obj.GetName() == ClawDeploymentName {
+				if obj.GetKind() == DeploymentKind && obj.GetName() == getClawDeploymentName(testInstanceName) {
 					deployment = obj
 					break
 				}

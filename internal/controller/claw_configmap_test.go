@@ -163,7 +163,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
 		cm := &unstructured.Unstructured{}
 		cm.SetKind(ConfigMapKind)
-		cm.SetName(ClawConfigMapName)
+		cm.SetName(getConfigMapName(testInstanceName))
 		cm.Object["data"] = map[string]any{
 			"operator.json": jsonContent,
 		}
