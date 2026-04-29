@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: claw-ingress
+  name: CLAW_INSTANCE_NAME-ingress
   labels:
     app: claw
 spec:

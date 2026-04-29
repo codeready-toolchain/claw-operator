@@ -654,7 +654,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			instance.Spec.Credentials = testCredentials()
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw")
 
-			gatewaySecret := createTestGatewaySecret(t, ClawGatewaySecretName, namespace)
+			gatewaySecret := createTestGatewaySecret(t, getGatewaySecretName(resourceName), namespace)
 			require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway Secret")
 			assert.Empty(t, gatewaySecret.OwnerReferences, "gateway Secret should not have owner references initially")
 

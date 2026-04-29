@@ -186,6 +186,15 @@ func deleteAndWait(obj client.Object, key client.ObjectKey) error {
 	return fmt.Errorf("timeout waiting for object deletion: %s", key.String())
 }
 
+// testClawWithCredentials builds a minimal *Claw for unit tests that need an instance
+// (e.g. injectProvidersIntoConfigMap). Uses testInstanceName.
+func testClawWithCredentials(credentials []clawv1alpha1.CredentialSpec) *clawv1alpha1.Claw {
+	return &clawv1alpha1.Claw{
+		ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+		Spec:       clawv1alpha1.ClawSpec{Credentials: credentials},
+	}
+}
+
 // createTestAPIKeySecret creates a test Secret containing an API key for use in tests
 // It ensures any existing Secret with the same name is deleted first to avoid conflicts
 func createTestAPIKeySecret(name, namespace, key, value string) *corev1.Secret { //nolint:unparam

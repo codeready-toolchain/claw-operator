@@ -585,7 +585,7 @@ func TestFindClawsReferencingSecret(t *testing.T) {
 		reconciler := createClawReconciler()
 
 		secret := &corev1.Secret{}
-		secret.Name = ClawGatewaySecretName
+		secret.Name = getGatewaySecretName(testInstanceName)
 		secret.Namespace = namespace
 
 		requests := reconciler.findClawsReferencingSecret(ctx, secret)

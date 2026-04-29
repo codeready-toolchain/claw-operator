@@ -567,7 +567,7 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, instance
 // ADC volume mount to the claw (gateway) deployment when any credential uses the
 // native Vertex SDK (GCP + non-Google provider). The stub ADC allows google-auth-library
 // to bootstrap token refresh, which the MITM proxy intercepts with real credentials.
-func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, credentials []resolvedCredential) error {
+func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, credentials []resolvedCredential, instanceName string) error {
 	var vertexCreds []clawv1alpha1.CredentialSpec
 	for _, rc := range credentials {
 		if usesVertexSDK(rc.CredentialSpec) {
@@ -635,7 +635,7 @@ func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, cred
 		volumes = append(volumes, map[string]any{
 			"name": "vertex-adc",
 			"configMap": map[string]any{
-				"name": ClawVertexADCConfigMapName,
+				"name": getVertexADCConfigMapName(instanceName),
 			},
 		})
 
@@ -661,7 +661,7 @@ func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, cred
 // configureClawDeploymentForKubernetes mounts the sanitized kubeconfig ConfigMap,
 // sets KUBECONFIG and PATH env vars, and adds an init container that copies kubectl
 // into a shared volume on the claw (gateway) deployment when a kubernetes credential is present.
-func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, credentials []resolvedCredential, kubectlImage string) error {
+func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, credentials []resolvedCredential, kubectlImage, instanceName string) error {
 	if !hasKubernetesCredentials(credentials) {
 		return nil
 	}
@@ -729,7 +729,7 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 			map[string]any{
 				"name": "kube-config",
 				"configMap": map[string]any{
-					"name": ClawKubeConfigMapName,
+					"name": getKubeConfigMapName(instanceName),
 				},
 			},
 			map[string]any{

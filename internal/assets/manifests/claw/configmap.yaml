@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: claw-config
+  name: CLAW_INSTANCE_NAME-config
   labels:
     app: claw
 data:

@@ -28,9 +28,9 @@ const (
 	testInstanceLabel = "claw.sandbox.redhat.com/instance"
 )
 
-// TestSetDynamicNamesAndLabels_Deployment verifies that instance labels are correctly
+// TestInjectInstanceLabels_Deployment verifies that instance labels are correctly
 // injected into Deployment spec.selector.matchLabels and spec.template.metadata.labels
-func TestSetDynamicNamesAndLabels_Deployment(t *testing.T) {
+func TestInjectInstanceLabels_Deployment(t *testing.T) {
 	t.Run("should inject instance label into Deployment selector and pod template labels", func(t *testing.T) {
 		deployment := &unstructured.Unstructured{}
 		deployment.SetKind(DeploymentKind)
@@ -56,7 +56,7 @@ func TestSetDynamicNamesAndLabels_Deployment(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{deployment}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		// Verify top-level metadata labels
@@ -98,7 +98,7 @@ func TestSetDynamicNamesAndLabels_Deployment(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{deployment}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		selector, _, _ := unstructured.NestedMap(objects[0].Object, "spec", "selector", "matchLabels")
@@ -109,9 +109,9 @@ func TestSetDynamicNamesAndLabels_Deployment(t *testing.T) {
 	})
 }
 
-// TestSetDynamicNamesAndLabels_Service verifies that instance labels are correctly
+// TestInjectInstanceLabels_Service verifies that instance labels are correctly
 // injected into Service spec.selector
-func TestSetDynamicNamesAndLabels_Service(t *testing.T) {
+func TestInjectInstanceLabels_Service(t *testing.T) {
 	t.Run("should inject instance label into Service selector", func(t *testing.T) {
 		service := &unstructured.Unstructured{}
 		service.SetKind("Service")
@@ -123,7 +123,7 @@ func TestSetDynamicNamesAndLabels_Service(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{service}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		// Verify top-level metadata labels
@@ -149,7 +149,7 @@ func TestSetDynamicNamesAndLabels_Service(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{service}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		selector, _, _ := unstructured.NestedMap(objects[0].Object, "spec", "selector")
@@ -158,9 +158,9 @@ func TestSetDynamicNamesAndLabels_Service(t *testing.T) {
 	})
 }
 
-// TestSetDynamicNamesAndLabels_NetworkPolicy verifies that instance labels are correctly
+// TestInjectInstanceLabels_NetworkPolicy verifies that instance labels are correctly
 // injected into NetworkPolicy spec.podSelector and peer podSelectors in egress/ingress rules
-func TestSetDynamicNamesAndLabels_NetworkPolicy(t *testing.T) {
+func TestInjectInstanceLabels_NetworkPolicy(t *testing.T) {
 	t.Run("should inject instance label into NetworkPolicy podSelector", func(t *testing.T) {
 		netpol := &unstructured.Unstructured{}
 		netpol.SetKind(NetworkPolicyKind)
@@ -175,7 +175,7 @@ func TestSetDynamicNamesAndLabels_NetworkPolicy(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{netpol}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		// Verify top-level metadata labels
@@ -217,7 +217,7 @@ func TestSetDynamicNamesAndLabels_NetworkPolicy(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{netpol}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		// Verify egress[0].to[0].podSelector.matchLabels
@@ -265,7 +265,7 @@ func TestSetDynamicNamesAndLabels_NetworkPolicy(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{netpol}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		// Verify ingress[0].from[0].podSelector.matchLabels
@@ -343,7 +343,7 @@ func TestSetDynamicNamesAndLabels_NetworkPolicy(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{netpol}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
@@ -423,7 +423,7 @@ func TestSetDynamicNamesAndLabels_NetworkPolicy(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{netpol}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		// Verify ingress peer
@@ -446,9 +446,9 @@ func TestSetDynamicNamesAndLabels_NetworkPolicy(t *testing.T) {
 	})
 }
 
-// TestSetDynamicNamesAndLabels_MultipleResources verifies that instance labels
+// TestInjectInstanceLabels_MultipleResources verifies that instance labels
 // are correctly applied across different resource types in a single call
-func TestSetDynamicNamesAndLabels_MultipleResources(t *testing.T) {
+func TestInjectInstanceLabels_MultipleResources(t *testing.T) {
 	t.Run("should inject instance label into all resource types", func(t *testing.T) {
 		deployment := &unstructured.Unstructured{}
 		deployment.SetKind(DeploymentKind)
@@ -502,7 +502,7 @@ func TestSetDynamicNamesAndLabels_MultipleResources(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{deployment, service, netpol}
-		err := setDynamicNamesAndLabels(objects, testInstanceName)
+		err := injectInstanceLabels(objects, testInstanceName)
 		require.NoError(t, err)
 
 		// Verify all resources have top-level instance labels
@@ -533,9 +533,9 @@ func TestSetDynamicNamesAndLabels_MultipleResources(t *testing.T) {
 	})
 }
 
-// TestSetDynamicNamesAndLabels_DifferentInstances verifies that different instance names
+// TestInjectInstanceLabels_DifferentInstances verifies that different instance names
 // result in different instance labels, enabling multi-instance isolation
-func TestSetDynamicNamesAndLabels_DifferentInstances(t *testing.T) {
+func TestInjectInstanceLabels_DifferentInstances(t *testing.T) {
 	t.Run("should support different instance names for isolation", func(t *testing.T) {
 		makeDeployment := func(name string) *unstructured.Unstructured {
 			dep := &unstructured.Unstructured{}
@@ -560,12 +560,12 @@ func TestSetDynamicNamesAndLabels_DifferentInstances(t *testing.T) {
 
 		// Instance 1
 		instance1Objects := []*unstructured.Unstructured{makeDeployment("claw-1")}
-		err := setDynamicNamesAndLabels(instance1Objects, "instance-1")
+		err := injectInstanceLabels(instance1Objects, "instance-1")
 		require.NoError(t, err)
 
 		// Instance 2
 		instance2Objects := []*unstructured.Unstructured{makeDeployment("claw-2")}
-		err = setDynamicNamesAndLabels(instance2Objects, "instance-2")
+		err = injectInstanceLabels(instance2Objects, "instance-2")
 		require.NoError(t, err)
 
 		// Verify instance 1 has "instance-1" label

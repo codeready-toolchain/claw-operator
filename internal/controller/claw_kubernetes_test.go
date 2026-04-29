@@ -499,7 +499,7 @@ func TestConfigureClawDeploymentForKubernetes(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds, DefaultKubectlImage))
+		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds, DefaultKubectlImage, testInstanceName))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)
@@ -552,7 +552,7 @@ func TestConfigureClawDeploymentForKubernetes(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds, DefaultKubectlImage))
+		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds, DefaultKubectlImage, testInstanceName))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)
@@ -567,7 +567,7 @@ func TestInjectKubePortsIntoNetworkPolicy(t *testing.T) {
 	makeNP := func() []*unstructured.Unstructured {
 		np := &unstructured.Unstructured{}
 		np.SetKind(NetworkPolicyKind)
-		np.SetName(ClawProxyEgressNetworkPolicyName)
+		np.SetName(getProxyEgressNetworkPolicyName(testInstanceName))
 		np.Object["spec"] = map[string]any{
 			"egress": []any{
 				map[string]any{
@@ -1003,7 +1003,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		for _, vol := range deployment.Spec.Template.Spec.Volumes {
 			volNames[vol.Name] = true
 			if vol.Name == "kube-config" && vol.ConfigMap != nil {
-				assert.Equal(t, ClawKubeConfigMapName, vol.ConfigMap.Name)
+				assert.Equal(t, getKubeConfigMapName(testInstanceName), vol.ConfigMap.Name)
 			}
 		}
 		assert.True(t, volNames["kube-config"], "should have kube-config volume")

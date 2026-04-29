@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: claw
+  name: CLAW_INSTANCE_NAME
   labels:
     app: claw
 spec:
@@ -109,11 +109,11 @@ spec:
             - |
               TIMEOUT_SECONDS=120
               elapsed=0
-              echo "[wait-for-proxy] waiting for claw-proxy:8080 (timeout ${TIMEOUT_SECONDS}s)..."
-              while ! nc -z claw-proxy 8080 2>/dev/null; do
+              echo "[wait-for-proxy] waiting for CLAW_INSTANCE_NAME-proxy:8080 (timeout ${TIMEOUT_SECONDS}s)..."
+              while ! nc -z CLAW_INSTANCE_NAME-proxy 8080 2>/dev/null; do
                 elapsed=$((elapsed + 1))
                 if [ "$elapsed" -ge "$TIMEOUT_SECONDS" ]; then
-                  echo "[wait-for-proxy] ERROR: claw-proxy:8080 not reachable after ${TIMEOUT_SECONDS}s"
+                  echo "[wait-for-proxy] ERROR: CLAW_INSTANCE_NAME-proxy:8080 not reachable after ${TIMEOUT_SECONDS}s"
                   exit 1
                 fi
                 if [ $((elapsed % 15)) -eq 0 ]; then
@@ -152,20 +152,20 @@ spec:
             - name: OPENCLAW_GATEWAY_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: claw-gateway-token
+                  name: CLAW_INSTANCE_NAME-gateway-token
                   key: token
             - name: HTTP_PROXY
-              value: http://claw-proxy:8080
+              value: http://CLAW_INSTANCE_NAME-proxy:8080
             - name: HTTPS_PROXY
-              value: http://claw-proxy:8080
+              value: http://CLAW_INSTANCE_NAME-proxy:8080
             - name: http_proxy
-              value: http://claw-proxy:8080
+              value: http://CLAW_INSTANCE_NAME-proxy:8080
             - name: https_proxy
-              value: http://claw-proxy:8080
+              value: http://CLAW_INSTANCE_NAME-proxy:8080
             - name: NO_PROXY
-              value: localhost,127.0.0.1,claw-proxy
+              value: localhost,127.0.0.1,CLAW_INSTANCE_NAME-proxy
             - name: no_proxy
-              value: localhost,127.0.0.1,claw-proxy
+              value: localhost,127.0.0.1,CLAW_INSTANCE_NAME-proxy
             - name: NODE_USE_ENV_PROXY
               value: "1"
             - name: NPM_CONFIG_CACHE
@@ -236,15 +236,15 @@ spec:
           emptyDir: {}
         - name: claw-home
           persistentVolumeClaim:
-            claimName: claw-home-pvc
+            claimName: CLAW_INSTANCE_NAME-home-pvc
         - name: config
           configMap:
-            name: claw-config
+            name: CLAW_INSTANCE_NAME-config
         - name: tmp-volume
           emptyDir: {}
         - name: proxy-ca
           secret:
-            secretName: claw-proxy-ca
+            secretName: CLAW_INSTANCE_NAME-proxy-ca
             items:
               - key: ca.crt
                 path: ca.crt

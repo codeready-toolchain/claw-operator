@@ -55,26 +55,11 @@ import (
 const (
 	ClawResourceKind = "Claw"
 
-	// Core resources
-	ClawConfigMapName                = "claw-config"
-	ClawPVCName                      = "claw-home-pvc"
-	ClawNetworkPolicyName            = "claw-egress"
-	ClawIngressNetworkPolicyName     = "claw-ingress"
-	ClawRouteName                    = "claw"
-	ClawServiceName                  = "claw"
-	ClawDeploymentName               = "claw"
-	ClawGatewaySecretName            = "claw-gateway-token"
-	GatewayTokenKeyName              = "token"
-	ClawProxyServiceName             = "claw-proxy"
-	ClawProxyConfigMapName           = "claw-proxy-config"
-	ClawProxyDeploymentName          = "claw-proxy"
-	ClawProxyCACertSecretName        = "claw-proxy-ca"
-	ClawProxyContainerName           = "proxy"
-	ClawGatewayContainerName         = "gateway"
-	ClawVertexADCConfigMapName       = "claw-vertex-adc"
-	ClawKubeConfigMapName            = "claw-kube-config"
-	ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"
-	DefaultKubectlImage              = "quay.io/openshift/origin-cli:4.21"
+	GatewayTokenKeyName      = "token"
+	ClawProxyContainerName   = "proxy"
+	ClawGatewayContainerName = "gateway"
+	DefaultKubectlImage      = "quay.io/openshift/origin-cli:4.21"
+
 	// Kubernetes resource kinds
 	RouteKind                 = "Route"
 	DeploymentKind            = "Deployment"
@@ -84,41 +69,13 @@ const (
 	PersistentVolumeClaimKind = "PersistentVolumeClaim"
 )
 
-// setDynamicNamesAndLabels sets resource names and instance labels based on Claw instance name
-func setDynamicNamesAndLabels(objects []*unstructured.Unstructured, instanceName string) error {
+// injectInstanceLabels adds the claw.sandbox.redhat.com/instance label to all resources
+// and injects it into Deployment/Service/NetworkPolicy selectors for multi-instance discrimination.
+// Resource names are already set via CLAW_INSTANCE_NAME template replacement in buildKustomizedObjects.
+func injectInstanceLabels(objects []*unstructured.Unstructured, instanceName string) error {
 	instanceLabel := "claw.sandbox.redhat.com/instance"
 
 	for _, obj := range objects {
-		kind := obj.GetKind()
-		name := obj.GetName()
-
-		// Set dynamic name based on resource kind
-		switch {
-		case kind == DeploymentKind && strings.HasSuffix(name, "-proxy"):
-			obj.SetName(getProxyDeploymentName(instanceName))
-		case kind == DeploymentKind:
-			obj.SetName(getClawDeploymentName(instanceName))
-		case kind == ServiceKind && strings.HasSuffix(name, "-proxy"):
-			obj.SetName(getProxyServiceName(instanceName))
-		case kind == ServiceKind:
-			obj.SetName(getServiceName(instanceName))
-		case kind == RouteKind:
-			obj.SetName(getRouteName(instanceName))
-		case kind == ConfigMapKind && strings.Contains(name, "proxy"):
-			obj.SetName(getProxyConfigMapName(instanceName))
-		case kind == ConfigMapKind:
-			obj.SetName(getConfigMapName(instanceName))
-		case kind == PersistentVolumeClaimKind:
-			obj.SetName(getPVCName(instanceName))
-		case kind == NetworkPolicyKind && strings.Contains(name, "ingress"):
-			obj.SetName(getIngressNetworkPolicyName(instanceName))
-		case kind == NetworkPolicyKind && strings.Contains(name, "proxy"):
-			obj.SetName(getProxyEgressNetworkPolicyName(instanceName))
-		case kind == NetworkPolicyKind:
-			obj.SetName(getEgressNetworkPolicyName(instanceName))
-		}
-
-		// Add instance label to all resources
 		labels := obj.GetLabels()
 		if labels == nil {
 			labels = make(map[string]string)
@@ -126,8 +83,7 @@ func setDynamicNamesAndLabels(objects []*unstructured.Unstructured, instanceName
 		labels[instanceLabel] = instanceName
 		obj.SetLabels(labels)
 
-		// Inject instance labels into resource-specific selectors
-		switch kind {
+		switch obj.GetKind() {
 		case DeploymentKind:
 			if err := injectDeploymentInstanceLabels(obj, instanceLabel, instanceName); err != nil {
 				return err
@@ -329,11 +285,11 @@ func getGatewaySecretName(instanceName string) string {
 	return instanceName + "-gateway-token"
 }
 
-func getConfigMapName(instanceName string) string {
+func getConfigMapName(instanceName string) string { //nolint:unparam // called only from tests today but must stay parametric
 	return instanceName + "-config"
 }
 
-func getPVCName(instanceName string) string {
+func getPVCName(instanceName string) string { //nolint:unparam // called only from tests today but must stay parametric
 	return instanceName + "-home-pvc"
 }
 
@@ -486,7 +442,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Inject LLM providers into ConfigMap based on credentials with Provider set
-	if err := injectProvidersIntoConfigMap(objects, instance.Spec.Credentials); err != nil {
+	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
 	}
 
@@ -590,14 +546,14 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if err := configureProxyForCredentials(objects, instance, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
 	}
-	if err := configureClawDeploymentForVertex(objects, resolvedCreds); err != nil {
+	if err := configureClawDeploymentForVertex(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Vertex AI: %w", err)
 	}
 	kubectlImage := r.KubectlImage
 	if kubectlImage == "" {
 		kubectlImage = DefaultKubectlImage
 	}
-	if err := configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage); err != nil {
+	if err := configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage, instance.Name); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Kubernetes: %w", err)
 	}
 	return nil
@@ -702,7 +658,8 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 	}
 
 	for path, content := range allManifests {
-		if err := fs.WriteFile(path, content); err != nil {
+		replaced := bytes.ReplaceAll(content, []byte("CLAW_INSTANCE_NAME"), []byte(instance.Name))
+		if err := fs.WriteFile(path, replaced); err != nil {
 			return nil, fmt.Errorf("failed to write manifest to in-memory filesystem: %w", err)
 		}
 	}
@@ -722,9 +679,9 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 	// Merge both object lists
 	allObjects := append(clawObjects, proxyObjects...)
 
-	// Set dynamic names and labels on all resources
-	if err := setDynamicNamesAndLabels(allObjects, instance.Name); err != nil {
-		return nil, fmt.Errorf("failed to set dynamic names and labels: %w", err)
+	// Inject instance labels into selectors for multi-instance discrimination
+	if err := injectInstanceLabels(allObjects, instance.Name); err != nil {
+		return nil, fmt.Errorf("failed to inject instance labels: %w", err)
 	}
 
 	return allObjects, nil
@@ -819,7 +776,9 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 // flows through the MITM proxy which injects GCP credentials transparently.
 // Agent defaults (model aliases, primary model) are in the user-owned openclaw.json seed
 // and are not modified here — users control their own model preferences.
-func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
+func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	credentials := instance.Spec.Credentials
+	proxyServiceName := getProxyServiceName(instance.Name)
 	providers := map[string]any{}
 	for _, cred := range credentials {
 		if cred.Provider == "" {
@@ -848,7 +807,7 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 				return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
 			}
 			info := resolveProviderInfo(cred)
-			baseURL := "http://claw-proxy:8080/" + strings.ToLower(cred.Name) + info.BasePath
+			baseURL := "http://" + proxyServiceName + ":8080/" + strings.ToLower(cred.Name) + info.BasePath
 			providers[cred.Provider] = map[string]any{
 				"baseUrl": baseURL,
 				"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",

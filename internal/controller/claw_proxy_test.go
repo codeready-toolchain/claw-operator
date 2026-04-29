@@ -767,12 +767,12 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
 
 		providers := getProviders(t, objects)
 		require.Contains(t, providers, "google")
 		google := providers["google"].(map[string]any)
-		assert.Equal(t, "http://claw-proxy:8080/gemini/v1beta", google["baseUrl"])
+		assert.Equal(t, "http://"+getProxyServiceName(testInstanceName)+":8080/gemini/v1beta", google["baseUrl"])
 		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
 	})
 
@@ -793,13 +793,13 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
 
 		providers := getProviders(t, objects)
 		assert.Contains(t, providers, "google")
 		assert.Contains(t, providers, "anthropic")
 		anthropic := providers["anthropic"].(map[string]any)
-		assert.Equal(t, "http://claw-proxy:8080/claude", anthropic["baseUrl"])
+		assert.Equal(t, "http://"+getProxyServiceName(testInstanceName)+":8080/claude", anthropic["baseUrl"])
 	})
 
 	t.Run("should leave providers empty when no provider is set", func(t *testing.T) {
@@ -812,7 +812,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
 
 		providers := getProviders(t, objects)
 		assert.Empty(t, providers)
@@ -833,17 +833,17 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
 
 		providers := getProviders(t, objects)
 		require.Contains(t, providers, "google")
 		google := providers["google"].(map[string]any)
-		assert.Equal(t, "http://claw-proxy:8080/vertex/v1/projects/my-proj/locations/europe-west1/publishers/google", google["baseUrl"])
+		assert.Equal(t, "http://"+getProxyServiceName(testInstanceName)+":8080/vertex/v1/projects/my-proj/locations/europe-west1/publishers/google", google["baseUrl"])
 	})
 
 	t.Run("should preserve other config sections", func(t *testing.T) {
 		objects := makeConfigMap(baseJSON)
-		require.NoError(t, injectProvidersIntoConfigMap(objects, nil))
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(nil)))
 
 		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
 		require.NoError(t, err)
@@ -867,7 +867,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
 
 		providers := getProviders(t, objects)
 		assert.Empty(t, providers, "pathToken credentials should not generate provider entries")
@@ -880,7 +880,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			{Name: "gemini-2", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
 		}
 
-		err := injectProvidersIntoConfigMap(objects, credentials)
+		err := injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "google")
@@ -1006,7 +1006,7 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 
 		google, ok := providers["google"].(map[string]any)
 		require.True(t, ok)
-		assert.Equal(t, "http://claw-proxy:8080/gemini/v1beta", google["baseUrl"])
+		assert.Equal(t, "http://"+getProxyServiceName(testInstanceName)+":8080/gemini/v1beta", google["baseUrl"])
 		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
 	})
 
