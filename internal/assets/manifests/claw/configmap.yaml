@@ -118,7 +118,8 @@ data:
     ### WhatsApp
 
     WhatsApp Web uses phone-based QR pairing (not API keys). The proxy only needs to
-    allowlist the domains — no credential injection is required.
+    allowlist the domains — no credential injection is required. Beyond `*.whatsapp.*`,
+    WhatsApp Web also relies on Meta's authentication and CDN infrastructure.
 
     Add these entries to the `credentials` list:
 
@@ -129,6 +130,15 @@ data:
         - name: whatsapp-net
           type: none
           domain: ".whatsapp.net"
+        - name: facebook
+          type: none
+          domain: ".facebook.com"
+        - name: facebook-net
+          type: none
+          domain: ".facebook.net"
+        - name: fbcdn
+          type: none
+          domain: ".fbcdn.net"
     ```
 
     After the user updates the Claw CR, the remaining steps are:
