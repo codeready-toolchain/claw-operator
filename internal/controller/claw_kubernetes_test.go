@@ -414,16 +414,19 @@ func TestGenerateProxyConfigKubernetes(t *testing.T) {
 // --- configureProxyForCredentials kubernetes volume mount tests ---
 
 func TestConfigureProxyForKubernetesCredentials(t *testing.T) {
-	buildObjects := func(t *testing.T) []*unstructured.Unstructured {
+	buildObjects := func(t *testing.T) (*clawv1alpha1.Claw, []*unstructured.Unstructured) {
 		t.Helper()
 		reconciler := createClawReconciler()
-		objects, err := reconciler.buildKustomizedObjects()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
-		return objects
+		return instance, objects
 	}
 
 	t.Run("should add kubernetes kubeconfig volume mount", func(t *testing.T) {
-		objects := buildObjects(t)
+		instance, objects := buildObjects(t)
 		creds := []resolvedCredential{
 			{
 				CredentialSpec: clawv1alpha1.CredentialSpec{
@@ -434,10 +437,10 @@ func TestConfigureProxyForKubernetesCredentials(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureProxyForCredentials(objects, creds))
+		require.NoError(t, configureProxyForCredentials(objects, instance, creds))
 
 		for _, obj := range objects {
-			if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+			if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(testInstanceName) {
 				continue
 			}
 			volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
@@ -465,7 +468,7 @@ func TestConfigureClawDeploymentForKubernetes(t *testing.T) {
 	makeDeployment := func() []*unstructured.Unstructured {
 		dep := &unstructured.Unstructured{}
 		dep.SetKind(DeploymentKind)
-		dep.SetName(ClawDeploymentName)
+		dep.SetName(getClawDeploymentName(testInstanceName))
 		dep.Object["spec"] = map[string]any{
 			"template": map[string]any{
 				"spec": map[string]any{
@@ -691,7 +694,7 @@ func TestInjectKubernetesSkill(t *testing.T) {
 	makeCM := func() []*unstructured.Unstructured {
 		cm := &unstructured.Unstructured{}
 		cm.SetKind(ConfigMapKind)
-		cm.SetName(ClawConfigMapName)
+		cm.SetName(getConfigMapName(testInstanceName))
 		cm.Object["data"] = map[string]any{}
 		return []*unstructured.Unstructured{cm}
 	}
@@ -768,7 +771,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 	t.Run("should create sanitized kubeconfig ConfigMap after reconciliation", func(t *testing.T) {
 		t.Cleanup(func() {
 			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: testKubeSecretName, Namespace: namespace})
-			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: ClawKubeConfigMapName, Namespace: namespace})
+			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: getKubeConfigMapName(testInstanceName), Namespace: namespace})
 			deleteAndWaitAllResources(t, namespace)
 		})
 
@@ -786,7 +789,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -798,13 +801,13 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		// Verify sanitized kubeconfig ConfigMap was created
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawKubeConfigMapName,
+				Name:      getKubeConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "sanitized kubeconfig ConfigMap should be created")
@@ -819,7 +822,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 	t.Run("should inject KUBERNETES.md with context info", func(t *testing.T) {
 		t.Cleanup(func() {
 			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: testKubeSecretName, Namespace: namespace})
-			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: ClawKubeConfigMapName, Namespace: namespace})
+			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: getKubeConfigMapName(testInstanceName), Namespace: namespace})
 			deleteAndWaitAllResources(t, namespace)
 		})
 
@@ -837,7 +840,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -849,12 +852,12 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawConfigMapName,
+				Name:      getConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "ConfigMap should be created")
@@ -868,7 +871,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 	t.Run("should configure proxy deployment with kubernetes volume mount", func(t *testing.T) {
 		t.Cleanup(func() {
 			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: testKubeSecretName, Namespace: namespace})
-			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: ClawKubeConfigMapName, Namespace: namespace})
+			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: getKubeConfigMapName(testInstanceName), Namespace: namespace})
 			deleteAndWaitAllResources(t, namespace)
 		})
 
@@ -886,7 +889,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -898,12 +901,12 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		deployment := &appsv1.Deployment{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawProxyDeploymentName,
+				Name:      getProxyDeploymentName(testInstanceName),
 				Namespace: namespace,
 			}, deployment) == nil
 		}, "proxy deployment should be created")
@@ -938,7 +941,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 	t.Run("should configure gateway deployment with KUBECONFIG env and volume", func(t *testing.T) {
 		t.Cleanup(func() {
 			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: testKubeSecretName, Namespace: namespace})
-			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: ClawKubeConfigMapName, Namespace: namespace})
+			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: getKubeConfigMapName(testInstanceName), Namespace: namespace})
 			deleteAndWaitAllResources(t, namespace)
 		})
 
@@ -956,7 +959,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -968,12 +971,12 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		deployment := &appsv1.Deployment{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawDeploymentName,
+				Name:      getClawDeploymentName(testInstanceName),
 				Namespace: namespace,
 			}, deployment) == nil
 		}, "claw deployment should be created")
@@ -1019,7 +1022,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 	t.Run("should include kubernetes routes in proxy config ConfigMap", func(t *testing.T) {
 		t.Cleanup(func() {
 			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: testKubeSecretName, Namespace: namespace})
-			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: ClawKubeConfigMapName, Namespace: namespace})
+			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: getKubeConfigMapName(testInstanceName), Namespace: namespace})
 			deleteAndWaitAllResources(t, namespace)
 		})
 
@@ -1037,7 +1040,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -1049,12 +1052,12 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawProxyConfigMapName,
+				Name:      getProxyConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "proxy config ConfigMap should be created")
@@ -1070,7 +1073,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 	t.Run("should clean up kubeconfig ConfigMap when kubernetes credential is removed", func(t *testing.T) {
 		t.Cleanup(func() {
 			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: testKubeSecretName, Namespace: namespace})
-			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: ClawKubeConfigMapName, Namespace: namespace})
+			_ = deleteAndWait(&corev1.ConfigMap{}, client.ObjectKey{Name: getKubeConfigMapName(testInstanceName), Namespace: namespace})
 			deleteAndWaitAllResources(t, namespace)
 		})
 
@@ -1089,7 +1092,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 
 		// Create Claw with kubernetes credential
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -1101,28 +1104,28 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		// Verify kubeconfig ConfigMap exists
 		cm := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawKubeConfigMapName,
+				Name:      getKubeConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm) == nil
 		}, "kubeconfig ConfigMap should be created")
 
 		// Remove kubernetes credential from Claw spec
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, instance))
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: testInstanceName, Namespace: namespace}, instance))
 		instance.Spec.Credentials = nil
 		require.NoError(t, k8sClient.Update(ctx, instance))
 
-		reconcileClaw(t, ctx, reconciler, ClawInstanceName, namespace)
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		// Verify kubeconfig ConfigMap was deleted
 		waitFor(t, timeout, interval, func() bool {
 			err := k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawKubeConfigMapName,
+				Name:      getKubeConfigMapName(testInstanceName),
 				Namespace: namespace,
 			}, cm)
 			return apierrors.IsNotFound(err)
@@ -1142,7 +1145,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{}
-		instance.Name = ClawInstanceName
+		instance.Name = testInstanceName
 		instance.Namespace = namespace
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
@@ -1155,7 +1158,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 
 		reconciler := createClawReconciler()
 		_, err := reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{Name: ClawInstanceName, Namespace: namespace},
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "credential validation failed")

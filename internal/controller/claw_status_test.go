@@ -42,7 +42,7 @@ import (
 
 func TestOpenClawStatusConditions(t *testing.T) {
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should set GatewayTokenSecretRef in status after reconciliation", func(t *testing.T) {
@@ -74,7 +74,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			updatedInstance := &clawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
-			assert.Equal(t, ClawGatewaySecretName, updatedInstance.Status.GatewayTokenSecretRef)
+			assert.Equal(t, getGatewaySecretName(testInstanceName), updatedInstance.Status.GatewayTokenSecretRef)
 		})
 
 		t.Run("should set Ready condition to False after initial resource creation", func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 				return err == nil
 			}, "claw Deployment should be created")
 
@@ -201,7 +201,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
 				return err == nil
 			}, "claw-proxy Deployment should be created")
 
@@ -258,7 +258,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 				return err == nil
 			}, "claw Deployment should be created")
 
@@ -272,7 +272,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
 				return err == nil
 			}, "claw-proxy Deployment should be created")
 
@@ -344,7 +344,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 				return err == nil
 			}, "claw Deployment should be created")
 
@@ -358,7 +358,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
 				return err == nil
 			}, "claw-proxy Deployment should be created")
 
@@ -531,7 +531,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 		})
 
 		t.Run("When verifying status.url field", func(t *testing.T) {
-			const resourceName = ClawInstanceName
+			const resourceName = testInstanceName
 			ctx := context.Background()
 
 			t.Run("should initialize status.url as empty", func(t *testing.T) {
@@ -595,7 +595,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				deployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 					return err == nil
 				}, "claw Deployment should be created")
 
@@ -649,7 +649,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				proxyDeployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
 					return err == nil
 				}, "claw-proxy Deployment should be created")
 
@@ -703,7 +703,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				deployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 					return err == nil
 				}, "claw Deployment should be created")
 
@@ -717,7 +717,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				proxyDeployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
 					return err == nil
 				}, "claw-proxy Deployment should be created")
 
@@ -738,7 +738,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, err, "reconcile failed")
 
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 					if err != nil {
 						return false
 					}
@@ -794,7 +794,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				deployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 					return err == nil
 				}, "claw Deployment should be created")
 
@@ -808,7 +808,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				proxyDeployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
 					return err == nil
 				}, "claw-proxy Deployment should be created")
 
@@ -927,7 +927,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					Version: "v1",
 					Kind:    "Route",
 				})
-				route.SetName(ClawRouteName)
+				route.SetName(getRouteName(testInstanceName))
 				route.SetNamespace(namespace)
 
 				routeHost := "claw-default.apps.example.com"
@@ -935,7 +935,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, route), "failed to create Route")
 
 				waitFor(t, timeout, interval, func() bool {
-					return k8sClient.Get(ctx, client.ObjectKey{Name: ClawRouteName, Namespace: namespace}, route) == nil
+					return k8sClient.Get(ctx, client.ObjectKey{Name: getRouteName(testInstanceName), Namespace: namespace}, route) == nil
 				}, "Route should be created")
 
 				route.Object["status"] = map[string]interface{}{
@@ -955,7 +955,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 						Version: "v1",
 						Kind:    "Route",
 					})
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawRouteName, Namespace: namespace}, createdRoute)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getRouteName(testInstanceName), Namespace: namespace}, createdRoute)
 					if err != nil {
 						return false
 					}
@@ -973,7 +973,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				deployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 					return err == nil
 				}, "claw Deployment should be created")
 
@@ -987,7 +987,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				proxyDeployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+					err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
 					return err == nil
 				}, "claw-proxy Deployment should be created")
 
@@ -1021,7 +1021,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				assert.NotEmpty(t, urlParts[1], "token should not be empty")
 
 				gatewaySecret := &corev1.Secret{}
-				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}, gatewaySecret), "failed to get gateway secret")
+				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: getGatewaySecretName(testInstanceName), Namespace: namespace}, gatewaySecret), "failed to get gateway secret")
 				expectedToken := string(gatewaySecret.Data[GatewayTokenKeyName])
 				assert.NotEmpty(t, expectedToken, "expected non-empty gateway token")
 
@@ -1056,7 +1056,7 @@ func boolPtr(b bool) *bool {
 func TestOpenClawURLStatusField(t *testing.T) {
 
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should populate URL field when both deployments are ready and Route exists", func(t *testing.T) {
@@ -1124,7 +1124,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawDeploymentName, Namespace: namespace}, deployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 				return err == nil
 			}, "claw deployment to be created")
 
@@ -1138,7 +1138,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 
 			proxyDeployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawProxyDeploymentName, Namespace: namespace}, proxyDeployment)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
 				return err == nil
 			}, "claw-proxy deployment to be created")
 
@@ -1176,10 +1176,10 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 	setupGatewaySecretTest := func(t *testing.T) {
 		t.Helper()
 		gatewaySecret := &corev1.Secret{}
-		if err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}, gatewaySecret); err == nil {
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: getGatewaySecretName(testInstanceName), Namespace: namespace}, gatewaySecret); err == nil {
 			_ = k8sClient.Delete(ctx, gatewaySecret)
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawGatewaySecretName, Namespace: namespace}, gatewaySecret)
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: getGatewaySecretName(testInstanceName), Namespace: namespace}, gatewaySecret)
 				return err != nil
 			}, "gateway secret to be deleted")
 		}
@@ -1192,7 +1192,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		})
 
 		gatewaySecret := &corev1.Secret{}
-		gatewaySecret.Name = ClawGatewaySecretName
+		gatewaySecret.Name = getGatewaySecretName(testInstanceName)
 		gatewaySecret.Namespace = namespace
 		testToken := "test-gateway-token-123456"
 		gatewaySecret.Data = map[string][]byte{
@@ -1204,7 +1204,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
-		token := reconciler.getGatewayToken(ctx, namespace)
+		token := reconciler.getGatewayToken(ctx, namespace, testInstanceName)
 
 		assert.Equal(t, testToken, token, "expected token to match")
 	})
@@ -1219,7 +1219,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
-		token := reconciler.getGatewayToken(ctx, namespace)
+		token := reconciler.getGatewayToken(ctx, namespace, testInstanceName)
 
 		assert.Empty(t, token, "expected empty string")
 	})
@@ -1231,7 +1231,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		})
 
 		gatewaySecret := &corev1.Secret{}
-		gatewaySecret.Name = ClawGatewaySecretName
+		gatewaySecret.Name = getGatewaySecretName(testInstanceName)
 		gatewaySecret.Namespace = namespace
 		gatewaySecret.Data = map[string][]byte{
 			"other-key": []byte("other-value"),
@@ -1242,7 +1242,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
-		token := reconciler.getGatewayToken(ctx, namespace)
+		token := reconciler.getGatewayToken(ctx, namespace, testInstanceName)
 
 		assert.Empty(t, token, "expected empty string")
 	})
@@ -1254,7 +1254,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		})
 
 		gatewaySecret := &corev1.Secret{}
-		gatewaySecret.Name = ClawGatewaySecretName
+		gatewaySecret.Name = getGatewaySecretName(testInstanceName)
 		gatewaySecret.Namespace = namespace
 		gatewaySecret.Data = map[string][]byte{
 			GatewayTokenKeyName: []byte(""),
@@ -1265,7 +1265,7 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
-		token := reconciler.getGatewayToken(ctx, namespace)
+		token := reconciler.getGatewayToken(ctx, namespace, testInstanceName)
 
 		assert.Empty(t, token, "expected empty string")
 	})
