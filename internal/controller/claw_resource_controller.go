@@ -76,10 +76,12 @@ const (
 	ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"
 	DefaultKubectlImage              = "quay.io/openshift/origin-cli:4.21"
 	// Kubernetes resource kinds
-	RouteKind         = "Route"
-	DeploymentKind    = "Deployment"
-	ConfigMapKind     = "ConfigMap"
-	NetworkPolicyKind = "NetworkPolicy"
+	RouteKind                 = "Route"
+	DeploymentKind            = "Deployment"
+	ConfigMapKind             = "ConfigMap"
+	NetworkPolicyKind         = "NetworkPolicy"
+	ServiceKind               = "Service"
+	PersistentVolumeClaimKind = "PersistentVolumeClaim"
 )
 
 // setDynamicNamesAndLabels sets resource names and instance labels based on Claw instance name
@@ -96,9 +98,9 @@ func setDynamicNamesAndLabels(objects []*unstructured.Unstructured, instanceName
 			obj.SetName(getProxyDeploymentName(instanceName))
 		case kind == DeploymentKind:
 			obj.SetName(getClawDeploymentName(instanceName))
-		case kind == "Service" && strings.HasSuffix(name, "-proxy"):
+		case kind == ServiceKind && strings.HasSuffix(name, "-proxy"):
 			obj.SetName(getProxyServiceName(instanceName))
-		case kind == "Service":
+		case kind == ServiceKind:
 			obj.SetName(getServiceName(instanceName))
 		case kind == RouteKind:
 			obj.SetName(getRouteName(instanceName))
@@ -106,7 +108,7 @@ func setDynamicNamesAndLabels(objects []*unstructured.Unstructured, instanceName
 			obj.SetName(getProxyConfigMapName(instanceName))
 		case kind == ConfigMapKind:
 			obj.SetName(getConfigMapName(instanceName))
-		case kind == "PersistentVolumeClaim":
+		case kind == PersistentVolumeClaimKind:
 			obj.SetName(getPVCName(instanceName))
 		case kind == NetworkPolicyKind && strings.Contains(name, "ingress"):
 			obj.SetName(getIngressNetworkPolicyName(instanceName))
@@ -124,19 +126,191 @@ func setDynamicNamesAndLabels(objects []*unstructured.Unstructured, instanceName
 		labels[instanceLabel] = instanceName
 		obj.SetLabels(labels)
 
-		// Update NetworkPolicy pod selectors to include instance label
-		if kind == NetworkPolicyKind {
-			podSelector, found, err := unstructured.NestedMap(obj.Object, "spec", "podSelector", "matchLabels")
-			if err != nil {
-				return fmt.Errorf("failed to get podSelector from NetworkPolicy: %w", err)
+		// Inject instance labels into resource-specific selectors
+		switch kind {
+		case DeploymentKind:
+			if err := injectDeploymentInstanceLabels(obj, instanceLabel, instanceName); err != nil {
+				return err
 			}
-			if found && podSelector != nil {
-				podSelector[instanceLabel] = instanceName
-				if err := unstructured.SetNestedMap(obj.Object, podSelector, "spec", "podSelector", "matchLabels"); err != nil {
-					return fmt.Errorf("failed to set podSelector on NetworkPolicy: %w", err)
-				}
+		case ServiceKind:
+			if err := injectServiceInstanceLabels(obj, instanceLabel, instanceName); err != nil {
+				return err
+			}
+		case NetworkPolicyKind:
+			if err := injectNetworkPolicyInstanceLabels(obj, instanceLabel, instanceName); err != nil {
+				return err
 			}
 		}
+	}
+
+	return nil
+}
+
+// injectDeploymentInstanceLabels injects instance labels into Deployment selectors and pod template labels
+func injectDeploymentInstanceLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	// Update spec.selector.matchLabels
+	selector, found, err := unstructured.NestedMap(obj.Object, "spec", "selector", "matchLabels")
+	if err != nil {
+		return fmt.Errorf("failed to get selector from Deployment: %w", err)
+	}
+	if found && selector != nil {
+		selector[instanceLabel] = instanceName
+		if err := unstructured.SetNestedMap(obj.Object, selector, "spec", "selector", "matchLabels"); err != nil {
+			return fmt.Errorf("failed to set selector on Deployment: %w", err)
+		}
+	}
+
+	// Update spec.template.metadata.labels
+	templateLabels, found, err := unstructured.NestedMap(obj.Object, "spec", "template", "metadata", "labels")
+	if err != nil {
+		return fmt.Errorf("failed to get template labels from Deployment: %w", err)
+	}
+	if found && templateLabels != nil {
+		templateLabels[instanceLabel] = instanceName
+		if err := unstructured.SetNestedMap(obj.Object, templateLabels, "spec", "template", "metadata", "labels"); err != nil {
+			return fmt.Errorf("failed to set template labels on Deployment: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// injectServiceInstanceLabels injects instance labels into Service selector
+func injectServiceInstanceLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	selector, found, err := unstructured.NestedMap(obj.Object, "spec", "selector")
+	if err != nil {
+		return fmt.Errorf("failed to get selector from Service: %w", err)
+	}
+	if found && selector != nil {
+		selector[instanceLabel] = instanceName
+		if err := unstructured.SetNestedMap(obj.Object, selector, "spec", "selector"); err != nil {
+			return fmt.Errorf("failed to set selector on Service: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// injectNetworkPolicyInstanceLabels injects instance labels into NetworkPolicy podSelector and peer podSelectors
+func injectNetworkPolicyInstanceLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	// Update spec.podSelector.matchLabels
+	podSelector, found, err := unstructured.NestedMap(obj.Object, "spec", "podSelector", "matchLabels")
+	if err != nil {
+		return fmt.Errorf("failed to get podSelector from NetworkPolicy: %w", err)
+	}
+	if found && podSelector != nil {
+		podSelector[instanceLabel] = instanceName
+		if err := unstructured.SetNestedMap(obj.Object, podSelector, "spec", "podSelector", "matchLabels"); err != nil {
+			return fmt.Errorf("failed to set podSelector on NetworkPolicy: %w", err)
+		}
+	}
+
+	// Update egress peer podSelectors
+	if err := injectNetworkPolicyEgressLabels(obj, instanceLabel, instanceName); err != nil {
+		return err
+	}
+
+	// Update ingress peer podSelectors
+	if err := injectNetworkPolicyIngressLabels(obj, instanceLabel, instanceName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// injectNetworkPolicyEgressLabels injects instance labels into NetworkPolicy egress peer podSelectors
+func injectNetworkPolicyEgressLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	egress, found, err := unstructured.NestedSlice(obj.Object, "spec", "egress")
+	if err != nil {
+		return fmt.Errorf("failed to get egress from NetworkPolicy: %w", err)
+	}
+	if !found || egress == nil {
+		return nil
+	}
+
+	for i, egressRule := range egress {
+		egressMap, ok := egressRule.(map[string]any)
+		if !ok {
+			continue
+		}
+		to, found, err := unstructured.NestedSlice(egressMap, "to")
+		if err != nil {
+			return fmt.Errorf("failed to get to peers from NetworkPolicy egress rule: %w", err)
+		}
+		if found && to != nil {
+			for j, peer := range to {
+				peerMap, ok := peer.(map[string]any)
+				if !ok {
+					continue
+				}
+				podSelector, found, err := unstructured.NestedMap(peerMap, "podSelector", "matchLabels")
+				if err != nil {
+					return fmt.Errorf("failed to get podSelector from NetworkPolicy egress peer: %w", err)
+				}
+				if found && podSelector != nil {
+					podSelector[instanceLabel] = instanceName
+					if err := unstructured.SetNestedMap(peerMap, podSelector, "podSelector", "matchLabels"); err != nil {
+						return fmt.Errorf("failed to set podSelector on NetworkPolicy egress peer: %w", err)
+					}
+					to[j] = peerMap
+				}
+			}
+			egressMap["to"] = to
+		}
+		egress[i] = egressMap
+	}
+
+	if err := unstructured.SetNestedSlice(obj.Object, egress, "spec", "egress"); err != nil {
+		return fmt.Errorf("failed to set egress on NetworkPolicy: %w", err)
+	}
+
+	return nil
+}
+
+// injectNetworkPolicyIngressLabels injects instance labels into NetworkPolicy ingress peer podSelectors
+func injectNetworkPolicyIngressLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	ingress, found, err := unstructured.NestedSlice(obj.Object, "spec", "ingress")
+	if err != nil {
+		return fmt.Errorf("failed to get ingress from NetworkPolicy: %w", err)
+	}
+	if !found || ingress == nil {
+		return nil
+	}
+
+	for i, ingressRule := range ingress {
+		ingressMap, ok := ingressRule.(map[string]any)
+		if !ok {
+			continue
+		}
+		from, found, err := unstructured.NestedSlice(ingressMap, "from")
+		if err != nil {
+			return fmt.Errorf("failed to get from peers from NetworkPolicy ingress rule: %w", err)
+		}
+		if found && from != nil {
+			for j, peer := range from {
+				peerMap, ok := peer.(map[string]any)
+				if !ok {
+					continue
+				}
+				podSelector, found, err := unstructured.NestedMap(peerMap, "podSelector", "matchLabels")
+				if err != nil {
+					return fmt.Errorf("failed to get podSelector from NetworkPolicy ingress peer: %w", err)
+				}
+				if found && podSelector != nil {
+					podSelector[instanceLabel] = instanceName
+					if err := unstructured.SetNestedMap(peerMap, podSelector, "podSelector", "matchLabels"); err != nil {
+						return fmt.Errorf("failed to set podSelector on NetworkPolicy ingress peer: %w", err)
+					}
+					from[j] = peerMap
+				}
+			}
+			ingressMap["from"] = from
+		}
+		ingress[i] = ingressMap
+	}
+
+	if err := unstructured.SetNestedSlice(obj.Object, ingress, "spec", "ingress"); err != nil {
+		return fmt.Errorf("failed to set ingress on NetworkPolicy: %w", err)
 	}
 
 	return nil
