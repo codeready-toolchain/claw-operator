@@ -414,7 +414,7 @@ func TestGenerateProxyConfigKubernetes(t *testing.T) {
 // --- configureProxyForCredentials kubernetes volume mount tests ---
 
 func TestConfigureProxyForKubernetesCredentials(t *testing.T) {
-	buildObjects := func(t *testing.T) []*unstructured.Unstructured {
+	buildObjects := func(t *testing.T) (*clawv1alpha1.Claw, []*unstructured.Unstructured) {
 		t.Helper()
 		reconciler := createClawReconciler()
 		instance := &clawv1alpha1.Claw{}
@@ -422,11 +422,11 @@ func TestConfigureProxyForKubernetesCredentials(t *testing.T) {
 		instance.Namespace = namespace
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
-		return objects
+		return instance, objects
 	}
 
 	t.Run("should add kubernetes kubeconfig volume mount", func(t *testing.T) {
-		objects := buildObjects(t)
+		instance, objects := buildObjects(t)
 		creds := []resolvedCredential{
 			{
 				CredentialSpec: clawv1alpha1.CredentialSpec{
@@ -437,7 +437,7 @@ func TestConfigureProxyForKubernetesCredentials(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureProxyForCredentials(objects, creds))
+		require.NoError(t, configureProxyForCredentials(objects, instance, creds))
 
 		for _, obj := range objects {
 			if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(testInstanceName) {

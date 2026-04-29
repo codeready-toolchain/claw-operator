@@ -602,7 +602,7 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 }
 
 func TestConfigureProxyImage(t *testing.T) {
-	buildObjects := func(t *testing.T) []*unstructured.Unstructured {
+	buildObjects := func(t *testing.T) (*clawv1alpha1.Claw, []*unstructured.Unstructured) {
 		t.Helper()
 		reconciler := createClawReconciler()
 		instance := &clawv1alpha1.Claw{}
@@ -610,7 +610,7 @@ func TestConfigureProxyImage(t *testing.T) {
 		instance.Namespace = namespace
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
-		return objects
+		return instance, objects
 	}
 
 	getProxyImage := func(t *testing.T, objects []*unstructured.Unstructured) string {
@@ -633,15 +633,15 @@ func TestConfigureProxyImage(t *testing.T) {
 	}
 
 	t.Run("should override proxy image when set", func(t *testing.T) {
-		objects := buildObjects(t)
-		require.NoError(t, configureProxyImage(objects, "quay.io/myuser/claw-proxy:v1"))
+		instance, objects := buildObjects(t)
+		require.NoError(t, configureProxyImage(objects, instance, "quay.io/myuser/claw-proxy:v1"))
 
 		assert.Equal(t, "quay.io/myuser/claw-proxy:v1", getProxyImage(t, objects))
 	})
 
 	t.Run("should preserve default image when empty", func(t *testing.T) {
-		objects := buildObjects(t)
-		require.NoError(t, configureProxyImage(objects, ""))
+		instance, objects := buildObjects(t)
+		require.NoError(t, configureProxyImage(objects, instance, ""))
 
 		assert.Equal(t, "claw-proxy:latest", getProxyImage(t, objects))
 	})

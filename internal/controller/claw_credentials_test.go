@@ -325,7 +325,7 @@ func TestOpenClawCredentialSecretReference(t *testing.T) {
 }
 
 func TestConfigureProxyForCredentials(t *testing.T) {
-	buildObjects := func(t *testing.T) []*unstructured.Unstructured {
+	buildObjects := func(t *testing.T) (*clawv1alpha1.Claw, []*unstructured.Unstructured) {
 		t.Helper()
 		reconciler := createClawReconciler()
 		instance := &clawv1alpha1.Claw{}
@@ -333,7 +333,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 		instance.Namespace = namespace
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
-		return objects
+		return instance, objects
 	}
 
 	findProxyContainer := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
@@ -363,7 +363,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 	}
 
 	t.Run("should add GCP volume and mount for gcp credential", func(t *testing.T) {
-		objects := buildObjects(t)
+		instance, objects := buildObjects(t)
 		creds := []clawv1alpha1.CredentialSpec{
 			{
 				Name:      "vertex",
@@ -373,7 +373,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 				GCP:       &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
 			},
 		}
-		require.NoError(t, configureProxyForCredentials(objects, toResolved(creds)))
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
 
 		container := findProxyContainer(t, objects)
 		mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
@@ -404,7 +404,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 	})
 
 	t.Run("should skip credentials with nil secretRef for apiKey type", func(t *testing.T) {
-		objects := buildObjects(t)
+		instance, objects := buildObjects(t)
 		creds := []clawv1alpha1.CredentialSpec{
 			{
 				Name:   "no-ref",
@@ -413,7 +413,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 				APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-api-key"},
 			},
 		}
-		require.NoError(t, configureProxyForCredentials(objects, toResolved(creds)))
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
 
 		container := findProxyContainer(t, objects)
 		envVars, _, _ := unstructured.NestedSlice(container, "env")
@@ -424,7 +424,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 	})
 
 	t.Run("should handle multiple credential types together", func(t *testing.T) {
-		objects := buildObjects(t)
+		instance, objects := buildObjects(t)
 		creds := []clawv1alpha1.CredentialSpec{
 			{
 				Name:      "gemini",
@@ -440,7 +440,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 				Domain:    "api.openai.com",
 			},
 		}
-		require.NoError(t, configureProxyForCredentials(objects, toResolved(creds)))
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
 
 		container := findProxyContainer(t, objects)
 		envVars, _, _ := unstructured.NestedSlice(container, "env")

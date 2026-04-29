@@ -366,13 +366,13 @@ func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, in
 
 // configureProxyImage overrides the proxy Deployment's container image.
 // If image is empty, the embedded default is preserved.
-func configureProxyImage(objects []*unstructured.Unstructured, image string) error {
+func configureProxyImage(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, image string) error {
 	if image == "" {
 		return nil
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || !strings.HasSuffix(obj.GetName(), "-proxy") {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(instance.GetName()) {
 			continue
 		}
 
@@ -443,9 +443,9 @@ func configureImagePullPolicy(objects []*unstructured.Unstructured, policy strin
 // configureProxyForCredentials adds credential env vars and volume mounts to the
 // claw-proxy Deployment based on resolved credentials. This modifies the parsed
 // kustomize objects in-place before they are applied via SSA.
-func configureProxyForCredentials(objects []*unstructured.Unstructured, credentials []resolvedCredential) error {
+func configureProxyForCredentials(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, credentials []resolvedCredential) error {
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || !strings.HasSuffix(obj.GetName(), "-proxy") {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(instance.GetName()) {
 			continue
 		}
 
@@ -785,9 +785,9 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 
 // stampProxyConfigHash adds a hash annotation to the proxy pod template to trigger
 // rollouts when the proxy config changes.
-func stampProxyConfigHash(objects []*unstructured.Unstructured, hash string) error {
+func stampProxyConfigHash(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, hash string) error {
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || !strings.HasSuffix(obj.GetName(), "-proxy") {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(instance.GetName()) {
 			continue
 		}
 
@@ -834,7 +834,7 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 	}
 
 	for _, obj := range objects {
-		if obj.GetKind() != DeploymentKind || !strings.HasSuffix(obj.GetName(), "-proxy") {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(instance.GetName()) {
 			continue
 		}
 

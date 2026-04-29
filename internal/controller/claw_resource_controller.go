@@ -265,13 +265,13 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Apply deployment overrides (proxy image, pull policy, credentials)
-	if err := r.configureDeployments(objects, resolvedCreds); err != nil {
+	if err := r.configureDeployments(instance, objects, resolvedCreds); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Stamp proxy config hash to trigger rollout on config changes
 	proxyConfigHash := fmt.Sprintf("%x", sha256.Sum256(proxyConfigJSON))
-	if err := stampProxyConfigHash(objects, proxyConfigHash); err != nil {
+	if err := stampProxyConfigHash(objects, instance, proxyConfigHash); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to stamp proxy config hash: %w", err)
 	}
 
@@ -403,16 +403,17 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 
 // configureDeployments applies deployment overrides (proxy image, pull policy, credentials)
 func (r *ClawResourceReconciler) configureDeployments(
+	instance *clawv1alpha1.Claw,
 	objects []*unstructured.Unstructured,
 	resolvedCreds []resolvedCredential,
 ) error {
-	if err := configureProxyImage(objects, r.ProxyImage); err != nil {
+	if err := configureProxyImage(objects, instance, r.ProxyImage); err != nil {
 		return fmt.Errorf("failed to configure proxy image: %w", err)
 	}
 	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
 		return fmt.Errorf("failed to configure image pull policy: %w", err)
 	}
-	if err := configureProxyForCredentials(objects, resolvedCreds); err != nil {
+	if err := configureProxyForCredentials(objects, instance, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
 	}
 	if err := configureClawDeploymentForVertex(objects, resolvedCreds); err != nil {
