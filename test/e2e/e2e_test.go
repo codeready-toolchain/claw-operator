@@ -338,6 +338,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
+				waitForPVCDeletion(t, userNamespace)
 			})
 
 			t.Log("creating the credential Secret")
@@ -446,6 +447,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
+				waitForPVCDeletion(t, userNamespace)
 			})
 
 			t.Log("creating the credential Secret")
@@ -534,6 +536,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
+				waitForPVCDeletion(t, userNamespace)
 			})
 
 			t.Log("creating the credential Secret")
@@ -612,6 +615,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "llm-key-2", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
+				waitForPVCDeletion(t, userNamespace)
 			})
 
 			t.Log("creating the first credential Secret")
@@ -802,6 +806,9 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				curlPodName   = "curl-kube-proxy"
 			)
 
+			// Ensure clean state from previous tests before creating resources
+			waitForPVCDeletion(t, userNamespace)
+
 			t.Cleanup(func() {
 				collectDebugInfo(t)
 				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
@@ -968,6 +975,7 @@ spec:
 			curlScript := fmt.Sprintf(
 				"echo '%s' | base64 -d > /tmp/mitm-ca.crt && "+
 					"curl -s -o /tmp/response.json -w '%%{http_code}' "+
+					"--connect-timeout 10 --max-time 30 "+
 					"--proxy http://%s.%s.svc.cluster.local:8080 "+
 					"--cacert /tmp/mitm-ca.crt "+
 					"https://kubernetes.default.svc/api/v1/namespaces/%s/configmaps && "+
@@ -1136,11 +1144,14 @@ type tokenRequest struct {
 func waitForPVCDeletion(t *testing.T, namespace string) {
 	t.Helper()
 	ctx := context.Background()
-	_ = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
 		func(ctx context.Context) (bool, error) {
 			cmd := exec.Command("kubectl", "get", "pvc", pvcName,
 				"-n", namespace, "--no-headers")
 			_, err := utils.Run(t, cmd)
 			return err != nil, nil
 		})
+	if err != nil {
+		t.Logf("warning: PVC %s in %s not fully deleted: %v", pvcName, namespace, err)
+	}
 }
