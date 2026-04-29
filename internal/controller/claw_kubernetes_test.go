@@ -440,7 +440,7 @@ func TestConfigureProxyForKubernetesCredentials(t *testing.T) {
 		require.NoError(t, configureProxyForCredentials(objects, creds))
 
 		for _, obj := range objects {
-			if obj.GetKind() != DeploymentKind || obj.GetName() != ClawProxyDeploymentName {
+			if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(testInstanceName) {
 				continue
 			}
 			volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
