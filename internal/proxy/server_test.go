@@ -275,6 +275,131 @@ func TestServerConnectAllowsKnownDomain(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+func TestServerConnectDirectForNoneRoute(t *testing.T) {
+	certPEM, keyPEM := generateTestCA(t)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = fmt.Fprintf(w, "upstream-ok")
+	}))
+	defer upstream.Close()
+
+	_, port, err := net.SplitHostPort(upstream.Listener.Addr().String())
+	require.NoError(t, err)
+
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "127.0.0.1", Injector: "none"},
+		},
+	}
+	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
+	require.NoError(t, err)
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	conn, err := net.Dial("tcp", ts.Listener.Addr().String())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	target := fmt.Sprintf("127.0.0.1:%s", port)
+	_, err = fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	require.NoError(t, err)
+
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// For a direct tunnel, we do TLS against the UPSTREAM cert, not the proxy CA.
+	// This proves the proxy is NOT doing MITM.
+	tlsConn := tls.Client(conn, &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // test against self-signed upstream
+		MinVersion:         tls.VersionTLS12,
+	})
+	require.NoError(t, tlsConn.Handshake())
+
+	// Verify the cert is from the upstream server, not the proxy CA
+	certBlock, _ := pem.Decode(certPEM)
+	require.NotNil(t, certBlock)
+	caCert, err := x509.ParseCertificate(certBlock.Bytes)
+	require.NoError(t, err)
+
+	state := tlsConn.ConnectionState()
+	require.NotEmpty(t, state.PeerCertificates)
+	upstreamCert := state.PeerCertificates[0]
+	assert.NotEqual(t, caCert.Subject.CommonName, upstreamCert.Issuer.CommonName,
+		"should see upstream cert, not proxy-generated MITM cert")
+
+	req, err := http.NewRequest(http.MethodGet, "https://127.0.0.1/test", nil)
+	require.NoError(t, err)
+	require.NoError(t, req.Write(tlsConn))
+
+	resp, err = http.ReadResponse(bufio.NewReader(tlsConn), req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "upstream-ok", string(body))
+}
+
+func TestServerConnectMITMForNoneRouteWithAllowedPaths(t *testing.T) {
+	certPEM, keyPEM := generateTestCA(t)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	host, port, err := net.SplitHostPort(upstream.Listener.Addr().String())
+	require.NoError(t, err)
+	hostPort := net.JoinHostPort(host, port)
+
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: host, Injector: "none", AllowedPaths: []string{"/"}},
+		},
+	}
+	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
+	require.NoError(t, err)
+
+	// Let the proxy trust the upstream's self-signed cert for MITM forwarding
+	srv.proxy.Tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // test only
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	conn, err := net.Dial("tcp", ts.Listener.Addr().String())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	_, err = fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", hostPort, hostPort)
+	require.NoError(t, err)
+
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// For a MITM route, the proxy generates a cert signed by the proxy CA.
+	certBlock, _ := pem.Decode(certPEM)
+	require.NotNil(t, certBlock)
+	caCert, err := x509.ParseCertificate(certBlock.Bytes)
+	require.NoError(t, err)
+	caPool := x509.NewCertPool()
+	caPool.AddCert(caCert)
+
+	tlsConn := tls.Client(conn, &tls.Config{
+		RootCAs:    caPool,
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
+	})
+	require.NoError(t, tlsConn.Handshake(), "should succeed with proxy CA — proves MITM is active")
+}
+
 func TestServerMITMCredentialInjection(t *testing.T) {
 	certPEM, keyPEM := generateTestCA(t)
 

@@ -45,6 +45,19 @@ type Route struct {
 	AllowedPaths   []string          `json:"allowedPaths,omitempty"`
 }
 
+// NeedsMITM reports whether the route requires TLS interception (MITM).
+// Routes that inject credentials, filter paths, or set default headers need MITM
+// to inspect and modify HTTP requests. Pure passthrough routes (injector "none"
+// with no path or header requirements) use a direct CONNECT tunnel instead,
+// which is required for protocols like WhatsApp's Noise handshake that fail
+// under TLS interception.
+func (r *Route) NeedsMITM() bool {
+	if r.Injector != "none" {
+		return true
+	}
+	return len(r.AllowedPaths) > 0 || len(r.DefaultHeaders) > 0
+}
+
 // PathAllowed reports whether the request path is permitted by this route.
 // If AllowedPaths is empty the route is unrestricted. Otherwise the path
 // must start with at least one of the listed prefixes.

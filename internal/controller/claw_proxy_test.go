@@ -519,7 +519,7 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &cfg))
 		route := findRouteByDomain(t, cfg.Routes, "raw.githubusercontent.com")
 		assert.Equal(t, "none", route.Injector)
-		assert.Equal(t, []string{"/BerriAI/litellm/"}, route.AllowedPaths)
+		assert.Equal(t, []string{"/BerriAI/litellm/", "/WhiskeySockets/Baileys/"}, route.AllowedPaths)
 	})
 
 	t.Run("should include registry.npmjs.org as none route with no credentials", func(t *testing.T) {
@@ -950,7 +950,7 @@ func TestOpenClawProxyConfigMap(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(cm.Data["proxy-config.json"]), &cfg))
 		route := findRouteByDomain(t, cfg.Routes, "raw.githubusercontent.com")
 		assert.Equal(t, "none", route.Injector)
-		assert.Equal(t, []string{"/BerriAI/litellm/"}, route.AllowedPaths)
+		assert.Equal(t, []string{"/BerriAI/litellm/", "/WhiskeySockets/Baileys/"}, route.AllowedPaths)
 	})
 
 	t.Run("should include gateway fields in proxy config when credential has provider", func(t *testing.T) {

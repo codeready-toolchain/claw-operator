@@ -152,6 +152,10 @@ func TestClawConfigMapController(t *testing.T) {
 			require.True(t, hasInclude, "openclaw.json must contain $include directive")
 			assert.Equal(t, "./operator.json", include, "$include should reference operator.json")
 
+			gateway, hasGateway := config["gateway"].(map[string]any)
+			require.True(t, hasGateway, "openclaw.json seed must contain gateway section for config safety check")
+			assert.Equal(t, "local", gateway["mode"], "gateway.mode must be present to survive OpenClaw write-back")
+
 			agents, hasAgents := config["agents"].(map[string]any)
 			require.True(t, hasAgents, "openclaw.json seed should contain agents section")
 

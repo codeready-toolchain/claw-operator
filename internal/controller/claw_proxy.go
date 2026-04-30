@@ -174,11 +174,11 @@ type builtinPassthrough struct {
 // builtinPassthroughDomains are domains the proxy always allows without credential
 // injection. These support core gateway functionality:
 //   - openrouter.ai: model pricing API for cost estimation in the UI
-//   - raw.githubusercontent.com: LiteLLM model pricing data (path-restricted to the LiteLLM repo)
+//   - raw.githubusercontent.com: LiteLLM model pricing data and WhatsApp Baileys library defaults (path-restricted)
 //   - registry.npmjs.org: npm packages for plugin runtime dependencies
 var builtinPassthroughDomains = []builtinPassthrough{
 	{Domain: "openrouter.ai"},
-	{Domain: "raw.githubusercontent.com", AllowedPaths: []string{"/BerriAI/litellm/"}},
+	{Domain: "raw.githubusercontent.com", AllowedPaths: []string{"/BerriAI/litellm/", "/WhiskeySockets/Baileys/"}},
 	{Domain: "registry.npmjs.org"},
 }
 
