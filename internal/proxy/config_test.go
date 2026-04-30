@@ -140,9 +140,9 @@ func TestPathAllowed(t *testing.T) {
 
 func TestNeedsMITM(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		route Route
-		want bool
+		want  bool
 	}{
 		{name: "bearer injector needs MITM", route: Route{Injector: "bearer"}, want: true},
 		{name: "api_key injector needs MITM", route: Route{Injector: "api_key"}, want: true},
