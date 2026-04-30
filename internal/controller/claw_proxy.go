@@ -182,10 +182,12 @@ type builtinPassthrough struct {
 
 // builtinPassthroughDomains are domains the proxy always allows without credential
 // injection. These support core gateway functionality:
+//   - clawhub.ai: ClawHub plugin registry for plugin installs and skill downloads
 //   - openrouter.ai: model pricing API for cost estimation in the UI
 //   - raw.githubusercontent.com: LiteLLM model pricing data and WhatsApp Baileys library defaults (path-restricted)
 //   - registry.npmjs.org: npm packages for plugin runtime dependencies
 var builtinPassthroughDomains = []builtinPassthrough{
+	{Domain: "clawhub.ai"},
 	{Domain: "openrouter.ai"},
 	{Domain: "raw.githubusercontent.com", AllowedPaths: []string{"/BerriAI/litellm/", "/WhiskeySockets/Baileys/"}},
 	{Domain: "registry.npmjs.org"},

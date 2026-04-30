@@ -72,6 +72,17 @@ data:
     network access without credential injection, the proxy can allowlist domains using
     `type: none` credential entries.
 
+    ## Pre-allowed domains
+
+    The following domains are always allowed without any user configuration:
+    - `clawhub.ai` — ClawHub plugin registry (plugin installs, skill downloads)
+    - `openrouter.ai` — model pricing API for cost estimation
+    - `raw.githubusercontent.com` — LiteLLM pricing data and Baileys defaults (path-restricted)
+    - `registry.npmjs.org` — npm package downloads for plugin dependencies
+
+    You do NOT need to ask the user to allowlist these. If a plugin install or skill
+    download from ClawHub fails, the issue is likely something else (network, auth token).
+
     ## When the user wants to integrate with an external service
 
     If a service is not working or the user asks to enable a new integration, the most

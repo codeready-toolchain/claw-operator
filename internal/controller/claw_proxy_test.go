@@ -297,17 +297,16 @@ func TestGenerateProxyConfig(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &cfg))
 		expectedDomains := []string{
 			"api.example.com",
+			"clawhub.ai",
 			"openrouter.ai",
 			"raw.githubusercontent.com",
 			"registry.npmjs.org",
 			".example.com",
 		}
 		require.Len(t, cfg.Routes, len(expectedDomains))
-		assert.Equal(t, expectedDomains[0], cfg.Routes[0].Domain, "exact match should come first")
-		assert.Equal(t, expectedDomains[1], cfg.Routes[1].Domain, "builtin exact should come before suffix")
-		assert.Equal(t, expectedDomains[2], cfg.Routes[2].Domain, "builtin exact should come before suffix")
-		assert.Equal(t, expectedDomains[3], cfg.Routes[3].Domain, "builtin exact should come before suffix")
-		assert.Equal(t, expectedDomains[4], cfg.Routes[4].Domain, "suffix match should come last")
+		for i, want := range expectedDomains {
+			assert.Equal(t, want, cfg.Routes[i].Domain, "route %d should be %s", i, want)
+		}
 	})
 
 	t.Run("should generate config with none route", func(t *testing.T) {
@@ -500,6 +499,17 @@ func TestGenerateProxyConfig(t *testing.T) {
 }
 
 func TestBuiltinPassthroughDomains(t *testing.T) {
+	t.Run("should include clawhub.ai as none route with no credentials", func(t *testing.T) {
+		data, err := generateProxyConfig(nil) //nolint:staticcheck
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "clawhub.ai")
+		assert.Equal(t, "none", route.Injector)
+		assert.Empty(t, route.AllowedPaths)
+	})
+
 	t.Run("should include openrouter.ai as none route with no credentials", func(t *testing.T) {
 		data, err := generateProxyConfig(nil) //nolint:staticcheck
 		require.NoError(t, err)
