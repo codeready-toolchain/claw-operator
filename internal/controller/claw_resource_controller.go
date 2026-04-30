@@ -18,11 +18,13 @@ package controller
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -663,13 +665,9 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 	}
 
 	// Write all files to in-memory filesystem
-	allManifests := make(map[string][]byte)
-	for k, v := range clawManifests {
-		allManifests[k] = v
-	}
-	for k, v := range proxyManifests {
-		allManifests[k] = v
-	}
+	allManifests := make(map[string][]byte, len(clawManifests)+len(proxyManifests))
+	maps.Copy(allManifests, clawManifests)
+	maps.Copy(allManifests, proxyManifests)
 
 	for path, content := range allManifests {
 		replaced := bytes.ReplaceAll(content, []byte("CLAW_INSTANCE_NAME"), []byte(instance.Name))
@@ -920,7 +918,7 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 			}
 			sortedPorts = append(sortedPorts, portInt)
 		}
-		sort.Ints(sortedPorts)
+		slices.Sort(sortedPorts)
 
 		for _, portInt := range sortedPorts {
 			ports = append(ports, map[string]any{
@@ -956,8 +954,8 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 		return nil
 	}
 
-	sort.Slice(allContexts, func(i, j int) bool {
-		return allContexts[i].Name < allContexts[j].Name
+	slices.SortFunc(allContexts, func(a, b kubeconfigContext) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	var sb strings.Builder
@@ -1016,8 +1014,7 @@ func readEmbeddedFile(path string) []byte {
 func parseYAMLToObjects(yamlData []byte) ([]*unstructured.Unstructured, error) {
 	var objects []*unstructured.Unstructured
 	// Split YAML documents by separator
-	docs := bytes.Split(yamlData, []byte("\n---\n"))
-	for _, doc := range docs {
+	for doc := range bytes.SplitSeq(yamlData, []byte("\n---\n")) {
 		doc = bytes.TrimSpace(doc)
 		if len(doc) == 0 {
 			continue
