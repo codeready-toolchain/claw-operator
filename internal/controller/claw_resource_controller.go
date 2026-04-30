@@ -790,7 +790,6 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 // and are not modified here — users control their own model preferences.
 func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
 	credentials := instance.Spec.Credentials
-	proxyServiceName := getProxyServiceName(instance.Name)
 	providers := map[string]any{}
 	for _, cred := range credentials {
 		if cred.Provider == "" {
@@ -805,10 +804,12 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance
 			if _, exists := providers[providerKey]; exists {
 				return fmt.Errorf("duplicate provider %q in credentials", providerKey)
 			}
+			baseURL := vertexAIBaseURL(cred.GCP.Location)
 			entry := map[string]any{
-				"baseUrl": "https://" + cred.GCP.Location + "-aiplatform.googleapis.com",
-				"apiKey":  "gcp-vertex-credentials",
-				"models":  []any{},
+				"baseUrl":   baseURL,
+				"apiKey":    "gcp-vertex-credentials",
+				"maxTokens": 128000,
+				"models":    []any{},
 			}
 			if api, ok := vertexProviderAPIMapping[cred.Provider]; ok {
 				entry["api"] = api
@@ -819,9 +820,8 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance
 				return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
 			}
 			info := resolveProviderInfo(cred)
-			baseURL := "http://" + proxyServiceName + ":8080/" + strings.ToLower(cred.Name) + info.BasePath
 			providers[cred.Provider] = map[string]any{
-				"baseUrl": baseURL,
+				"baseUrl": info.Upstream + info.BasePath,
 				"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
 				"models":  []any{},
 			}

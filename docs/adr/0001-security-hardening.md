@@ -38,7 +38,7 @@ All questions resolved across sketch (Q1–Q7) and implementation questions (Q1�
 | Q4 | Operator RBAC | Deferred until credential and proxy changes complete | Credential/proxy work alters required permissions; audit after stabilization |
 | Q5 | Container hardening | Init container security context matching main container | Required for Pod Security Admission restricted profile. Deferred: image digest pinning, Route TLS config |
 | Q6 | Application-layer security | Document threat model; investigate assistant RBAC scoping | |
-| Q7 | Proxy architecture | Hybrid Go proxy (gateway + MITM) built on `github.com/elazarl/goproxy` | Pure MITM blocked by Google ADK JS SDK `thought_signature` bug on streamed responses. Gateway mode bypasses the bug; MITM retained for general egress |
+| Q7 | Proxy architecture | MITM forward proxy built on `github.com/elazarl/goproxy` with `OPENCLAW_PROXY_ACTIVE=1` | OpenClaw 2026.4.27+ native managed proxy support enables pure MITM for all traffic. Provider baseUrls point to real upstreams; proxy injects credentials transparently |
 
 | # | Question | Decision | Rationale |
 |---|----------|----------|-----------|
@@ -53,7 +53,7 @@ All questions resolved across sketch (Q1–Q7) and implementation questions (Q1�
 | Q9 | Implementation phasing | Phase 1 (quick wins + CRD rename) → Phase 2 (all 6 credential types + Go proxy) → Phase 3 (kubernetes type, deferred) | GCP requirement merged original Phases 2+3. Kubernetes type deferred due to SA token projection limitations |
 | Q10 | Credential validation | CEL validation rules on `spec.credentials[]` items + controller defense-in-depth | Admission-time feedback, no webhook infrastructure. Requires Kubernetes 1.25+ |
 | Q11 | Phase 2 credential types | `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `none` (6 types) | Covers all current use cases. `kubernetes` deferred to Phase 3 |
-| Q12 | Proxy traffic routing | Hybrid: gateway mode (path-based, LLM providers) + MITM forward proxy (CONNECT, general egress) | SDK bug necessitated gateway mode for LLM providers; MITM retained for general egress |
+| Q12 | Proxy traffic routing | Pure MITM forward proxy (CONNECT, all traffic) via `HTTP_PROXY` + `OPENCLAW_PROXY_ACTIVE=1` | OpenClaw 2026.4.27+ supports `OPENCLAW_PROXY_ACTIVE` env for managed proxy environments; gateway mode (path-based reverse proxy) retained in proxy code but no longer used for provider routing |
 
 ---
 
@@ -77,7 +77,7 @@ spec:
     - name: gemini
       type: apiKey
       secretRef: { name: llm-keys, key: GEMINI_API_KEY }
-      provider: google     # gateway mode + openclaw.json provider entry
+      provider: google     # generates provider entry in operator.json
     - name: github
       type: bearer
       secretRef: { name: platform-tokens, key: GITHUB_TOKEN }
@@ -104,21 +104,17 @@ spec:
 
 ### Hybrid Go Credential Proxy
 
-A credential-injecting proxy replacing nginx, built on `github.com/elazarl/goproxy`, operating in two modes:
+A credential-injecting MITM forward proxy built on `github.com/elazarl/goproxy`:
 
 ```
-# Gateway mode (LLM providers with provider set):
-Claw Gateway ──HTTP──▶ Go Proxy (strip prefix, inject creds) ──HTTPS──▶ upstream LLM API
-  baseUrl: http://claw-proxy:8080/gemini/v1beta
-
-# MITM forward proxy mode (general egress):
+# MITM forward proxy mode (all traffic):
 Claw Gateway ──CONNECT host:443──▶ Go Proxy (MITM: TLS terminate, inject creds) ──HTTPS──▶ upstream API
   HTTP_PROXY=http://claw-proxy:8080
+  OPENCLAW_PROXY_ACTIVE=1
+  baseUrl: https://generativelanguage.googleapis.com/v1beta  (real upstream, proxy transparent)
 ```
 
-**Gateway mode:** For LLM providers with `provider` set. OpenClaw configured with `baseUrl` pointing to proxy. Proxy strips path prefix, injects credentials, forwards via `httputil.ReverseProxy`. Avoids Google ADK JS SDK `thought_signature` bug.
-
-**MITM mode:** For general egress (web_fetch, npm, OTEL). Proxy intercepts CONNECT tunnels, generates leaf certs from operator-managed CA, TLS-terminates, matches Host header against domain patterns, injects credentials.
+All traffic from the gateway pod flows through the MITM proxy via `HTTP_PROXY`/`HTTPS_PROXY` env vars. OpenClaw's native managed proxy support (`OPENCLAW_PROXY_ACTIVE=1`) enables the SSRF guard to route requests through the env proxy. Provider `baseUrl` values point to real upstream URLs; the proxy intercepts CONNECT tunnels, generates leaf certs from the operator-managed CA, TLS-terminates, matches Host header against domain patterns, and injects credentials transparently.
 
 **Injector types:**
 - `apiKey` — configured header with optional value prefix + default headers
@@ -206,15 +202,14 @@ status:
                     │    └──┬───────┬──┘                               │
                     │       │       │                                  │
                     │  [Gateway]  [MITM]                               │
-                    │   baseUrl    CONNECT                             │
-                    │       │       │                                  │
-                    │       ▼       ▼                                  │
-                    │    Hybrid Go Credential Proxy (goproxy)          │
+                    │      CONNECT (all traffic via HTTP_PROXY)        │
+                    │           │                                      │
+                    │           ▼                                      │
+                    │    MITM Go Credential Proxy (goproxy)            │
                     │    ┌─────────────────────────────────────┐       │
-                    │    │ Gateway mode: path-prefix routing   │       │
-                    │    │ MITM mode: CONNECT + TLS termination│       │
+                    │    │ MITM: CONNECT + TLS termination     │       │
                     │    │ Config from spec.credentials[]      │       │
-                    │    │ Dynamic openclaw.json generation    │       │
+                    │    │ Dynamic operator.json generation    │       │
                     │    │ Strip ALL client auth headers       │       │
                     │    │ Inject real credentials             │       │
                     │    │ Injection failure → 502             │       │

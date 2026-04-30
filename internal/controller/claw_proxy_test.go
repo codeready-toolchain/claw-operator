@@ -703,6 +703,20 @@ func TestResolveProviderInfo(t *testing.T) {
 			wantBasePath: "/v1/projects/my-project/locations/us-east5/publishers/anthropic",
 		},
 		{
+			name: "gcp global location uses plain hostname",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "anthropic",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "global",
+				},
+			},
+			wantUpstream: "https://aiplatform.googleapis.com",
+			wantBasePath: "/v1/projects/my-project/locations/global/publishers/anthropic",
+		},
+		{
 			name: "unknown provider with exact domain",
 			cred: clawv1alpha1.CredentialSpec{
 				Provider: "custom-llm",
@@ -772,7 +786,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		providers := getProviders(t, objects)
 		require.Contains(t, providers, "google")
 		google := providers["google"].(map[string]any)
-		assert.Equal(t, "http://"+getProxyServiceName(testInstanceName)+":8080/gemini/v1beta", google["baseUrl"])
+		assert.Equal(t, "https://generativelanguage.googleapis.com/v1beta", google["baseUrl"])
 		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
 	})
 
@@ -799,7 +813,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		assert.Contains(t, providers, "google")
 		assert.Contains(t, providers, "anthropic")
 		anthropic := providers["anthropic"].(map[string]any)
-		assert.Equal(t, "http://"+getProxyServiceName(testInstanceName)+":8080/claude", anthropic["baseUrl"])
+		assert.Equal(t, "https://api.anthropic.com", anthropic["baseUrl"])
 	})
 
 	t.Run("should leave providers empty when no provider is set", func(t *testing.T) {
@@ -838,7 +852,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		providers := getProviders(t, objects)
 		require.Contains(t, providers, "google")
 		google := providers["google"].(map[string]any)
-		assert.Equal(t, "http://"+getProxyServiceName(testInstanceName)+":8080/vertex/v1/projects/my-proj/locations/europe-west1/publishers/google", google["baseUrl"])
+		assert.Equal(t, "https://europe-west1-aiplatform.googleapis.com/v1/projects/my-proj/locations/europe-west1/publishers/google", google["baseUrl"])
 	})
 
 	t.Run("should preserve other config sections", func(t *testing.T) {
@@ -1006,7 +1020,7 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 
 		google, ok := providers["google"].(map[string]any)
 		require.True(t, ok)
-		assert.Equal(t, "http://"+getProxyServiceName(testInstanceName)+":8080/gemini/v1beta", google["baseUrl"])
+		assert.Equal(t, "https://generativelanguage.googleapis.com/v1beta", google["baseUrl"])
 		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
 	})
 

@@ -733,7 +733,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "new pod did not reach Running phase")
 		})
 
-		t.Run("should patch SSRF guard in claw gateway init container", func(t *testing.T) {
+		t.Run("should set OPENCLAW_PROXY_ACTIVE env for managed proxy support", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)
 				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
@@ -785,17 +785,15 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				})
 			require.NoError(t, err, "claw pod did not reach Running — init containers may have failed")
 
-			t.Log("verifying patch-proxy init container logs")
-			cmd = exec.Command("kubectl", "logs", podName, "-c", "patch-proxy",
-				"-n", userNamespace)
+			t.Log("verifying OPENCLAW_PROXY_ACTIVE env var is set on gateway container")
+			jsonPath := `{.spec.containers[?(@.name=="gateway")]` +
+				`.env[?(@.name=="OPENCLAW_PROXY_ACTIVE")].value}`
+			cmd = exec.Command("kubectl", "get", "pod", podName,
+				"-n", userNamespace, "-o", "jsonpath="+jsonPath)
 			logOutput, err := utils.Run(t, cmd)
-			require.NoError(t, err, "failed to get patch-proxy logs")
-			t.Logf("patch-proxy logs:\n%s", logOutput)
-
-			assert.Contains(t, logOutput, "[proxy-patch] Patched SSRF guard:",
-				"init container should report patching at least one file")
-			assert.NotContains(t, logOutput, "ERROR",
-				"init container should not report errors")
+			require.NoError(t, err, "failed to get gateway env")
+			assert.Equal(t, "1", logOutput,
+				"OPENCLAW_PROXY_ACTIVE should be set to 1")
 		})
 
 		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {

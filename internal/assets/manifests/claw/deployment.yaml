@@ -21,44 +21,6 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
-        - name: patch-proxy
-          image: ghcr.io/openclaw/openclaw:slim
-          imagePullPolicy: IfNotPresent
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop:
-                - ALL
-          command:
-            - sh
-            - -c
-            - |
-              set -e
-              cp -r /app/dist/. /patched-dist/
-              patched=0
-              guard_pattern='mode[[:space:]]*===[[:space:]]*GUARDED_FETCH_MODE\.TRUSTED_ENV_PROXY[[:space:]]*&&[[:space:]]*hasProxyEnvConfigured\(\)'
-              guard_files=$(grep -rEl "$guard_pattern" /patched-dist --include='*.js' 2>/dev/null || true)
-              if [ -z "$guard_files" ]; then
-                echo "[proxy-patch] ERROR: no files contain SSRF guard conditional — upstream may have changed" >&2
-                exit 1
-              fi
-              for file in $guard_files; do
-                sed -Ei "s|$guard_pattern|hasProxyEnvConfigured()|g" "$file"
-                echo "[proxy-patch] Patched SSRF guard: $file"
-                patched=$((patched + 1))
-              done
-              echo "[proxy-patch] Patched $patched file(s)"
-          resources:
-            requests:
-              memory: 128Mi
-              cpu: 100m
-            limits:
-              memory: 256Mi
-              cpu: 500m
-          volumeMounts:
-            - name: patched-dist
-              mountPath: /patched-dist
         - name: init-config
           image: mirror.gcr.io/library/busybox:1.37
           imagePullPolicy: IfNotPresent
@@ -149,6 +111,8 @@ spec:
               value: /home/node/.openclaw
             - name: NODE_ENV
               value: production
+            - name: OPENCLAW_PROXY_ACTIVE
+              value: "1"
             - name: OPENCLAW_GATEWAY_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -208,8 +172,6 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 10
           volumeMounts:
-            - name: patched-dist
-              mountPath: /app/dist
             - name: claw-home
               mountPath: /home/node/.openclaw
             - name: claw-home
@@ -232,8 +194,6 @@ spec:
               drop:
                 - ALL
       volumes:
-        - name: patched-dist
-          emptyDir: {}
         - name: claw-home
           persistentVolumeClaim:
             claimName: CLAW_INSTANCE_NAME-home-pvc
