@@ -185,7 +185,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 		return models["providers"].(map[string]any)
 	}
 
-	t.Run("should map GCP anthropic to anthropic-vertex provider", func(t *testing.T) {
+	t.Run("should map GCP anthropic to anthropic-vertex provider key", func(t *testing.T) {
 		objects := makeConfigMap(`{"models":{"providers":{}}}`)
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
@@ -205,13 +205,36 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 		config := getConfig(t, objects)
 		providers := getProviders(t, config)
 
-		assert.NotContains(t, providers, "anthropic", "should not have base anthropic provider")
 		require.Contains(t, providers, "anthropic-vertex")
 
 		av := providers["anthropic-vertex"].(map[string]any)
 		assert.Equal(t, "https://us-east5-aiplatform.googleapis.com", av["baseUrl"])
 		assert.Equal(t, "gcp-vertex-credentials", av["apiKey"])
 		assert.Equal(t, "anthropic-messages", av["api"])
+		assert.Equal(t, float64(128000), av["maxTokens"])
+	})
+
+	t.Run("should use plain hostname for global location", func(t *testing.T) {
+		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "anthropic-vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "anthropic",
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "global",
+				},
+			},
+		}
+
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		providers := getProviders(t, config)
+		av := providers["anthropic-vertex"].(map[string]any)
+		assert.Equal(t, "https://aiplatform.googleapis.com", av["baseUrl"])
 	})
 
 	t.Run("should reject duplicate vertex providers", func(t *testing.T) {

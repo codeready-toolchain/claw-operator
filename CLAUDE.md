@@ -249,7 +249,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
   ↓
 7b. injectProvidersIntoConfigMap(objects, instance.Spec.Credentials)
    ├─ Filter credentials with Provider set
-   ├─ For gateway-routed providers: resolveProviderInfo(cred) → upstream + basePath, build baseUrl via proxy
+   ├─ For gateway-routed providers: resolveProviderInfo(cred) → upstream + basePath as baseUrl (MITM proxy injects credentials transparently)
    ├─ For Vertex SDK providers (GCP + non-Google, e.g., anthropic): map to "{provider}-vertex" key with real Vertex AI URL, api mapping, and "gcp-vertex-credentials" apiKey
    ├─ Write providers into data["operator.json"] (agent defaults are user-owned in openclaw.json seed)
    └─ Credentials without Provider are MITM-only (no provider entry)
@@ -303,7 +303,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
 - `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in `operator.json` with Route host (or localhost fallback)
-- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `operator.json`. Gateway-routed providers get a baseUrl through the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since MITM proxy handles credential injection transparently. Does not touch agent defaults (user-owned in openclaw.json seed)
+- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `operator.json`. Provider baseUrl points to real upstream URLs (e.g., `https://generativelanguage.googleapis.com/v1beta`); the MITM proxy injects credentials transparently via HTTP_PROXY. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL. Does not touch agent defaults (user-owned in openclaw.json seed)
 - `resolveAndApplyCredentials()` — orchestrates credential resolution: resolves provider defaults, validates credentials (returning `[]resolvedCredential`), applies sanitized kubeconfig ConfigMap for kubernetes credentials, and applies proxy CA
 - `resolveCredentials()` — validates all credentials and referenced Secrets. For `kubernetes` type, parses kubeconfig with `client-go/tools/clientcmd`, validates token-only auth, extracts cluster/context metadata. Returns `[]resolvedCredential` (replaces former `validateCredentials`)
 - `parseAndValidateKubeconfig()` — parses kubeconfig bytes, validates all users use token-based auth (rejects client certs, exec, auth provider), validates unique token per server `hostname:port`, returns `kubeconfigData`
@@ -364,11 +364,11 @@ The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
 - **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, PROXY_SETUP.md for proxy architecture skill, KUBERNETES.md for k8s skill)
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
-- **deployment.yaml** — OpenClaw application pods (init containers with readOnlyRootFilesystem, gateway without; PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` for persistent tool state; `wait-for-proxy` init container ensures proxy is ready before gateway starts)
+- **deployment.yaml** — OpenClaw application pods (init containers with readOnlyRootFilesystem, gateway without; PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` for persistent tool state; `wait-for-proxy` init container ensures proxy is ready before gateway starts; `OPENCLAW_PROXY_ACTIVE=1` env var enables native managed proxy support)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)
 - **route.yaml** — OpenShift Route for external HTTPS access (skipped on non-OpenShift)
-- **proxy-configmap.yaml** — Nginx configuration for LLM API proxy
-- **proxy-deployment.yaml** — Nginx proxy (env vars reference user-managed Secrets; controller patches GEMINI_API_KEY after applying)
+- **proxy-configmap.yaml** — Proxy configuration for LLM API proxy
+- **proxy-deployment.yaml** — Go MITM proxy (env vars reference user-managed Secrets; controller patches credential env vars after applying)
 - **proxy-service.yaml** — ClusterIP service for proxy (port 8080)
 - **networkpolicy.yaml** — Two NetworkPolicies for egress control (OpenClaw → proxy, proxy → internet)
 - **ingress-networkpolicy.yaml** — Ingress NetworkPolicy restricting gateway access to OpenShift router namespace

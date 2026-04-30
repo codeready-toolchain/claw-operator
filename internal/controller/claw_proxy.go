@@ -85,6 +85,15 @@ func usesVertexSDK(cred clawv1alpha1.CredentialSpec) bool {
 	return cred.Type == clawv1alpha1.CredentialTypeGCP && cred.Provider != "" && cred.Provider != "google"
 }
 
+// vertexAIBaseURL returns the Vertex AI REST base URL for the given location.
+// The "global" location uses a plain hostname without a region prefix.
+func vertexAIBaseURL(location string) string {
+	if location == "global" {
+		return "https://aiplatform.googleapis.com"
+	}
+	return "https://" + location + "-aiplatform.googleapis.com"
+}
+
 // vertexProviderAPIMapping maps provider names to their OpenClaw API identifiers for Vertex AI.
 var vertexProviderAPIMapping = map[string]string{
 	"anthropic": "anthropic-messages",
