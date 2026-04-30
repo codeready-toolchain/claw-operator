@@ -703,6 +703,20 @@ func TestResolveProviderInfo(t *testing.T) {
 			wantBasePath: "/v1/projects/my-project/locations/us-east5/publishers/anthropic",
 		},
 		{
+			name: "gcp global location uses plain hostname",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "anthropic",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "global",
+				},
+			},
+			wantUpstream: "https://aiplatform.googleapis.com",
+			wantBasePath: "/v1/projects/my-project/locations/global/publishers/anthropic",
+		},
+		{
 			name: "unknown provider with exact domain",
 			cred: clawv1alpha1.CredentialSpec{
 				Provider: "custom-llm",

@@ -158,7 +158,7 @@ type providerInfo struct {
 func resolveProviderInfo(cred clawv1alpha1.CredentialSpec) providerInfo {
 	if cred.Type == clawv1alpha1.CredentialTypeGCP && cred.GCP != nil {
 		return providerInfo{
-			Upstream: "https://" + cred.GCP.Location + "-aiplatform.googleapis.com",
+			Upstream: vertexAIBaseURL(cred.GCP.Location),
 			BasePath: "/v1/projects/" + cred.GCP.Project + "/locations/" + cred.GCP.Location + "/publishers/" + cred.Provider,
 		}
 	}
