@@ -31,30 +31,30 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
-func TestNodePairingRequestApprovalController(t *testing.T) {
-	t.Run("NodePairingRequestApproval creation with RequestID field", func(t *testing.T) {
+func TestClawDevicePairingRequestController(t *testing.T) {
+	t.Run("ClawDevicePairingRequest creation with RequestID field", func(t *testing.T) {
 		ctx := context.Background()
 		resourceName := "test-pairing-request"
 
 		t.Cleanup(func() {
-			deleteAndWaitNodePairingRequestApproval(t, namespace, resourceName)
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
 		})
 
-		// Create NodePairingRequestApproval with RequestID
-		instance := &clawv1alpha1.NodePairingRequestApproval{
+		// Create ClawDevicePairingRequest with RequestID
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "test-request-123",
 			},
 		}
 
-		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create NodePairingRequestApproval")
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create ClawDevicePairingRequest")
 
 		// Verify resource was created with correct RequestID
-		fetched := &clawv1alpha1.NodePairingRequestApproval{}
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
 		assert.Equal(t, "test-request-123", fetched.Spec.RequestID)
 	})
@@ -64,24 +64,24 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		resourceName := "test-reconcile-create"
 
 		t.Cleanup(func() {
-			deleteAndWaitNodePairingRequestApproval(t, namespace, resourceName)
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
 		})
 
-		// Create NodePairingRequestApproval
-		instance := &clawv1alpha1.NodePairingRequestApproval{
+		// Create ClawDevicePairingRequest
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "create-test-456",
 			},
 		}
 
-		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create NodePairingRequestApproval")
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create ClawDevicePairingRequest")
 
 		// Setup reconciler
-		reconciler := &NodePairingRequestApprovalReconciler{
+		reconciler := &ClawDevicePairingRequestReconciler{
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
@@ -103,30 +103,30 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		resourceName := "test-reconcile-update"
 
 		t.Cleanup(func() {
-			deleteAndWaitNodePairingRequestApproval(t, namespace, resourceName)
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
 		})
 
-		// Create NodePairingRequestApproval
-		instance := &clawv1alpha1.NodePairingRequestApproval{
+		// Create ClawDevicePairingRequest
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "update-test-789",
 			},
 		}
 
-		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create NodePairingRequestApproval")
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create ClawDevicePairingRequest")
 
 		// Update RequestID
-		fetched := &clawv1alpha1.NodePairingRequestApproval{}
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
 		fetched.Spec.RequestID = "updated-request-999"
-		require.NoError(t, k8sClient.Update(ctx, fetched), "failed to update NodePairingRequestApproval")
+		require.NoError(t, k8sClient.Update(ctx, fetched), "failed to update ClawDevicePairingRequest")
 
 		// Setup reconciler
-		reconciler := &NodePairingRequestApprovalReconciler{
+		reconciler := &ClawDevicePairingRequestReconciler{
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 		}
@@ -143,7 +143,7 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		assert.Equal(t, ctrl.Result{}, result, "should not requeue")
 
 		// Verify updated RequestID
-		updated := &clawv1alpha1.NodePairingRequestApproval{}
+		updated := &clawv1alpha1.ClawDevicePairingRequest{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
 		assert.Equal(t, "updated-request-999", updated.Spec.RequestID)
 	})
@@ -153,24 +153,24 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		resourceName := "test-status-independence"
 
 		t.Cleanup(func() {
-			deleteAndWaitNodePairingRequestApproval(t, namespace, resourceName)
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
 		})
 
-		// Create NodePairingRequestApproval
-		instance := &clawv1alpha1.NodePairingRequestApproval{
+		// Create ClawDevicePairingRequest
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "status-test-111",
 			},
 		}
 
-		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create NodePairingRequestApproval")
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create ClawDevicePairingRequest")
 
 		// Update Status.Conditions
-		fetched := &clawv1alpha1.NodePairingRequestApproval{}
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
 
 		originalRequestID := fetched.Spec.RequestID
@@ -186,7 +186,7 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		require.NoError(t, k8sClient.Status().Update(ctx, fetched), "failed to update status")
 
 		// Verify Spec.RequestID unchanged
-		updated := &clawv1alpha1.NodePairingRequestApproval{}
+		updated := &clawv1alpha1.ClawDevicePairingRequest{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
 		assert.Equal(t, originalRequestID, updated.Spec.RequestID, "Spec.RequestID should remain unchanged")
 		assert.Len(t, updated.Status.Conditions, 1, "Status.Conditions should have one condition")
@@ -198,36 +198,36 @@ func TestNodePairingRequestApprovalController(t *testing.T) {
 		resourceName := "test-conditions-field"
 
 		t.Cleanup(func() {
-			deleteAndWaitNodePairingRequestApproval(t, namespace, resourceName)
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
 		})
 
-		// Create NodePairingRequestApproval
-		instance := &clawv1alpha1.NodePairingRequestApproval{
+		// Create ClawDevicePairingRequest
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      resourceName,
 				Namespace: namespace,
 			},
-			Spec: clawv1alpha1.NodePairingRequestApprovalSpec{
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "conditions-test-222",
 			},
 		}
 
-		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create NodePairingRequestApproval")
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create ClawDevicePairingRequest")
 
 		// Verify Conditions field is accessible and initially empty (or nil)
-		fetched := &clawv1alpha1.NodePairingRequestApproval{}
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
 		// Conditions can be nil or empty initially (omitempty tag means API server may not return the field)
 		assert.Empty(t, fetched.Status.Conditions, "Status.Conditions should be empty initially")
 	})
 }
 
-// deleteAndWaitNodePairingRequestApproval deletes a NodePairingRequestApproval and waits for it to be removed
-func deleteAndWaitNodePairingRequestApproval(t *testing.T, namespace, name string) {
+// deleteAndWaitClawDevicePairingRequest deletes a ClawDevicePairingRequest and waits for it to be removed
+func deleteAndWaitClawDevicePairingRequest(t *testing.T, namespace, name string) {
 	t.Helper()
 	ctx := context.Background()
 
-	instance := &clawv1alpha1.NodePairingRequestApproval{
+	instance := &clawv1alpha1.ClawDevicePairingRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -236,12 +236,12 @@ func deleteAndWaitNodePairingRequestApproval(t *testing.T, namespace, name strin
 
 	err := k8sClient.Delete(ctx, instance)
 	if err != nil && client.IgnoreNotFound(err) != nil {
-		t.Logf("failed to delete NodePairingRequestApproval %s/%s: %v", namespace, name, err)
+		t.Logf("failed to delete ClawDevicePairingRequest %s/%s: %v", namespace, name, err)
 	}
 
 	// Wait for resource to be deleted
 	waitFor(t, timeout, interval, func() bool {
 		err := k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, instance)
 		return apierrors.IsNotFound(err)
-	}, "NodePairingRequestApproval should be deleted")
+	}, "ClawDevicePairingRequest should be deleted")
 }
