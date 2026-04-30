@@ -716,22 +716,30 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 				Scheme: scheme.Scheme,
 			}
 
-			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
-			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
+			err := reconciler.injectRouteHostsIntoConfigMap(testInstanceName, objects, routeHost, "")
+			require.NoError(t, err, "injectRouteHostsIntoConfigMap failed")
 
 			operatorJSON, found, err := unstructured.NestedString(configMap.Object, "data", "operator.json")
 			require.NoError(t, err, "failed to get operator.json")
 			assert.True(t, found, "operator.json not found in ConfigMap data")
-			assert.Contains(t, operatorJSON, routeHost)
-			assert.NotContains(t, operatorJSON, "OPENCLAW_ROUTE_HOST")
+
+			// Parse JSON and verify allowedOrigins contains the route
+			var config map[string]any
+			err = json.Unmarshal([]byte(operatorJSON), &config)
+			require.NoError(t, err, "failed to parse operator.json")
+
+			allowedOrigins, found, err := unstructured.NestedStringSlice(config, "gateway", "controlUi", "allowedOrigins")
+			require.NoError(t, err, "failed to get allowedOrigins")
+			assert.True(t, found, "allowedOrigins not found")
+			assert.Contains(t, allowedOrigins, routeHost)
 		})
 
-		t.Run("should replace all occurrences of OPENCLAW_ROUTE_HOST placeholder", func(t *testing.T) {
+		t.Run("should set allowedOrigins array with single route", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
 			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
-				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST","OPENCLAW_ROUTE_HOST"]}}}`,
+				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":[]}}}`,
 			}
 
 			objects := []*unstructured.Unstructured{configMap}
@@ -742,37 +750,140 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 				Scheme: scheme.Scheme,
 			}
 
-			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
-			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
+			err := reconciler.injectRouteHostsIntoConfigMap(testInstanceName, objects, routeHost, "")
+			require.NoError(t, err, "injectRouteHostsIntoConfigMap failed")
 
 			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
-			hostCount := strings.Count(operatorJSON, routeHost)
-			assert.Equal(t, 2, hostCount, "expected 2 occurrences of routeHost")
-			assert.NotContains(t, operatorJSON, "OPENCLAW_ROUTE_HOST")
+			var config map[string]any
+			err = json.Unmarshal([]byte(operatorJSON), &config)
+			require.NoError(t, err, "failed to parse operator.json")
+
+			allowedOrigins, found, err := unstructured.NestedStringSlice(config, "gateway", "controlUi", "allowedOrigins")
+			require.NoError(t, err, "failed to get allowedOrigins")
+			assert.True(t, found, "allowedOrigins not found")
+			assert.Equal(t, []string{routeHost}, allowedOrigins)
 		})
 
-		t.Run("should use localhost fallback when routeHost is empty", func(t *testing.T) {
+		t.Run("should use localhost fallback when no routes provided", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
 			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
-				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
+				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":[]}}}`,
 			}
 
 			objects := []*unstructured.Unstructured{configMap}
-			routeHost := ""
 
 			reconciler := &ClawResourceReconciler{
 				Client: k8sClient,
 				Scheme: scheme.Scheme,
 			}
 
-			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
-			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
+			err := reconciler.injectRouteHostsIntoConfigMap(testInstanceName, objects, "", "")
+			require.NoError(t, err, "injectRouteHostsIntoConfigMap failed")
 
 			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
-			assert.Contains(t, operatorJSON, "http://localhost:18789")
-			assert.NotContains(t, operatorJSON, "OPENCLAW_ROUTE_HOST")
+			var config map[string]any
+			err = json.Unmarshal([]byte(operatorJSON), &config)
+			require.NoError(t, err, "failed to parse operator.json")
+
+			allowedOrigins, found, err := unstructured.NestedStringSlice(config, "gateway", "controlUi", "allowedOrigins")
+			require.NoError(t, err, "failed to get allowedOrigins")
+			assert.True(t, found, "allowedOrigins not found")
+			assert.Equal(t, []string{"http://localhost:18789"}, allowedOrigins)
+		})
+
+		t.Run("should include both gateway and console route hosts in allowedOrigins", func(t *testing.T) {
+			configMap := &unstructured.Unstructured{}
+			configMap.SetKind(ConfigMapKind)
+			configMap.SetName(getConfigMapName(testInstanceName))
+			configMap.Object["data"] = map[string]any{
+				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":[]}}}`,
+			}
+
+			objects := []*unstructured.Unstructured{configMap}
+			routeHost := "https://claw-gateway.apps.cluster.com"
+			consoleRouteHost := "https://claw-console.apps.cluster.com"
+
+			reconciler := &ClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			err := reconciler.injectRouteHostsIntoConfigMap(testInstanceName, objects, routeHost, consoleRouteHost)
+			require.NoError(t, err, "injectRouteHostsIntoConfigMap failed")
+
+			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
+			var config map[string]any
+			err = json.Unmarshal([]byte(operatorJSON), &config)
+			require.NoError(t, err, "failed to parse operator.json")
+
+			allowedOrigins, found, err := unstructured.NestedStringSlice(config, "gateway", "controlUi", "allowedOrigins")
+			require.NoError(t, err, "failed to get allowedOrigins")
+			assert.True(t, found, "allowedOrigins not found")
+			assert.ElementsMatch(t, []string{routeHost, consoleRouteHost}, allowedOrigins)
+		})
+
+		t.Run("should include only gateway route when console route is empty", func(t *testing.T) {
+			configMap := &unstructured.Unstructured{}
+			configMap.SetKind(ConfigMapKind)
+			configMap.SetName(getConfigMapName(testInstanceName))
+			configMap.Object["data"] = map[string]any{
+				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":[]}}}`,
+			}
+
+			objects := []*unstructured.Unstructured{configMap}
+			routeHost := "https://claw-gateway.apps.cluster.com"
+			consoleRouteHost := "" // Console route not available
+
+			reconciler := &ClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			err := reconciler.injectRouteHostsIntoConfigMap(testInstanceName, objects, routeHost, consoleRouteHost)
+			require.NoError(t, err, "injectRouteHostsIntoConfigMap failed")
+
+			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
+			var config map[string]any
+			err = json.Unmarshal([]byte(operatorJSON), &config)
+			require.NoError(t, err, "failed to parse operator.json")
+
+			allowedOrigins, found, err := unstructured.NestedStringSlice(config, "gateway", "controlUi", "allowedOrigins")
+			require.NoError(t, err, "failed to get allowedOrigins")
+			assert.True(t, found, "allowedOrigins not found")
+			assert.Equal(t, []string{routeHost}, allowedOrigins, "should only include gateway route")
+		})
+
+		t.Run("should use localhost fallback when all routes are empty (vanilla Kubernetes)", func(t *testing.T) {
+			configMap := &unstructured.Unstructured{}
+			configMap.SetKind(ConfigMapKind)
+			configMap.SetName(getConfigMapName(testInstanceName))
+			configMap.Object["data"] = map[string]any{
+				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":[]}}}`,
+			}
+
+			objects := []*unstructured.Unstructured{configMap}
+			routeHost := ""
+			consoleRouteHost := ""
+
+			reconciler := &ClawResourceReconciler{
+				Client: k8sClient,
+				Scheme: scheme.Scheme,
+			}
+
+			err := reconciler.injectRouteHostsIntoConfigMap(testInstanceName, objects, routeHost, consoleRouteHost)
+			require.NoError(t, err, "injectRouteHostsIntoConfigMap failed")
+
+			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
+			var config map[string]any
+			err = json.Unmarshal([]byte(operatorJSON), &config)
+			require.NoError(t, err, "failed to parse operator.json")
+
+			allowedOrigins, found, err := unstructured.NestedStringSlice(config, "gateway", "controlUi", "allowedOrigins")
+			require.NoError(t, err, "failed to get allowedOrigins")
+			assert.True(t, found, "allowedOrigins not found")
+			assert.Equal(t, []string{"http://localhost:18789"}, allowedOrigins)
 		})
 	})
 

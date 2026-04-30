@@ -5,6 +5,8 @@ metadata:
   labels:
     app: claw
 data:
+  # The controller dynamically sets gateway.controlUi.allowedOrigins at runtime
+  # based on Route URLs (OpenShift) or localhost fallback (vanilla Kubernetes)
   operator.json: |
     {
       "gateway": {
@@ -16,7 +18,7 @@ data:
         },
         "controlUi": {
           "enabled": true,
-          "allowedOrigins": ["OPENCLAW_ROUTE_HOST"]
+          "allowedOrigins": []
         },
         "trustedProxies": ["10.0.0.0/8", "172.16.0.0/12"]
       },

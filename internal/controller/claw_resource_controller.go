@@ -382,14 +382,12 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			logger.Info("Claw resource not found, ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to get Claw")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("failed to get Claw: %w", err)
 	}
 
 	// Create or update the gateway Secret with token
 	if err := r.applyGatewaySecret(ctx, instance); err != nil {
-		logger.Error(err, "Failed to apply gateway secret")
-		return ctrl.Result{}, err
+		return ctrl.Result{}, fmt.Errorf("failed to apply gateway secret: %w", err)
 	}
 
 	// Resolve credentials (provider defaults, validation, kubeconfig parsing)
@@ -427,34 +425,32 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Apply Route and wait for ingress host to be populated
-	var routeHost string
-	var routeApplied int
-	routeApplied, err = r.applyRouteOnly(ctx, objects, instance)
-	if err != nil {
+	var gatewayHost string
+	var consoleHost string
+	if routesApplied, err := r.applyRoutesOnly(ctx, objects, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to apply Route: %w", err)
-	}
-
-	// Only try to fetch Route URL if Route was actually applied (CRD available)
-	if routeApplied > 0 {
-		routeHost, err = r.getRouteURL(ctx, instance)
+	} else if !routesApplied {
+		logger.Info("Routes not applied (CRD is missing)")
+	} else {
+		var err error
+		gatewayHost, err = r.getGatewayRouteURL(ctx, instance)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get Route URL: %w", err)
+			return ctrl.Result{}, fmt.Errorf("failed to get Gateway Route URL: %w", err)
 		}
-		if routeHost == "" {
+		if gatewayHost == "" {
 			// Route exists but status not yet populated - requeue
 			logger.Info("Route exists but status not populated, requeuing")
 			return ctrl.Result{Requeue: true, RequeueAfter: 5 * time.Second}, nil
 		}
-	} else {
-		// Route CRD not registered - proceed with localhost fallback
-		logger.Info("Route CRD not registered, using localhost fallback for CORS")
+		// assume that the console route is available (ie, if not, the controller will log a warning and continue without it)
+		consoleHost = r.getConsoleRouteURL(ctx, instance)
 	}
 
 	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
 
-	// Inject Route host into ConfigMap
-	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
+	// Inject Route hosts into ConfigMap
+	if err := r.injectRouteHostsIntoConfigMap(instance.Name, objects, gatewayHost, consoleHost); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to inject Route hosts into ConfigMap: %w", err)
 	}
 
 	// Inject LLM providers into ConfigMap based on credentials with Provider set
@@ -722,12 +718,12 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 	return appliedCount, nil
 }
 
-// applyRouteOnly applies only the Route resource from provided objects
+// applyRoutesOnly applies only the Route resources from provided objects
 // Returns number of routes applied (0 if CRD not registered)
-func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) (int, error) {
+func (r *ClawResourceReconciler) applyRoutesOnly(ctx context.Context, objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) (bool, error) {
 	// Handle empty objects safely (len() on nil slice returns 0)
 	if len(objects) == 0 {
-		return 0, nil
+		return false, nil
 	}
 
 	// Filter for Route only
@@ -742,20 +738,31 @@ func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*
 	for _, obj := range routeObjects {
 		obj.SetNamespace(instance.Namespace)
 		if err := controllerutil.SetControllerReference(instance, obj, r.Scheme); err != nil {
-			return 0, fmt.Errorf("failed to set controller reference: %w", err)
+			return false, fmt.Errorf("failed to set controller reference: %w", err)
 		}
 	}
 
 	// Apply Route and return count
-	return r.applyResources(ctx, routeObjects)
+	appliedCount, err := r.applyResources(ctx, routeObjects)
+	return appliedCount > 0, err
 }
 
-// injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator.json with actual Route host.
-// If routeHost is empty (vanilla Kubernetes), uses localhost fallback.
-func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstructured.Unstructured, routeHost, instanceName string) error {
-	replacement := routeHost
-	if replacement == "" {
-		replacement = "http://localhost:18789"
+// injectRouteHostsIntoConfigMap sets the gateway.controlUi.allowedOrigins array in operator.json
+// to the provided gateway and console URLs. Empty URLs are filtered out. If both URLs are empty,
+// uses localhost fallback for vanilla Kubernetes deployments.
+func (r *ClawResourceReconciler) injectRouteHostsIntoConfigMap(instanceName string, objects []*unstructured.Unstructured, gatewayURL, consoleURL string) error {
+	// Build list of valid routes
+	validRoutes := make([]string, 0, 2)
+	if gatewayURL != "" {
+		validRoutes = append(validRoutes, gatewayURL)
+	}
+	if consoleURL != "" {
+		validRoutes = append(validRoutes, consoleURL)
+	}
+
+	// On vanilla Kubernetes (no routes), use localhost fallback
+	if len(validRoutes) == 0 {
+		validRoutes = []string{"http://localhost:18789"}
 	}
 
 	configMapName := getConfigMapName(instanceName)
@@ -769,9 +776,24 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 				return fmt.Errorf("operator.json not found in ConfigMap data")
 			}
 
-			updatedJSON := strings.ReplaceAll(operatorJSON, "OPENCLAW_ROUTE_HOST", replacement)
+			// Update allowedOrigins in operator.json
+			var config map[string]any
+			if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
+				return fmt.Errorf("failed to parse operator.json: %w", err)
+			}
 
-			if err := unstructured.SetNestedField(obj.Object, updatedJSON, "data", "operator.json"); err != nil {
+			// Set gateway.controlUi.allowedOrigins
+			if err := unstructured.SetNestedStringSlice(config, validRoutes, "gateway", "controlUi", "allowedOrigins"); err != nil {
+				return fmt.Errorf("failed to set allowedOrigins: %w", err)
+			}
+
+			// Marshal back with indentation
+			updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
+			if err != nil {
+				return fmt.Errorf("failed to marshal operator.json: %w", err)
+			}
+
+			if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
 				return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
 			}
 

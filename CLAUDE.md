@@ -120,7 +120,7 @@ The operator uses a **single unified controller** that manages all resources usi
 - Creates gateway Secret (`claw-gateway-token`) with randomly-generated authentication token
 - Validates user-provided credentials (array of CredentialSpec in CR's `credentials` field) and referenced Secrets
 - Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (3: egress for claw, egress for proxy, ingress for gateway), proxy Deployment/ConfigMap, and Route (OpenShift only)
-- Uses **three-phase reconciliation** to dynamically inject Route host into ConfigMap for CORS configuration
+- Uses **three-phase reconciliation** to dynamically inject Route hosts (gateway and console) into ConfigMap for CORS configuration
 - Uses server-side apply for idempotent, conflict-free resource management
 - Automatically labels all resources with `app.kubernetes.io/name: claw`
 - Gracefully skips resources whose CRDs aren't registered (e.g., Route on vanilla Kubernetes)
@@ -131,10 +131,10 @@ The operator uses a **single unified controller** that manages all resources usi
 
 **Key benefits:**
 - Simplified codebase: 1 controller managing all resources
-- Dynamic CORS configuration: Route host automatically injected into ConfigMap at deployment time
+- Dynamic CORS configuration: Gateway and console Route hosts automatically injected into ConfigMap at deployment time
 - Field ownership: server-side apply tracks which controller owns which fields
 - Consistent labeling: queryable with `kubectl get all -l app.kubernetes.io/name=claw`
-- Graceful fallback: localhost CORS origin on vanilla Kubernetes (no Route CRD)
+- Graceful fallback: localhost CORS origin on vanilla Kubernetes (no Route CRD); console route is optional (graceful degradation)
 - Future-proof: adding new resources only requires updating kustomization.yaml
 
 ### Config layering via $include
@@ -206,12 +206,20 @@ PHASE 2: Route Application and Host Resolution
    ├─ Set namespace and owner reference
    └─ Server-side apply Route (skips with NoMatchError on vanilla Kubernetes)
   ↓
-5. getRouteURL(ctx, instance)
+5. getRouteURL(ctx, instance) — Fetch gateway route host
    ├─ Fetch Route resource
    ├─ Extract .status.ingress[0].host (authoritative source populated by OpenShift router)
    ├─ If status not yet populated: requeue with 5s backoff
    ├─ If Route CRD not registered: continue with empty routeHost (localhost fallback)
    └─ Return https://<route-host> or empty string
+  ↓
+5b. getRouteHost(ctx, namespace, "claw-console") — Fetch console route host
+   ├─ Check if claw-console Route exists
+   ├─ If NotFound: log warning and continue without console route (graceful degradation)
+   ├─ If exists: fetch .status.ingress[0].host
+   ├─ If status not yet populated: requeue with 5s backoff
+   ├─ If Route CRD not registered: skip console route
+   └─ Return https://<console-host> or empty string
   ↓
 PHASE 3: ConfigMap Injection and Remaining Resources
 6. buildKustomizedObjects(ctx, instance)
@@ -240,11 +248,13 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    │  └─ This triggers pod restarts when Secret data changes (ResourceVersion updates), not just Secret reference changes
    └─ Return parsed objects
   ↓
-7. injectRouteHostIntoConfigMap(objects, routeHost)
+7. injectRouteHostsIntoConfigMap(objects, routeHost, consoleRouteHost)
    ├─ Find claw-config ConfigMap in objects
    ├─ Extract data["operator.json"] string
    ├─ Replace "OPENCLAW_ROUTE_HOST" placeholder with routeHost (https://...)
-   ├─ If routeHost is empty (vanilla Kubernetes): use "http://localhost:18789" fallback
+   ├─ Replace "OPENCLAW_CONSOLE_ROUTE_HOST" placeholder with consoleRouteHost (https://...)
+   ├─ If consoleRouteHost is empty: remove placeholder from allowedOrigins array
+   ├─ If routeHost is empty (vanilla Kubernetes): use "http://localhost:18789" fallback for gateway
    └─ Set modified JSON back into ConfigMap
   ↓
 7b. injectProvidersIntoConfigMap(objects, instance.Spec.Credentials)
@@ -285,14 +295,16 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 ```
 
 **Route Status Polling:**
-- If Route is applied but `.status.ingress[0].host` is not yet populated, reconciliation requeues with 5-second backoff
+- If gateway Route is applied but `.status.ingress[0].host` is not yet populated, reconciliation requeues with 5-second backoff
+- If console Route (`claw-console`) exists but status is not yet populated, reconciliation requeues with 5-second backoff
+- If console Route does not exist (NotFound), reconciliation continues without it (graceful degradation)
 - OpenShift router typically populates Route status within 5-10 seconds
-- Indefinite requeue: cluster-level Route issues should be diagnosed via `kubectl describe route claw`
+- Indefinite requeue: cluster-level Route issues should be diagnosed via `kubectl describe route claw` or `kubectl describe route claw-console`
 
 **Vanilla Kubernetes Fallback:**
 - On clusters without Route CRD (vanilla Kubernetes), Route application fails with `meta.IsNoMatchError`
 - Controller logs "Route CRD not registered, using localhost fallback for CORS"
-- ConfigMap receives `http://localhost:18789` as `allowedOrigins` value
+- ConfigMap receives `http://localhost:18789` as the gateway `allowedOrigins` value (no console route)
 - Control UI accessible via port-forward: `kubectl port-forward svc/claw 18789:18789`
 
 **Key methods:**
@@ -300,9 +312,10 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `generateGatewayToken()` — generates cryptographically secure 64-char hex token using crypto/rand
 - `applyGatewaySecret()` — creates/updates claw-gateway-token Secret with gateway token (preserves existing token)
 - `applyRouteOnly()` — applies only Route resource from Kustomize manifests (Phase 2)
-- `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
+- `getRouteHost()` — fetches a Route by name and returns its hostname, or empty string if not ready (handles NotFound, NoMatchError, and unpopulated status gracefully)
+- `getRouteURL()` — fetches Route and returns the HTTPS URL (calls `getRouteHost()` and prepends `https://`)
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
-- `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in `operator.json` with Route host (or localhost fallback)
+- `injectRouteHostsIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` and `OPENCLAW_CONSOLE_ROUTE_HOST` placeholders in `operator.json` with Route hosts. Filters out empty console route. Uses localhost fallback for gateway on vanilla Kubernetes
 - `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `operator.json`. Gateway-routed providers get a baseUrl through the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since MITM proxy handles credential injection transparently. Does not touch agent defaults (user-owned in openclaw.json seed)
 - `resolveAndApplyCredentials()` — orchestrates credential resolution: resolves provider defaults, validates credentials (returning `[]resolvedCredential`), applies sanitized kubeconfig ConfigMap for kubernetes credentials, and applies proxy CA
 - `resolveCredentials()` — validates all credentials and referenced Secrets. For `kubernetes` type, parses kubeconfig with `client-go/tools/clientcmd`, validates token-only auth, extracts cluster/context metadata. Returns `[]resolvedCredential` (replaces former `validateCredentials`)
@@ -315,7 +328,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `usesVertexSDK()` — returns true when a credential should use the native Vertex AI SDK (type == gcp && provider != "" && provider != "google")
 - `configureClawDeploymentForVertex()` — adds GOOGLE_APPLICATION_CREDENTIALS, ANTHROPIC_VERTEX_PROJECT_ID env vars and stub ADC volume mount to the claw deployment when Vertex SDK credentials exist
 - `configureClawDeploymentForKubernetes()` — when kubernetes credentials exist: mounts the sanitized kubeconfig ConfigMap (`claw-kube-config`) at `/etc/kube/`, sets `KUBECONFIG=/etc/kube/config` and `PATH` env vars, adds an `init-kubectl` init container that copies kubectl from the configured image into a shared emptyDir volume mounted at `/opt/kube-tools`
-- `injectKubePortsIntoNetworkPolicy()` — adds non-443 ports from kubeconfig cluster server URLs to the `claw-proxy-egress` NetworkPolicy. In-memory patching before apply, same pattern as `injectRouteHostIntoConfigMap`
+- `injectKubePortsIntoNetworkPolicy()` — adds non-443 ports from kubeconfig cluster server URLs to the `claw-proxy-egress` NetworkPolicy. In-memory patching before apply, same pattern as `injectRouteHostsIntoConfigMap`
 - `injectKubernetesSkill()` — writes a `KUBERNETES.md` key into the `claw-config` ConfigMap with OpenClaw skill frontmatter listing available contexts, clusters, namespaces, and current-context. Init container copies to `skills/kubernetes/SKILL.md` for auto-discovery
 - `applyVertexADCConfigMap()` — creates/updates the stub ADC ConfigMap (claw-vertex-adc) with dummy authorized_user credentials for Vertex SDK token refresh bootstrap. Only created when Vertex SDK credentials exist
 - `applyProxyResources()` — generates proxy config, applies proxy ConfigMap and Vertex ADC ConfigMap. Returns proxy config JSON for hash stamping
