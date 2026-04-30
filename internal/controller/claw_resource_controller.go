@@ -658,7 +658,6 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 	// Proxy component manifests
 	proxyManifests := map[string][]byte{
 		"manifests/claw-proxy/kustomization.yaml":    readEmbeddedFile("manifests/claw-proxy/kustomization.yaml"),
-		"manifests/claw-proxy/proxy-configmap.yaml":  readEmbeddedFile("manifests/claw-proxy/proxy-configmap.yaml"),
 		"manifests/claw-proxy/proxy-deployment.yaml": readEmbeddedFile("manifests/claw-proxy/proxy-deployment.yaml"),
 		"manifests/claw-proxy/proxy-service.yaml":    readEmbeddedFile("manifests/claw-proxy/proxy-service.yaml"),
 		"manifests/claw-proxy/network-policies.yaml": readEmbeddedFile("manifests/claw-proxy/network-policies.yaml"),
