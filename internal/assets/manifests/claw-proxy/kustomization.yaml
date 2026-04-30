@@ -6,7 +6,6 @@ labels:
       app.kubernetes.io/name: claw
 
 resources:
-  - proxy-configmap.yaml
   - proxy-deployment.yaml
   - proxy-service.yaml
   - network-policies.yaml
