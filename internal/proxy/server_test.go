@@ -347,13 +347,26 @@ func TestServerConnectDirectForNoneRoute(t *testing.T) {
 
 func TestServerConnectMITMForNoneRouteWithAllowedPaths(t *testing.T) {
 	certPEM, keyPEM := generateTestCA(t)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	host, port, err := net.SplitHostPort(upstream.Listener.Addr().String())
+	require.NoError(t, err)
+	hostPort := net.JoinHostPort(host, port)
+
 	cfg := &Config{
 		Routes: []Route{
-			{Domain: "raw.githubusercontent.com", Injector: "none", AllowedPaths: []string{"/BerriAI/litellm/"}},
+			{Domain: host, Injector: "none", AllowedPaths: []string{"/"}},
 		},
 	}
 	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
 	require.NoError(t, err)
+
+	// Let the proxy trust the upstream's self-signed cert for MITM forwarding
+	srv.proxy.Tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // test only
 
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -362,7 +375,7 @@ func TestServerConnectMITMForNoneRouteWithAllowedPaths(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = conn.Close() }()
 
-	_, err = fmt.Fprintf(conn, "CONNECT raw.githubusercontent.com:443 HTTP/1.1\r\nHost: raw.githubusercontent.com:443\r\n\r\n")
+	_, err = fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", hostPort, hostPort)
 	require.NoError(t, err)
 
 	br := bufio.NewReader(conn)
@@ -381,7 +394,7 @@ func TestServerConnectMITMForNoneRouteWithAllowedPaths(t *testing.T) {
 
 	tlsConn := tls.Client(conn, &tls.Config{
 		RootCAs:    caPool,
-		ServerName: "raw.githubusercontent.com",
+		ServerName: host,
 		MinVersion: tls.VersionTLS12,
 	})
 	require.NoError(t, tlsConn.Handshake(), "should succeed with proxy CA — proves MITM is active")
