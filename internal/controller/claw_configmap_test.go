@@ -27,6 +27,42 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+// --- Vertex AI base URL tests ---
+
+func TestVertexAIBaseURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		location string
+		want     string
+	}{
+		{
+			name:     "global uses plain hostname",
+			location: "global",
+			want:     "https://aiplatform.googleapis.com",
+		},
+		{
+			name:     "regional location uses prefix",
+			location: "us-east5",
+			want:     "https://us-east5-aiplatform.googleapis.com",
+		},
+		{
+			name:     "another region uses prefix",
+			location: "europe-west1",
+			want:     "https://europe-west1-aiplatform.googleapis.com",
+		},
+		{
+			name:     "us-central1 uses prefix",
+			location: "us-central1",
+			want:     "https://us-central1-aiplatform.googleapis.com",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, vertexAIBaseURL(tt.location))
+		})
+	}
+}
+
 // --- Vertex SDK helper tests ---
 
 func TestUsesVertexSDK(t *testing.T) {
@@ -235,6 +271,34 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 		providers := getProviders(t, config)
 		av := providers["anthropic-vertex"].(map[string]any)
 		assert.Equal(t, "https://aiplatform.googleapis.com", av["baseUrl"])
+	})
+
+	t.Run("should set maxTokens and no api for non-anthropic vertex provider", func(t *testing.T) {
+		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "meta-vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "meta",
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "us-central1",
+				},
+			},
+		}
+
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		providers := getProviders(t, config)
+
+		require.Contains(t, providers, "meta-vertex")
+		mv := providers["meta-vertex"].(map[string]any)
+		assert.Equal(t, "https://us-central1-aiplatform.googleapis.com", mv["baseUrl"])
+		assert.Equal(t, "gcp-vertex-credentials", mv["apiKey"])
+		assert.Equal(t, float64(128000), mv["maxTokens"])
+		assert.NotContains(t, mv, "api", "meta has no api mapping in vertexProviderAPIMapping")
 	})
 
 	t.Run("should reject duplicate vertex providers", func(t *testing.T) {
