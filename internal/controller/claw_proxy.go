@@ -184,11 +184,14 @@ type builtinPassthrough struct {
 // injection. These support core gateway functionality:
 //   - clawhub.ai: ClawHub plugin registry for plugin installs and skill downloads
 //   - openrouter.ai: model pricing API for cost estimation in the UI
+//   - github.com + codeload.github.com: git HTTPS clones and tarball fetches for npm packages with git dependencies (e.g. @whiskeysockets/baileys → libsignal-node)
 //   - raw.githubusercontent.com: LiteLLM model pricing data and WhatsApp Baileys library defaults (path-restricted)
 //   - registry.npmjs.org: npm packages for plugin runtime dependencies
 var builtinPassthroughDomains = []builtinPassthrough{
 	{Domain: "clawhub.ai"},
 	{Domain: "openrouter.ai"},
+	{Domain: "github.com"},
+	{Domain: "codeload.github.com"},
 	{Domain: "raw.githubusercontent.com", AllowedPaths: []string{"/BerriAI/litellm/", "/WhiskeySockets/Baileys/"}},
 	{Domain: "registry.npmjs.org"},
 }

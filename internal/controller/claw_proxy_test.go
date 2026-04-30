@@ -298,6 +298,8 @@ func TestGenerateProxyConfig(t *testing.T) {
 		expectedDomains := []string{
 			"api.example.com",
 			"clawhub.ai",
+			"codeload.github.com",
+			"github.com",
 			"openrouter.ai",
 			"raw.githubusercontent.com",
 			"registry.npmjs.org",
