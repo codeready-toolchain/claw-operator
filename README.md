@@ -95,6 +95,8 @@ Wait for it to become ready and get the URL and gateway token:
 
 ```sh
 make wait-ready NS=$NS
+# or, for a non-default instance name:
+# make wait-ready NS=$NS CLAW=my-instance
 ```
 
 ### 5. Log In
@@ -104,8 +106,9 @@ Open the URL printed above and enter the gateway token to log in.
 On vanilla Kubernetes (no Route), use port-forwarding instead:
 
 ```sh
-oc port-forward svc/claw 18789:18789 -n $NS
+oc port-forward svc/instance 18789:18789 -n $NS
 # Then open http://localhost:18789
+# Replace "instance" with your Claw CR name if different
 ```
 
 ### 6. Pair Your Device
@@ -114,6 +117,8 @@ On first connection you'll see "pairing required". With the browser tab open, ap
 
 ```sh
 make approve-pairing NS=$NS
+# or, for a non-default instance name:
+# make approve-pairing NS=$NS CLAW=my-instance
 ```
 
 This picks the first pending request and asks for confirmation.
@@ -129,6 +134,8 @@ Run `make help` for a full list. Key targets:
 | `make dev-setup REGISTRY=...` | Full dev cycle: build, push, deploy |
 | `make dev-build dev-push dev-deploy REGISTRY=...` | Step-by-step dev iteration |
 | `make dev-cleanup` | Tear down deployed controller and CRDs |
+| `make wait-ready NS=... [CLAW=...]` | Wait for ready, print URL + token |
+| `make approve-pairing NS=... [CLAW=...]` | List & approve a device pairing request |
 | `make test` | Run unit tests |
 | `make test-e2e` | Run e2e tests (requires Kind) |
 | `make lint` | Run golangci-lint |

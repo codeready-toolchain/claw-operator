@@ -79,16 +79,18 @@ func generateGatewayToken() (string, error) {
 func (r *ClawResourceReconciler) applyGatewaySecret(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	logger := log.FromContext(ctx)
 
+	secretName := getGatewaySecretName(instance.Name)
+
 	// check if the secret already exists
 	existingSecret := &corev1.Secret{}
 	secretKey := client.ObjectKey{
 		Namespace: instance.Namespace,
-		Name:      ClawGatewaySecretName,
+		Name:      secretName,
 	}
 	if err := r.Get(ctx, secretKey, existingSecret); err == nil {
 		// Secret exists - check if it has the token entry
 		if existingToken, exists := existingSecret.Data[GatewayTokenKeyName]; exists && len(existingToken) > 0 {
-			logger.Info("Gateway secret already exists with token, skipping generation", "name", ClawGatewaySecretName)
+			logger.Info("Gateway secret already exists with token, skipping generation", "name", secretName)
 			// no need to generate new token, just ensure owner reference is set
 			return r.doCreateGatewaySecret(ctx, instance, string(existingToken))
 		} else {
@@ -116,9 +118,10 @@ func (r *ClawResourceReconciler) applyGatewaySecret(ctx context.Context, instanc
 
 func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, instance *clawv1alpha1.Claw, token string) error {
 	logger := log.FromContext(ctx)
+	secretName := getGatewaySecretName(instance.Name)
 	// Create the Secret object
 	secret := &corev1.Secret{}
-	secret.SetName(ClawGatewaySecretName)
+	secret.SetName(secretName)
 	secret.SetNamespace(instance.Namespace)
 	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
 	secret.Data = map[string][]byte{
@@ -372,6 +375,7 @@ func sanitizeKubeconfig(rawBytes []byte) ([]byte, error) {
 // applySanitizedKubeconfig creates or updates the sanitized kubeconfig ConfigMap
 // for the gateway pod. Only created when a kubernetes credential is present.
 func (r *ClawResourceReconciler) applySanitizedKubeconfig(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) error {
+	configMapName := getKubeConfigMapName(instance.Name)
 	var kd *kubeconfigData
 	for i := range resolvedCreds {
 		if resolvedCreds[i].KubeConfig != nil {
@@ -381,7 +385,7 @@ func (r *ClawResourceReconciler) applySanitizedKubeconfig(ctx context.Context, i
 	}
 	if kd == nil {
 		existing := &corev1.ConfigMap{}
-		if err := r.Get(ctx, client.ObjectKey{Name: ClawKubeConfigMapName, Namespace: instance.Namespace}, existing); err == nil {
+		if err := r.Get(ctx, client.ObjectKey{Name: configMapName, Namespace: instance.Namespace}, existing); err == nil {
 			log.FromContext(ctx).Info("Cleaning up orphaned kubeconfig ConfigMap")
 			return r.Delete(ctx, existing)
 		}
@@ -396,7 +400,7 @@ func (r *ClawResourceReconciler) applySanitizedKubeconfig(ctx context.Context, i
 	}
 
 	cm := &corev1.ConfigMap{}
-	cm.SetName(ClawKubeConfigMapName)
+	cm.SetName(configMapName)
 	cm.SetNamespace(instance.Namespace)
 	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
 	cm.Data = map[string]string{

@@ -54,34 +54,298 @@ import (
 
 const (
 	ClawResourceKind = "Claw"
-	ClawInstanceName = "instance"
 
-	// Core resources
-	ClawConfigMapName                = "claw-config"
-	ClawPVCName                      = "claw-home-pvc"
-	ClawNetworkPolicyName            = "claw-egress"
-	ClawIngressNetworkPolicyName     = "claw-ingress"
-	ClawRouteName                    = "claw"
-	ClawServiceName                  = "claw"
-	ClawDeploymentName               = "claw"
-	ClawGatewaySecretName            = "claw-gateway-token"
-	GatewayTokenKeyName              = "token"
-	ClawProxyServiceName             = "claw-proxy"
-	ClawProxyConfigMapName           = "claw-proxy-config"
-	ClawProxyDeploymentName          = "claw-proxy"
-	ClawProxyCACertSecretName        = "claw-proxy-ca"
-	ClawProxyContainerName           = "proxy"
-	ClawGatewayContainerName         = "gateway"
-	ClawVertexADCConfigMapName       = "claw-vertex-adc"
-	ClawKubeConfigMapName            = "claw-kube-config"
-	ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"
-	DefaultKubectlImage              = "quay.io/openshift/origin-cli:4.21"
+	GatewayTokenKeyName      = "token"
+	ClawProxyContainerName   = "proxy"
+	ClawGatewayContainerName = "gateway"
+	DefaultKubectlImage      = "quay.io/openshift/origin-cli:4.21"
+
 	// Kubernetes resource kinds
-	RouteKind         = "Route"
-	DeploymentKind    = "Deployment"
-	ConfigMapKind     = "ConfigMap"
-	NetworkPolicyKind = "NetworkPolicy"
+	RouteKind                 = "Route"
+	DeploymentKind            = "Deployment"
+	ConfigMapKind             = "ConfigMap"
+	NetworkPolicyKind         = "NetworkPolicy"
+	ServiceKind               = "Service"
+	PersistentVolumeClaimKind = "PersistentVolumeClaim"
 )
+
+// sanitizeLabelValue ensures a value conforms to Kubernetes label constraints (max 63 chars,
+// alphanumeric start/end). If the name fits, it is returned as-is. Otherwise it is truncated
+// and a short hash suffix is appended to keep the value unique and deterministic.
+func sanitizeLabelValue(name string) string {
+	const maxLen = 63
+	if len(name) <= maxLen {
+		return name
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(name)))[:8]
+	// Leave room for "-" separator + 8-char hash = 9 chars
+	return name[:maxLen-9] + "-" + hash
+}
+
+// injectInstanceLabels adds the claw.sandbox.redhat.com/instance label to all resources
+// and injects it into Deployment/Service/NetworkPolicy selectors for multi-instance discrimination.
+// Resource names are already set via CLAW_INSTANCE_NAME template replacement in buildKustomizedObjects.
+func injectInstanceLabels(objects []*unstructured.Unstructured, instanceName string) error {
+	instanceLabel := "claw.sandbox.redhat.com/instance"
+	labelValue := sanitizeLabelValue(instanceName)
+
+	for _, obj := range objects {
+		labels := obj.GetLabels()
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		labels[instanceLabel] = labelValue
+		obj.SetLabels(labels)
+
+		switch obj.GetKind() {
+		case DeploymentKind:
+			if err := injectDeploymentInstanceLabels(obj, instanceLabel, labelValue); err != nil {
+				return err
+			}
+		case ServiceKind:
+			if err := injectServiceInstanceLabels(obj, instanceLabel, labelValue); err != nil {
+				return err
+			}
+		case NetworkPolicyKind:
+			if err := injectNetworkPolicyInstanceLabels(obj, instanceLabel, labelValue); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// injectDeploymentInstanceLabels injects instance labels into Deployment selectors and pod template labels
+func injectDeploymentInstanceLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	// Update spec.selector.matchLabels
+	selector, found, err := unstructured.NestedMap(obj.Object, "spec", "selector", "matchLabels")
+	if err != nil {
+		return fmt.Errorf("failed to get selector from Deployment: %w", err)
+	}
+	if found && selector != nil {
+		selector[instanceLabel] = instanceName
+		if err := unstructured.SetNestedMap(obj.Object, selector, "spec", "selector", "matchLabels"); err != nil {
+			return fmt.Errorf("failed to set selector on Deployment: %w", err)
+		}
+	}
+
+	// Update spec.template.metadata.labels
+	templateLabels, found, err := unstructured.NestedMap(obj.Object, "spec", "template", "metadata", "labels")
+	if err != nil {
+		return fmt.Errorf("failed to get template labels from Deployment: %w", err)
+	}
+	if found && templateLabels != nil {
+		templateLabels[instanceLabel] = instanceName
+		if err := unstructured.SetNestedMap(obj.Object, templateLabels, "spec", "template", "metadata", "labels"); err != nil {
+			return fmt.Errorf("failed to set template labels on Deployment: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// injectServiceInstanceLabels injects instance labels into Service selector
+func injectServiceInstanceLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	selector, found, err := unstructured.NestedMap(obj.Object, "spec", "selector")
+	if err != nil {
+		return fmt.Errorf("failed to get selector from Service: %w", err)
+	}
+	if found && selector != nil {
+		selector[instanceLabel] = instanceName
+		if err := unstructured.SetNestedMap(obj.Object, selector, "spec", "selector"); err != nil {
+			return fmt.Errorf("failed to set selector on Service: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// injectNetworkPolicyInstanceLabels injects instance labels into NetworkPolicy podSelector and peer podSelectors
+func injectNetworkPolicyInstanceLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	// Update spec.podSelector.matchLabels
+	podSelector, found, err := unstructured.NestedMap(obj.Object, "spec", "podSelector", "matchLabels")
+	if err != nil {
+		return fmt.Errorf("failed to get podSelector from NetworkPolicy: %w", err)
+	}
+	if found && podSelector != nil {
+		podSelector[instanceLabel] = instanceName
+		if err := unstructured.SetNestedMap(obj.Object, podSelector, "spec", "podSelector", "matchLabels"); err != nil {
+			return fmt.Errorf("failed to set podSelector on NetworkPolicy: %w", err)
+		}
+	}
+
+	// Update egress peer podSelectors
+	if err := injectNetworkPolicyEgressLabels(obj, instanceLabel, instanceName); err != nil {
+		return err
+	}
+
+	// Update ingress peer podSelectors
+	if err := injectNetworkPolicyIngressLabels(obj, instanceLabel, instanceName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// injectNetworkPolicyEgressLabels injects instance labels into NetworkPolicy egress peer podSelectors
+func injectNetworkPolicyEgressLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	egress, found, err := unstructured.NestedSlice(obj.Object, "spec", "egress")
+	if err != nil {
+		return fmt.Errorf("failed to get egress from NetworkPolicy: %w", err)
+	}
+	if !found || egress == nil {
+		return nil
+	}
+
+	for i, egressRule := range egress {
+		egressMap, ok := egressRule.(map[string]any)
+		if !ok {
+			continue
+		}
+		to, found, err := unstructured.NestedSlice(egressMap, "to")
+		if err != nil {
+			return fmt.Errorf("failed to get to peers from NetworkPolicy egress rule: %w", err)
+		}
+		if found && to != nil {
+			for j, peer := range to {
+				peerMap, ok := peer.(map[string]any)
+				if !ok {
+					continue
+				}
+				podSelector, found, err := unstructured.NestedMap(peerMap, "podSelector", "matchLabels")
+				if err != nil {
+					return fmt.Errorf("failed to get podSelector from NetworkPolicy egress peer: %w", err)
+				}
+				if found && podSelector != nil {
+					podSelector[instanceLabel] = instanceName
+					if err := unstructured.SetNestedMap(peerMap, podSelector, "podSelector", "matchLabels"); err != nil {
+						return fmt.Errorf("failed to set podSelector on NetworkPolicy egress peer: %w", err)
+					}
+					to[j] = peerMap
+				}
+			}
+			egressMap["to"] = to
+		}
+		egress[i] = egressMap
+	}
+
+	if err := unstructured.SetNestedSlice(obj.Object, egress, "spec", "egress"); err != nil {
+		return fmt.Errorf("failed to set egress on NetworkPolicy: %w", err)
+	}
+
+	return nil
+}
+
+// injectNetworkPolicyIngressLabels injects instance labels into NetworkPolicy ingress peer podSelectors
+func injectNetworkPolicyIngressLabels(obj *unstructured.Unstructured, instanceLabel, instanceName string) error {
+	ingress, found, err := unstructured.NestedSlice(obj.Object, "spec", "ingress")
+	if err != nil {
+		return fmt.Errorf("failed to get ingress from NetworkPolicy: %w", err)
+	}
+	if !found || ingress == nil {
+		return nil
+	}
+
+	for i, ingressRule := range ingress {
+		ingressMap, ok := ingressRule.(map[string]any)
+		if !ok {
+			continue
+		}
+		from, found, err := unstructured.NestedSlice(ingressMap, "from")
+		if err != nil {
+			return fmt.Errorf("failed to get from peers from NetworkPolicy ingress rule: %w", err)
+		}
+		if found && from != nil {
+			for j, peer := range from {
+				peerMap, ok := peer.(map[string]any)
+				if !ok {
+					continue
+				}
+				podSelector, found, err := unstructured.NestedMap(peerMap, "podSelector", "matchLabels")
+				if err != nil {
+					return fmt.Errorf("failed to get podSelector from NetworkPolicy ingress peer: %w", err)
+				}
+				if found && podSelector != nil {
+					podSelector[instanceLabel] = instanceName
+					if err := unstructured.SetNestedMap(peerMap, podSelector, "podSelector", "matchLabels"); err != nil {
+						return fmt.Errorf("failed to set podSelector on NetworkPolicy ingress peer: %w", err)
+					}
+					from[j] = peerMap
+				}
+			}
+			ingressMap["from"] = from
+		}
+		ingress[i] = ingressMap
+	}
+
+	if err := unstructured.SetNestedSlice(obj.Object, ingress, "spec", "ingress"); err != nil {
+		return fmt.Errorf("failed to set ingress on NetworkPolicy: %w", err)
+	}
+
+	return nil
+}
+
+// Resource naming helper functions
+func getClawDeploymentName(instanceName string) string {
+	return instanceName
+}
+
+func getProxyDeploymentName(instanceName string) string {
+	return instanceName + "-proxy"
+}
+
+func getGatewaySecretName(instanceName string) string {
+	return instanceName + "-gateway-token"
+}
+
+func getConfigMapName(instanceName string) string { //nolint:unparam // called only from tests today but must stay parametric
+	return instanceName + "-config"
+}
+
+func getPVCName(instanceName string) string { //nolint:unparam // called only from tests today but must stay parametric
+	return instanceName + "-home-pvc"
+}
+
+func getServiceName(instanceName string) string {
+	return instanceName
+}
+
+func getProxyServiceName(instanceName string) string {
+	return instanceName + "-proxy"
+}
+
+func getRouteName(instanceName string) string {
+	return instanceName
+}
+
+func getProxyCAConfigMapName(instanceName string) string {
+	return instanceName + "-proxy-ca"
+}
+
+func getVertexADCConfigMapName(instanceName string) string {
+	return instanceName + "-vertex-adc"
+}
+
+func getKubeConfigMapName(instanceName string) string {
+	return instanceName + "-kube-config"
+}
+
+func getIngressNetworkPolicyName(instanceName string) string {
+	return instanceName + "-ingress"
+}
+
+func getEgressNetworkPolicyName(instanceName string) string {
+	return instanceName + "-egress"
+}
+
+func getProxyEgressNetworkPolicyName(instanceName string) string {
+	return instanceName + "-proxy-egress"
+}
+
+func getProxyConfigMapName(instanceName string) string {
+	return instanceName + "-proxy-config"
+}
 
 // ClawResourceReconciler reconciles all resources for Claw
 type ClawResourceReconciler struct {
@@ -120,12 +384,6 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// Only reconcile resources named "instance"
-	if instance.Name != ClawInstanceName {
-		logger.Info("Skipping reconciliation for Claw with non-matching name", "name", instance.Name)
-		return ctrl.Result{}, nil
-	}
-
 	// Create or update the gateway Secret with token
 	if err := r.applyGatewaySecret(ctx, instance); err != nil {
 		logger.Error(err, "Failed to apply gateway secret")
@@ -145,19 +403,19 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Build kustomized objects
-	objects, err := r.buildKustomizedObjects()
+	objects, err := r.buildKustomizedObjects(instance)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Apply deployment overrides (proxy image, pull policy, credentials)
-	if err := r.configureDeployments(objects, resolvedCreds); err != nil {
+	if err := r.configureDeployments(instance, objects, resolvedCreds); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// Stamp proxy config hash to trigger rollout on config changes
 	proxyConfigHash := fmt.Sprintf("%x", sha256.Sum256(proxyConfigJSON))
-	if err := stampProxyConfigHash(objects, proxyConfigHash); err != nil {
+	if err := stampProxyConfigHash(objects, instance, proxyConfigHash); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to stamp proxy config hash: %w", err)
 	}
 
@@ -193,22 +451,22 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
 
 	// Inject Route host into ConfigMap
-	if err := r.injectRouteHostIntoConfigMap(objects, routeHost); err != nil {
+	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
 	}
 
 	// Inject LLM providers into ConfigMap based on credentials with Provider set
-	if err := injectProvidersIntoConfigMap(objects, instance.Spec.Credentials); err != nil {
+	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
 	}
 
 	// Inject Kubernetes skill into ConfigMap for OpenClaw skill auto-discovery
-	if err := injectKubernetesSkill(objects, resolvedCreds); err != nil {
+	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes skill: %w", err)
 	}
 
 	// Inject non-443 ports from kubernetes credentials into proxy egress NetworkPolicy
-	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds); err != nil {
+	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
 	}
 
@@ -218,7 +476,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if obj.GetKind() == RouteKind {
 			continue
 		}
-		if obj.GetKind() == ConfigMapKind && obj.GetName() == ClawProxyConfigMapName {
+		if obj.GetKind() == ConfigMapKind && obj.GetName() == getProxyConfigMapName(instance.Name) {
 			continue
 		}
 		remainingObjects = append(remainingObjects, obj)
@@ -289,26 +547,27 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 
 // configureDeployments applies deployment overrides (proxy image, pull policy, credentials)
 func (r *ClawResourceReconciler) configureDeployments(
+	instance *clawv1alpha1.Claw,
 	objects []*unstructured.Unstructured,
 	resolvedCreds []resolvedCredential,
 ) error {
-	if err := configureProxyImage(objects, r.ProxyImage); err != nil {
+	if err := configureProxyImage(objects, instance, r.ProxyImage); err != nil {
 		return fmt.Errorf("failed to configure proxy image: %w", err)
 	}
 	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
 		return fmt.Errorf("failed to configure image pull policy: %w", err)
 	}
-	if err := configureProxyForCredentials(objects, resolvedCreds); err != nil {
+	if err := configureProxyForCredentials(objects, instance, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
 	}
-	if err := configureClawDeploymentForVertex(objects, resolvedCreds); err != nil {
+	if err := configureClawDeploymentForVertex(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Vertex AI: %w", err)
 	}
 	kubectlImage := r.KubectlImage
 	if kubectlImage == "" {
 		kubectlImage = DefaultKubectlImage
 	}
-	if err := configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage); err != nil {
+	if err := configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage, instance.Name); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Kubernetes: %w", err)
 	}
 	return nil
@@ -376,7 +635,7 @@ func (r *ClawResourceReconciler) buildKustomizeFromPath(fsys filesys.FileSystem,
 	return objects, nil
 }
 
-func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstructured, error) {
+func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.Claw) ([]*unstructured.Unstructured, error) {
 	// Write all manifest files to in-memory filesystem
 	fs := filesys.MakeFsInMemory()
 
@@ -413,7 +672,8 @@ func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstr
 	}
 
 	for path, content := range allManifests {
-		if err := fs.WriteFile(path, content); err != nil {
+		replaced := bytes.ReplaceAll(content, []byte("CLAW_INSTANCE_NAME"), []byte(instance.Name))
+		if err := fs.WriteFile(path, replaced); err != nil {
 			return nil, fmt.Errorf("failed to write manifest to in-memory filesystem: %w", err)
 		}
 	}
@@ -432,6 +692,11 @@ func (r *ClawResourceReconciler) buildKustomizedObjects() ([]*unstructured.Unstr
 
 	// Merge both object lists
 	allObjects := append(clawObjects, proxyObjects...)
+
+	// Inject instance labels into selectors for multi-instance discrimination
+	if err := injectInstanceLabels(allObjects, instance.Name); err != nil {
+		return nil, fmt.Errorf("failed to inject instance labels: %w", err)
+	}
 
 	return allObjects, nil
 }
@@ -490,14 +755,15 @@ func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*
 
 // injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator.json with actual Route host.
 // If routeHost is empty (vanilla Kubernetes), uses localhost fallback.
-func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstructured.Unstructured, routeHost string) error {
+func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstructured.Unstructured, routeHost, instanceName string) error {
 	replacement := routeHost
 	if replacement == "" {
 		replacement = "http://localhost:18789"
 	}
 
+	configMapName := getConfigMapName(instanceName)
 	for _, obj := range objects {
-		if obj.GetKind() == ConfigMapKind && obj.GetName() == ClawConfigMapName {
+		if obj.GetKind() == ConfigMapKind && obj.GetName() == configMapName {
 			operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
 			if err != nil {
 				return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
@@ -516,7 +782,7 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 		}
 	}
 
-	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
+	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 }
 
 // injectProvidersIntoConfigMap dynamically builds the models.providers section of operator.json
@@ -525,7 +791,9 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 // flows through the MITM proxy which injects GCP credentials transparently.
 // Agent defaults (model aliases, primary model) are in the user-owned openclaw.json seed
 // and are not modified here — users control their own model preferences.
-func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credentials []clawv1alpha1.CredentialSpec) error {
+func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	credentials := instance.Spec.Credentials
+	proxyServiceName := getProxyServiceName(instance.Name)
 	providers := map[string]any{}
 	for _, cred := range credentials {
 		if cred.Provider == "" {
@@ -554,7 +822,7 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 				return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
 			}
 			info := resolveProviderInfo(cred)
-			baseURL := "http://claw-proxy:8080/" + strings.ToLower(cred.Name) + info.BasePath
+			baseURL := "http://" + proxyServiceName + ":8080/" + strings.ToLower(cred.Name) + info.BasePath
 			providers[cred.Provider] = map[string]any{
 				"baseUrl": baseURL,
 				"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
@@ -563,8 +831,9 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 		}
 	}
 
+	configMapName := getConfigMapName(instance.Name)
 	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != ClawConfigMapName {
+		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
 			continue
 		}
 
@@ -599,13 +868,13 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, credenti
 		return nil
 	}
 
-	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
+	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 }
 
 // injectKubePortsIntoNetworkPolicy adds non-443 ports from kubernetes credentials to
 // the proxy egress NetworkPolicy. This allows the proxy to reach API servers on
 // non-standard ports (e.g., 6443).
-func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
+func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential, instanceName string) error {
 	uniquePorts := map[string]bool{}
 	for _, rc := range resolvedCreds {
 		if rc.KubeConfig == nil {
@@ -621,8 +890,9 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 		return nil
 	}
 
+	npName := getProxyEgressNetworkPolicyName(instanceName)
 	for _, obj := range objects {
-		if obj.GetKind() != NetworkPolicyKind || obj.GetName() != ClawProxyEgressNetworkPolicyName {
+		if obj.GetKind() != NetworkPolicyKind || obj.GetName() != npName {
 			continue
 		}
 
@@ -668,13 +938,13 @@ func injectKubePortsIntoNetworkPolicy(objects []*unstructured.Unstructured, reso
 		}
 		return nil
 	}
-	return fmt.Errorf("NetworkPolicy %s not found in manifests", ClawProxyEgressNetworkPolicyName)
+	return fmt.Errorf("NetworkPolicy %q not found in manifests", npName)
 }
 
 // injectKubernetesSkill writes a KUBERNETES.md key into the claw-config ConfigMap
 // when kubernetes credentials are present. The init container copies this into
 // skills/kubernetes/SKILL.md so OpenClaw auto-discovers it as a workspace skill.
-func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential) error {
+func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds []resolvedCredential, instanceName string) error {
 	var allContexts []kubeconfigContext
 	for _, rc := range resolvedCreds {
 		if rc.KubeConfig == nil {
@@ -718,8 +988,9 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 	sb.WriteString("or anything cluster-related, use kubectl/oc directly to help them.\n\n")
 	sb.WriteString("Do not attempt to manage tokens, certificates, or kubeconfig yourself.\n")
 
+	configMapName := getConfigMapName(instanceName)
 	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != ClawConfigMapName {
+		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
 			continue
 		}
 
@@ -728,7 +999,7 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 		}
 		return nil
 	}
-	return fmt.Errorf("ConfigMap %s not found in manifests", ClawConfigMapName)
+	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 }
 
 // readEmbeddedFile reads a file from the embedded filesystem
@@ -789,8 +1060,10 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 		return nil
 	}
 
-	// Skip operator-managed secrets (claw-gateway-token for gateway token)
-	if secret.Name == ClawGatewaySecretName {
+	// Skip operator-managed secrets (owned by a Claw controller).
+	// These are already handled by Owns(&corev1.Secret{}) in the controller setup.
+	if metav1.GetControllerOf(secret) != nil &&
+		metav1.GetControllerOf(secret).Kind == ClawResourceKind {
 		return nil
 	}
 
@@ -803,10 +1076,6 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 	// Find Claw CRs that reference this Secret
 	var requests []reconcile.Request
 	for _, instance := range openClawList.Items {
-		if instance.Name != ClawInstanceName {
-			continue
-		}
-
 		for _, cred := range instance.Spec.Credentials {
 			if cred.SecretRef != nil && cred.SecretRef.Name == secret.Name {
 				requests = append(requests, reconcile.Request{

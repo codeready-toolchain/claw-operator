@@ -1,7 +1,7 @@
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: claw
+  name: CLAW_INSTANCE_NAME
   labels:
     app: claw
   annotations:
@@ -9,7 +9,7 @@ metadata:
 spec:
   to:
     kind: Service
-    name: claw
+    name: CLAW_INSTANCE_NAME
     weight: 100
   port:
     targetPort: 18789
