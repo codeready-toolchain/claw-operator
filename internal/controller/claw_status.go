@@ -84,10 +84,13 @@ func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, name
 	return len(pending) == 0, pending, nil
 }
 
-// getRouteURL fetches the Route and returns the HTTPS URL, or empty string if not found
-func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *clawv1alpha1.Claw) (string, error) {
+// getRouteHost fetches a Route by name and returns its hostname, or empty string if not ready.
+// Returns empty string (not error) when:
+// - Route not found (NotFound error)
+// - Route CRD not registered (NoMatchError)
+// - Route exists but status not yet populated by OpenShift router
+func (r *ClawResourceReconciler) getRouteHost(ctx context.Context, namespace, routeName string) (string, error) {
 	logger := log.FromContext(ctx)
-	routeName := getRouteName(instance.Name)
 
 	// Create an unstructured object to fetch the Route (OpenShift-specific resource)
 	route := &unstructured.Unstructured{}
@@ -98,7 +101,7 @@ func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *claw
 	})
 
 	if err := r.Get(ctx, client.ObjectKey{
-		Namespace: instance.Namespace,
+		Namespace: namespace,
 		Name:      routeName,
 	}, route); err != nil {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
@@ -134,7 +137,36 @@ func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *claw
 		return "", nil
 	}
 
+	return host, nil
+}
+
+// getGatewayRouteURL fetches the Route and returns the HTTPS URL, or
+// - an error if the Route cannot be fetched.
+// - empty string if the host has not been set yet (ie, when the Route is not ready)
+func (r *ClawResourceReconciler) getGatewayRouteURL(ctx context.Context, instance *clawv1alpha1.Claw) (string, error) {
+	routeName := getRouteName(instance.Name)
+	host, err := r.getRouteHost(ctx, instance.Namespace, routeName)
+	if err != nil {
+		return "", err
+	}
+	if host == "" {
+		return "", nil
+	}
 	return "https://" + host, nil
+}
+
+// getConsoleRouteURL fetches the Route and returns the HTTPS URL, or
+// - empty string if the route does not exist or if the host has not been set yet (ie, when the Route is not ready).
+func (r *ClawResourceReconciler) getConsoleRouteURL(ctx context.Context, instance *clawv1alpha1.Claw) string {
+	routeName := getRouteName("claw-console")
+	host, err := r.getRouteHost(ctx, instance.Namespace, routeName)
+	if err != nil {
+		return "" // log error and continue without console route
+	}
+	if host == "" {
+		return "" // log error and continue without console route
+	}
+	return "https://" + host
 }
 
 // setCondition is a generic helper to set a condition on the Claw instance.
@@ -237,7 +269,7 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 
 	// Populate URL field only when both deployments are ready
 	if ready {
-		routeURL, err := r.getRouteURL(ctx, instance)
+		routeURL, err := r.getGatewayRouteURL(ctx, instance)
 		if err != nil {
 			return fmt.Errorf("failed to get Route URL: %w", err)
 		}
