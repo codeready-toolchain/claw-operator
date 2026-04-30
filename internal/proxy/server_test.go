@@ -321,10 +321,15 @@ func TestServerConnectDirectForNoneRoute(t *testing.T) {
 	require.NoError(t, tlsConn.Handshake())
 
 	// Verify the cert is from the upstream server, not the proxy CA
+	certBlock, _ := pem.Decode(certPEM)
+	require.NotNil(t, certBlock)
+	caCert, err := x509.ParseCertificate(certBlock.Bytes)
+	require.NoError(t, err)
+
 	state := tlsConn.ConnectionState()
 	require.NotEmpty(t, state.PeerCertificates)
 	upstreamCert := state.PeerCertificates[0]
-	assert.NotEqual(t, "Claw Proxy CA", upstreamCert.Issuer.CommonName,
+	assert.NotEqual(t, caCert.Subject.CommonName, upstreamCert.Issuer.CommonName,
 		"should see upstream cert, not proxy-generated MITM cert")
 
 	req, err := http.NewRequest(http.MethodGet, "https://127.0.0.1/test", nil)
