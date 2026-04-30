@@ -69,31 +69,45 @@ const (
 	PersistentVolumeClaimKind = "PersistentVolumeClaim"
 )
 
+// sanitizeLabelValue ensures a value conforms to Kubernetes label constraints (max 63 chars,
+// alphanumeric start/end). If the name fits, it is returned as-is. Otherwise it is truncated
+// and a short hash suffix is appended to keep the value unique and deterministic.
+func sanitizeLabelValue(name string) string {
+	const maxLen = 63
+	if len(name) <= maxLen {
+		return name
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(name)))[:8]
+	// Leave room for "-" separator + 8-char hash = 9 chars
+	return name[:maxLen-9] + "-" + hash
+}
+
 // injectInstanceLabels adds the claw.sandbox.redhat.com/instance label to all resources
 // and injects it into Deployment/Service/NetworkPolicy selectors for multi-instance discrimination.
 // Resource names are already set via CLAW_INSTANCE_NAME template replacement in buildKustomizedObjects.
 func injectInstanceLabels(objects []*unstructured.Unstructured, instanceName string) error {
 	instanceLabel := "claw.sandbox.redhat.com/instance"
+	labelValue := sanitizeLabelValue(instanceName)
 
 	for _, obj := range objects {
 		labels := obj.GetLabels()
 		if labels == nil {
 			labels = make(map[string]string)
 		}
-		labels[instanceLabel] = instanceName
+		labels[instanceLabel] = labelValue
 		obj.SetLabels(labels)
 
 		switch obj.GetKind() {
 		case DeploymentKind:
-			if err := injectDeploymentInstanceLabels(obj, instanceLabel, instanceName); err != nil {
+			if err := injectDeploymentInstanceLabels(obj, instanceLabel, labelValue); err != nil {
 				return err
 			}
 		case ServiceKind:
-			if err := injectServiceInstanceLabels(obj, instanceLabel, instanceName); err != nil {
+			if err := injectServiceInstanceLabels(obj, instanceLabel, labelValue); err != nil {
 				return err
 			}
 		case NetworkPolicyKind:
-			if err := injectNetworkPolicyInstanceLabels(obj, instanceLabel, instanceName); err != nil {
+			if err := injectNetworkPolicyInstanceLabels(obj, instanceLabel, labelValue); err != nil {
 				return err
 			}
 		}

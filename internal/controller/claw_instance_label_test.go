@@ -581,3 +581,34 @@ func TestInjectInstanceLabels_DifferentInstances(t *testing.T) {
 			"different instances should have different instance labels")
 	})
 }
+
+func TestSanitizeLabelValue(t *testing.T) {
+	t.Run("short name passes through unchanged", func(t *testing.T) {
+		assert.Equal(t, "instance", sanitizeLabelValue("instance"))
+	})
+
+	t.Run("exactly 63 chars passes through unchanged", func(t *testing.T) {
+		name := "aaaaaaaaa-bbbbbbbbb-ccccccccc-ddddddddd-eeeeeeeee-fffffffffffff"
+		assert.Len(t, name, 63)
+		assert.Equal(t, name, sanitizeLabelValue(name))
+	})
+
+	t.Run("64+ chars is truncated with hash suffix", func(t *testing.T) {
+		name := "aaaaaaaaa-bbbbbbbbb-ccccccccc-ddddddddd-eeeeeeeee-ffffffffffffff"
+		assert.Greater(t, len(name), 63)
+		result := sanitizeLabelValue(name)
+		assert.LessOrEqual(t, len(result), 63)
+		assert.Contains(t, result, "-")
+	})
+
+	t.Run("deterministic for same input", func(t *testing.T) {
+		long := "this-is-a-very-long-instance-name-that-exceeds-the-63-character-kubernetes-label-limit"
+		assert.Equal(t, sanitizeLabelValue(long), sanitizeLabelValue(long))
+	})
+
+	t.Run("different long names produce different values", func(t *testing.T) {
+		a := "aaaa-long-instance-name-that-exceeds-the-63-character-kubernetes-label-value-limit"
+		b := "bbbb-long-instance-name-that-exceeds-the-63-character-kubernetes-label-value-limit"
+		assert.NotEqual(t, sanitizeLabelValue(a), sanitizeLabelValue(b))
+	})
+}
