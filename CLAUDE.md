@@ -388,6 +388,10 @@ The `internal/assets/manifests/` directory contains:
   - `nodepairingrequestapproval_types.go` — NodePairingRequestApproval CRD
   - `groupversion_info.go` — API group registration (`claw.sandbox.redhat.com/v1alpha1`)
 - `internal/controller/` — ClawResourceReconciler and NodePairingRequestApprovalReconciler implementations and tests (separate test files per resource type for readability)
+- `internal/proxy/` — MITM proxy binary (`cmd/proxy/`). Credential-injecting forward proxy with two CONNECT modes:
+  - **MITM** (`ConnectMitm`): TLS interception for credential injection, path filtering, and header injection. Used for all injector types except pure `none` passthrough
+  - **Direct tunnel** (`ConnectAccept`): Plain CONNECT passthrough without TLS interception. Used for `none` routes with no `allowedPaths` or `defaultHeaders`. Required for protocols that fail under MITM (e.g., WhatsApp Noise handshake, WebSocket tunnels)
+  - `Route.NeedsMITM()` determines the mode: returns true unless injector is `"none"` with no path or header restrictions
 - `internal/assets/manifests/` — Embedded Kustomize directory with all manifests (11 total: kustomization.yaml, core resources, networking, and proxy components)
 - `cmd/main.go` — Manager entrypoint, wires up controllers. Contains package-level `version` and `buildTime` variables set via LDFLAGS during build, logged at startup
 - `config/` — Kustomize overlays for CRDs, RBAC, manager deployment

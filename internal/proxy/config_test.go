@@ -138,6 +138,29 @@ func TestPathAllowed(t *testing.T) {
 	}
 }
 
+func TestNeedsMITM(t *testing.T) {
+	tests := []struct {
+		name string
+		route Route
+		want bool
+	}{
+		{name: "bearer injector needs MITM", route: Route{Injector: "bearer"}, want: true},
+		{name: "api_key injector needs MITM", route: Route{Injector: "api_key"}, want: true},
+		{name: "gcp injector needs MITM", route: Route{Injector: "gcp"}, want: true},
+		{name: "kubernetes injector needs MITM", route: Route{Injector: "kubernetes"}, want: true},
+		{name: "none without restrictions is direct tunnel", route: Route{Injector: "none"}, want: false},
+		{name: "none with allowedPaths needs MITM", route: Route{Injector: "none", AllowedPaths: []string{"/foo/"}}, want: true},
+		{name: "none with defaultHeaders needs MITM", route: Route{Injector: "none", DefaultHeaders: map[string]string{"X-Custom": "val"}}, want: true},
+		{name: "none with both restrictions needs MITM", route: Route{Injector: "none", AllowedPaths: []string{"/foo/"}, DefaultHeaders: map[string]string{"X-Custom": "val"}}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.route.NeedsMITM())
+		})
+	}
+}
+
 func TestMatchRoutePortAware(t *testing.T) {
 	cfg := &Config{
 		Routes: []Route{
