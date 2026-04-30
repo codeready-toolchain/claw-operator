@@ -16,4 +16,4 @@ resources:
 images:
   - name: ghcr.io/openclaw/openclaw
     newName: ghcr.io/openclaw/openclaw
-    newTag: 2026.4.23-slim
+    newTag: 2026.4.27-slim
