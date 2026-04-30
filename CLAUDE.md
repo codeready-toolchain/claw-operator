@@ -8,7 +8,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 
 **CRDs:**
 - `Claw` in API group `claw.sandbox.redhat.com/v1alpha1` — Main CRD for OpenClaw instances
-- `NodePairingRequestApproval` in API group `claw.sandbox.redhat.com/v1alpha1` — CRD for node pairing requests
+- `DevicePairingRequest` in API group `claw.sandbox.redhat.com/v1alpha1` — CRD for device pairing requests
 
 ### Claw CRD
 
@@ -61,7 +61,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 - `oauth2` config required when `type == "oauth2"`
 - `secretRef` required for all types except `none`
 
-### NodePairingRequestApproval CRD
+### DevicePairingRequest CRD
 
 **Spec Fields:**
 - `requestID` (string, required, minLength=1): Unique identifier for the pairing request
@@ -358,10 +358,10 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"` — proxy egress NetworkPolicy (dynamically patched for non-443 kubernetes ports)
 - `DefaultKubectlImage = "quay.io/openshift/origin-cli:4.21"` — default image for the init-kubectl init container; copies `oc` and `kubectl` to shared volume (overridable via `KUBECTL_IMAGE` env var)
 
-**NodePairingRequestApprovalReconciler** (`internal/controller/nodepairingrequestapproval_controller.go`):
-- Reconciles `NodePairingRequestApproval` CRs
+**DevicePairingRequestReconciler** (`internal/controller/devicepairingrequest_controller.go`):
+- Reconciles `DevicePairingRequest` CRs
 - Currently a minimal implementation that logs reconciliation events
-- Designed for future node pairing approval workflow
+- Designed for future device pairing approval workflow
 - RBAC includes permissions for CR and status management
 
 ### Kustomize-based manifest generation
@@ -398,9 +398,9 @@ The `internal/assets/manifests/` directory contains:
 
 - `api/v1alpha1/` — CRD type definitions
   - `claw_types.go` — Claw CRD (ClawSpec, ClawStatus, CredentialSpec, credential types and configs)
-  - `nodepairingrequestapproval_types.go` — NodePairingRequestApproval CRD
+  - `devicepairingrequest_types.go` — DevicePairingRequest CRD
   - `groupversion_info.go` — API group registration (`claw.sandbox.redhat.com/v1alpha1`)
-- `internal/controller/` — ClawResourceReconciler and NodePairingRequestApprovalReconciler implementations and tests (separate test files per resource type for readability)
+- `internal/controller/` — ClawResourceReconciler and DevicePairingRequestReconciler implementations and tests (separate test files per resource type for readability)
 - `internal/proxy/` — MITM proxy binary (`cmd/proxy/`). Credential-injecting forward proxy with two CONNECT modes:
   - **MITM** (`ConnectMitm`): TLS interception for credential injection, path filtering, and header injection. Used for all injector types except pure `none` passthrough
   - **Direct tunnel** (`ConnectAccept`): Plain CONNECT passthrough without TLS interception. Used for `none` routes with no `allowedPaths` or `defaultHeaders`. Required for protocols that fail under MITM (e.g., WhatsApp Noise handshake, WebSocket tunnels)
@@ -411,7 +411,7 @@ The `internal/assets/manifests/` directory contains:
 
 ### Code generation
 
-After modifying API types in `api/v1alpha1/` (`claw_types.go`, `nodepairingrequestapproval_types.go`), run both:
+After modifying API types in `api/v1alpha1/` (`claw_types.go`, `devicepairingrequest_types.go`), run both:
 ```bash
 make manifests   # regenerate CRD YAML in config/crd/bases/
 make generate    # regenerate zz_generated.deepcopy.go

@@ -3,7 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/claw.sandbox.redhat.com_claws.yaml
-- bases/claw.sandbox.redhat.com_nodepairingrequestapprovals.yaml
+- bases/claw.sandbox.redhat.com_devicepairingrequests.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.

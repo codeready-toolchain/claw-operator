@@ -1,3 +1,49 @@
+## Requirements
+
+### Requirement: NodePairingRequestApproval CRD definition
+**FROM**: NodePairingRequestApproval  
+**TO**: DevicePairingRequest
+
+The CRD name changes from `NodePairingRequestApproval` to `DevicePairingRequest`. Resource path changes from `nodepairingrequestapprovals` to `devicepairingrequests`. All other attributes remain unchanged.
+
+### Requirement: Spec field is required
+**FROM**: NodePairingRequestApproval  
+**TO**: DevicePairingRequest
+
+The requirement remains the same, only the resource type name changes.
+
+### Requirement: RequestID field in Spec
+**FROM**: NodePairingRequestApproval  
+**TO**: DevicePairingRequest
+
+The Spec.RequestID field requirement remains unchanged, only references to the resource type name change.
+
+### Requirement: Controller watches NodePairingRequestApproval resources
+**FROM**: NodePairingRequestApproval / NodePairingRequestApprovalReconciler  
+**TO**: DevicePairingRequest / DevicePairingRequestReconciler
+
+The controller name changes from `NodePairingRequestApprovalReconciler` to `DevicePairingRequestReconciler`. Reconciliation behavior remains identical.
+
+### Requirement: Status subresource support
+**FROM**: NodePairingRequestApproval  
+**TO**: DevicePairingRequest
+
+The Status subresource requirement remains unchanged, only the resource type name changes.
+
+### Requirement: Conditions array in Status
+**FROM**: NodePairingRequestApproval  
+**TO**: DevicePairingRequest
+
+The Status.Conditions field requirement remains unchanged, only references to the resource type name change.
+
+### Requirement: RBAC permissions for controller
+**FROM**: NodePairingRequestApproval  
+**TO**: DevicePairingRequest
+
+RBAC permissions remain the same (get, list, watch, create, update, patch for resources; update for status and finalizers; no delete). Only the resource name in RBAC manifests changes.
+
+## MODIFIED Requirements
+
 ### Requirement: NodePairingRequestApproval CRD definition
 The system SHALL provide a namespaced Custom Resource Definition named `DevicePairingRequest` in the API group `claw.sandbox.redhat.com/v1alpha1` with resource path `devicepairingrequests`.
 

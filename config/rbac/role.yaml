@@ -52,14 +52,14 @@ rules:
   - claw.sandbox.redhat.com
   resources:
   - claws/finalizers
-  - nodepairingrequestapprovals/finalizers
+  - devicepairingrequests/finalizers
   verbs:
   - update
 - apiGroups:
   - claw.sandbox.redhat.com
   resources:
   - claws/status
-  - nodepairingrequestapprovals/status
+  - devicepairingrequests/status
   verbs:
   - get
   - patch
@@ -67,7 +67,7 @@ rules:
 - apiGroups:
   - claw.sandbox.redhat.com
   resources:
-  - nodepairingrequestapprovals
+  - devicepairingrequests
   verbs:
   - create
   - get
