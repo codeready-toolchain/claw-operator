@@ -94,7 +94,7 @@ reset-test-e2e: ## Remove leftover operator resources from a previous e2e run
 test-e2e: ## Run the e2e tests. Expected an isolated environment using Kind.
 	@trap '$(MAKE) cleanup-test-e2e >/dev/null 2>&1 || true' EXIT; \
 	$(MAKE) setup-test-e2e manifests generate fmt vet reset-test-e2e; \
-	KIND_CLUSTER=$(KIND_CLUSTER) go test -v ./test/e2e/
+	KIND_CLUSTER=$(KIND_CLUSTER) go test -v -timeout 15m ./test/e2e/
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
@@ -241,22 +241,23 @@ endif
 	$(MAKE) dev-deploy REGISTRY=$(REGISTRY) TAG=$(TAG)
 
 NS ?= my-claw
+CLAW ?= instance
 
 .PHONY: wait-ready
-wait-ready: ## Wait for the Claw instance to become ready and print the URL.
-	@echo "Waiting for Claw instance to become ready in namespace $(NS)..."
-	@$(KUBECTL) wait --for=condition=Ready claw/instance -n $(NS) --timeout=300s
+wait-ready: ## Wait for the Claw instance to become ready and print the URL. Usage: make wait-ready NS=... [CLAW=instance]
+	@echo "Waiting for Claw $(CLAW) to become ready in namespace $(NS)..."
+	@$(KUBECTL) wait --for=condition=Ready claw/$(CLAW) -n $(NS) --timeout=300s
 	@echo
-	@echo "URL: $$($(KUBECTL) get claw instance -n $(NS) -o jsonpath='{.status.url}')"
-	@token_secret=$$($(KUBECTL) get claw instance -n $(NS) -o jsonpath='{.status.gatewayTokenSecretRef}'); \
+	@echo "URL: $$($(KUBECTL) get claw $(CLAW) -n $(NS) -o jsonpath='{.status.url}')"
+	@token_secret=$$($(KUBECTL) get claw $(CLAW) -n $(NS) -o jsonpath='{.status.gatewayTokenSecretRef}'); \
 	echo "Token: $$($(KUBECTL) get secret $$token_secret -n $(NS) -o jsonpath='{.data.token}' | base64 -d)"
 
 .PHONY: approve-pairing
-approve-pairing: ## Approve a device pairing request. Usage: make approve-pairing NS=... [REQUEST_ID=...]
+approve-pairing: ## Approve a device pairing request. Usage: make approve-pairing NS=... [CLAW=instance] [REQUEST_ID=...]
 	@if [ -n "$(REQUEST_ID)" ]; then \
-		$(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices approve $(REQUEST_ID); \
+		$(KUBECTL) exec -n $(NS) deployment/$(CLAW) -- node /app/dist/index.js devices approve $(REQUEST_ID); \
 	else \
-		output=$$($(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices list 2>/dev/null); \
+		output=$$($(KUBECTL) exec -n $(NS) deployment/$(CLAW) -- node /app/dist/index.js devices list 2>/dev/null); \
 		rid=$$(echo "$$output" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1); \
 		if [ -z "$$rid" ]; then \
 			echo "No pending pairing requests found."; \
@@ -265,7 +266,7 @@ approve-pairing: ## Approve a device pairing request. Usage: make approve-pairin
 		echo "Found pairing request: $$rid"; \
 		read -r -p "Approve? [y/N] " ans; \
 		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 0;; esac; \
-		$(KUBECTL) exec -n $(NS) deployment/claw -- node /app/dist/index.js devices approve "$$rid"; \
+		$(KUBECTL) exec -n $(NS) deployment/$(CLAW) -- node /app/dist/index.js devices approve "$$rid"; \
 	fi
 
 .PHONY: dev-cleanup

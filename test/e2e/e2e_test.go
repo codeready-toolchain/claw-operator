@@ -49,6 +49,16 @@ const (
 	podPhaseRunning   = "Running"
 	podPhaseSucceeded = "Succeeded"
 	conditionTrue     = "True"
+
+	clawInstanceName    = "instance"
+	proxyDeploymentName = clawInstanceName + "-proxy"
+	configMapName       = clawInstanceName + "-config"
+	proxyConfigMapName  = clawInstanceName + "-proxy-config"
+	proxyCACertName     = clawInstanceName + "-proxy-ca"
+	gatewaySecretName   = clawInstanceName + "-gateway-token"
+	ingressNetPolName   = clawInstanceName + "-ingress"
+	pvcName             = clawInstanceName + "-home-pvc"
+	proxyServiceName    = clawInstanceName + "-proxy"
 )
 
 // clawYAMLWithGemini returns a Claw CR YAML using spec.credentials[] with apiKey type.
@@ -328,6 +338,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the credential Secret")
@@ -361,7 +372,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Log("verifying CRED_GEMINI env var references the user's Secret")
 			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
 				".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.name}"
-			cmd = exec.Command("kubectl", "get", "deployment", "claw-proxy",
+			cmd = exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
 				"-o", jp, "-n", userNamespace)
 			output, err := utils.Run(t, cmd)
 			require.NoError(t, err)
@@ -369,16 +380,16 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"CRED_GEMINI should reference gemini-api-key Secret")
 
 			t.Log("verifying proxy-config ConfigMap was generated")
-			cmd = exec.Command("kubectl", "get", "configmap", "claw-proxy-config",
+			cmd = exec.Command("kubectl", "get", "configmap", proxyConfigMapName,
 				"-o", "jsonpath={.data.proxy-config\\.json}",
 				"-n", userNamespace)
 			configOutput, err := utils.Run(t, cmd)
-			require.NoError(t, err, "claw-proxy-config ConfigMap should exist")
+			require.NoError(t, err, "proxy-config ConfigMap should exist")
 			assert.Contains(t, configOutput, ".googleapis.com",
 				"proxy config should contain the credential domain")
 
 			t.Log("verifying the proxy CA Secret was created")
-			cmd = exec.Command("kubectl", "get", "secret", "claw-proxy-ca",
+			cmd = exec.Command("kubectl", "get", "secret", proxyCACertName,
 				"-o", "jsonpath={.data.ca\\.crt}",
 				"-n", userNamespace)
 			caOutput, err := utils.Run(t, cmd)
@@ -386,13 +397,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			assert.NotEmpty(t, caOutput, "CA cert should not be empty")
 
 			t.Log("verifying the ingress NetworkPolicy exists")
-			cmd = exec.Command("kubectl", "get", "networkpolicy", "claw-ingress",
+			cmd = exec.Command("kubectl", "get", "networkpolicy", ingressNetPolName,
 				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Ingress NetworkPolicy should exist")
 
 			t.Log("verifying the gateway Secret was created with a token")
-			cmd = exec.Command("kubectl", "get", "secret", "claw-gateway-token",
+			cmd = exec.Command("kubectl", "get", "secret", gatewaySecretName,
 				"-o", "jsonpath={.data.token}",
 				"-n", userNamespace)
 			tokenOutput, err := utils.Run(t, cmd)
@@ -405,7 +416,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"-n", userNamespace)
 			secretRefOutput, err := utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "claw-gateway-token", secretRefOutput)
+			assert.Equal(t, gatewaySecretName, secretRefOutput)
 
 			t.Log("verifying CredentialsResolved condition")
 			cmd = exec.Command("kubectl", "get", "claw", "instance",
@@ -436,6 +447,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the credential Secret")
@@ -467,11 +479,11 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "Claw ProxyConfigured did not become True")
 
 			t.Log("verifying operator.json has gateway config and providers")
-			cmd = exec.Command("kubectl", "get", "configmap", "claw-config",
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
 				"-o", "jsonpath={.data.operator\\.json}",
 				"-n", userNamespace)
 			operatorJSON, err := utils.Run(t, cmd)
-			require.NoError(t, err, "claw-config ConfigMap should exist with operator.json")
+			require.NoError(t, err, "config ConfigMap should exist with operator.json")
 			assert.Contains(t, operatorJSON, `"gateway"`,
 				"operator.json should contain gateway config")
 			assert.Contains(t, operatorJSON, `"providers"`,
@@ -487,11 +499,11 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			assert.NotEmpty(t, providers, "should have injected provider from credential")
 
 			t.Log("verifying openclaw.json seed has $include directive")
-			cmd = exec.Command("kubectl", "get", "configmap", "claw-config",
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
 				"-o", "jsonpath={.data.openclaw\\.json}",
 				"-n", userNamespace)
 			openclawJSON, err := utils.Run(t, cmd)
-			require.NoError(t, err, "claw-config ConfigMap should have openclaw.json")
+			require.NoError(t, err, "config ConfigMap should have openclaw.json")
 			assert.Contains(t, openclawJSON, `"$include"`,
 				"openclaw.json should contain $include directive")
 			assert.Contains(t, openclawJSON, `./operator.json`,
@@ -500,16 +512,16 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"openclaw.json seed should contain agents section")
 
 			t.Log("verifying AGENTS.md seed is present")
-			cmd = exec.Command("kubectl", "get", "configmap", "claw-config",
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
 				"-o", "jsonpath={.data.AGENTS\\.md}",
 				"-n", userNamespace)
 			agentsMd, err := utils.Run(t, cmd)
-			require.NoError(t, err, "claw-config ConfigMap should have AGENTS.md")
+			require.NoError(t, err, "config ConfigMap should have AGENTS.md")
 			assert.Contains(t, agentsMd, "OpenClaw Assistant",
 				"AGENTS.md should contain seed content")
 
 			t.Log("verifying KUBERNETES.md is absent (no kubernetes credentials)")
-			cmd = exec.Command("kubectl", "get", "configmap", "claw-config",
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
 				"-o", "jsonpath={.data.KUBERNETES\\.md}",
 				"-n", userNamespace)
 			kubeMd, err := utils.Run(t, cmd)
@@ -524,6 +536,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the credential Secret")
@@ -542,22 +555,22 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
-			t.Log("waiting for claw-proxy deployment")
+			t.Log("waiting for proxy deployment")
 			ctx := context.Background()
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, 2*time.Minute, true,
 				func(ctx context.Context) (bool, error) {
-					cmd := exec.Command("kubectl", "get", "deployment", "claw-proxy",
+					cmd := exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
 						"-n", userNamespace)
 					_, err := utils.Run(t, cmd)
 					return err == nil, nil
 				})
 			require.NoError(t, err,
-				"timed out waiting for claw-proxy deployment in namespace %s", userNamespace)
+				"timed out waiting for proxy deployment in namespace %s", userNamespace)
 
 			t.Log("verifying CRED_GEMINI references the correct Secret name")
 			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
 				".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.name}"
-			cmd = exec.Command("kubectl", "get", "deployment", "claw-proxy",
+			cmd = exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
 				"-o", jp, "-n", userNamespace)
 			output, err := utils.Run(t, cmd)
 			require.NoError(t, err)
@@ -566,14 +579,14 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Log("verifying CRED_GEMINI references the correct Secret key")
 			jp = "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
 				".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.key}"
-			cmd = exec.Command("kubectl", "get", "deployment", "claw-proxy",
+			cmd = exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
 				"-o", jp, "-n", userNamespace)
 			output, err = utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Equal(t, "api-key", output)
 
 			t.Log("verifying the deployment uses the proxy container")
-			cmd = exec.Command("kubectl", "get", "deployment", "claw-proxy",
+			cmd = exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
 				"-o", "jsonpath={.spec.template.spec.containers[0].name}",
 				"-n", userNamespace)
 			output, err = utils.Run(t, cmd)
@@ -602,6 +615,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "llm-key-2", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the first credential Secret")
@@ -680,7 +694,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				func(ctx context.Context) (bool, error) {
 					jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
 						".env[?(@.name=='CRED_GEMINI')].valueFrom.secretKeyRef.name}"
-					cmd := exec.Command("kubectl", "get", "deployment", "claw-proxy",
+					cmd := exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
 						"-o", jp, "-n", userNamespace)
 					output, err := utils.Run(t, cmd)
 					return err == nil && output == "llm-key-2", nil
@@ -726,7 +740,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
 				_, _ = utils.Run(t, cmd)
-				waitForPVCDeletion(t, userNamespace)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			t.Log("creating the credential Secret")
@@ -792,6 +806,9 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				curlPodName   = "curl-kube-proxy"
 			)
 
+			// Ensure clean state from previous tests before creating resources
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+
 			t.Cleanup(func() {
 				collectDebugInfo(t)
 				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
@@ -802,7 +819,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				_, _ = utils.Run(t, cmd)
 				cmd = exec.Command("kubectl", "delete", "ns", kubeWorkspace, "--ignore-not-found")
 				_, _ = utils.Run(t, cmd)
-				waitForPVCDeletion(t, userNamespace)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
 			})
 
 			// 1. Create workspace namespace
@@ -920,23 +937,23 @@ spec:
 			require.NoError(t, err, "Claw ProxyConfigured did not become True")
 
 			// Wait for both deployments to be fully available (readiness probes passing)
-			t.Log("waiting for claw-proxy deployment to be available")
+			t.Log("waiting for proxy deployment to be available")
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
 				func(ctx context.Context) (bool, error) {
-					cmd := exec.Command("kubectl", "get", "deployment", "claw-proxy",
+					cmd := exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
 						"-o", "jsonpath={.status.availableReplicas}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
 					return err == nil && output == "1", nil
 				})
-			require.NoError(t, err, "claw-proxy deployment did not become available")
+			require.NoError(t, err, "proxy deployment did not become available")
 
-			// 10. Extract MITM CA cert from claw-proxy-ca Secret
+			// 10. Extract MITM CA cert from proxy CA Secret
 			t.Log("extracting MITM CA cert")
 			var mitmCAB64 string
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {
-					cmd := exec.Command("kubectl", "get", "secret", "claw-proxy-ca",
+					cmd := exec.Command("kubectl", "get", "secret", proxyCACertName,
 						"-o", "jsonpath={.data.ca\\.crt}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
@@ -958,11 +975,12 @@ spec:
 			curlScript := fmt.Sprintf(
 				"echo '%s' | base64 -d > /tmp/mitm-ca.crt && "+
 					"curl -s -o /tmp/response.json -w '%%{http_code}' "+
-					"--proxy http://claw-proxy.%s.svc.cluster.local:8080 "+
+					"--connect-timeout 10 --max-time 30 "+
+					"--proxy http://%s.%s.svc.cluster.local:8080 "+
 					"--cacert /tmp/mitm-ca.crt "+
 					"https://kubernetes.default.svc/api/v1/namespaces/%s/configmaps && "+
 					"echo && cat /tmp/response.json",
-				mitmCAB64, userNamespace, kubeWorkspace)
+				mitmCAB64, proxyServiceName, userNamespace, kubeWorkspace)
 
 			cmd = exec.Command("kubectl", "run", curlPodName, "--restart=Never",
 				"--namespace", userNamespace,
@@ -1123,14 +1141,23 @@ type tokenRequest struct {
 	} `json:"status"`
 }
 
-func waitForPVCDeletion(t *testing.T, namespace string) {
+func waitForPVCDeletion(t *testing.T) error {
 	t.Helper()
 	ctx := context.Background()
-	_ = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+	return wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
 		func(ctx context.Context) (bool, error) {
-			cmd := exec.Command("kubectl", "get", "pvc", "claw-home-pvc",
-				"-n", namespace, "--no-headers")
-			_, err := utils.Run(t, cmd)
-			return err != nil, nil
+			cmd := exec.Command("kubectl", "get", "pvc", pvcName,
+				"-n", userNamespace, "--no-headers")
+			output, err := utils.Run(t, cmd)
+			if err != nil {
+				if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found") {
+					return true, nil
+				}
+				return false, nil
+			}
+			if strings.TrimSpace(output) == "" {
+				return true, nil
+			}
+			return false, nil
 		})
 }

@@ -86,6 +86,7 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 	}
 	tlsCfg := goproxy.TLSConfigFromCA(&tlsCert)
 	mitmConnect := &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsCfg}
+	directConnect := &goproxy.ConnectAction{Action: goproxy.ConnectAccept, TLSConfig: tlsCfg}
 	rejectConnect := &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: tlsCfg}
 
 	proxy.OnRequest().HandleConnectFunc(
@@ -99,7 +100,11 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 				)
 				return rejectConnect, host
 			}
-			logger.Debug("CONNECT allowed", "host", host)
+			if !route.NeedsMITM() {
+				logger.Debug("CONNECT tunnel (direct)", "host", host)
+				return directConnect, host
+			}
+			logger.Debug("CONNECT allowed (MITM)", "host", host)
 			return mitmConnect, host
 		},
 	)

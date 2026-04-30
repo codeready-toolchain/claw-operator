@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: claw-proxy-config
+  name: CLAW_INSTANCE_NAME-proxy-config
   labels:
     app: claw-proxy
 data:

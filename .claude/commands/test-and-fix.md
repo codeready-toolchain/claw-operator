@@ -1,0 +1,1 @@
+../../.cursor/commands/test-and-fix.md

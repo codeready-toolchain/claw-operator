@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: claw-config
+  name: CLAW_INSTANCE_NAME-config
   labels:
     app: claw
 data:
@@ -28,6 +28,9 @@ data:
   openclaw.json: |
     {
       "$include": "./operator.json",
+      "gateway": {
+        "mode": "local"
+      },
       "agents": {
         "defaults": {
           "model": { "primary": "google/gemini-3-flash-preview" },
@@ -84,7 +87,7 @@ data:
     1. Retrieve the current Claw instance:
 
     ```sh
-    oc get claw instance -n <namespace> -o yaml
+    oc get claw CLAW_INSTANCE_NAME -n <namespace> -o yaml
     ```
 
     The output will look something like this (the `credentials` list varies):
@@ -93,7 +96,7 @@ data:
     apiVersion: claw.sandbox.redhat.com/v1alpha1
     kind: Claw
     metadata:
-      name: instance
+      name: CLAW_INSTANCE_NAME
     spec:
       credentials:
         - name: gemini

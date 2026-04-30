@@ -59,23 +59,26 @@ func (r *ClawResourceReconciler) getDeploymentAvailableStatus(ctx context.Contex
 }
 
 // checkDeploymentsReady checks if both claw and claw-proxy Deployments are ready
-func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, namespace string) (bool, []string, error) {
-	clawReady, err := r.getDeploymentAvailableStatus(ctx, namespace, ClawDeploymentName)
+func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, namespace, instanceName string) (bool, []string, error) {
+	clawDeployName := getClawDeploymentName(instanceName)
+	proxyDeployName := getProxyDeploymentName(instanceName)
+
+	clawReady, err := r.getDeploymentAvailableStatus(ctx, namespace, clawDeployName)
 	if err != nil {
 		return false, nil, err
 	}
 
-	proxyReady, err := r.getDeploymentAvailableStatus(ctx, namespace, ClawProxyDeploymentName)
+	proxyReady, err := r.getDeploymentAvailableStatus(ctx, namespace, proxyDeployName)
 	if err != nil {
 		return false, nil, err
 	}
 
 	var pending []string
 	if !clawReady {
-		pending = append(pending, ClawDeploymentName)
+		pending = append(pending, clawDeployName)
 	}
 	if !proxyReady {
-		pending = append(pending, ClawProxyDeploymentName)
+		pending = append(pending, proxyDeployName)
 	}
 
 	return len(pending) == 0, pending, nil
@@ -84,6 +87,7 @@ func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, name
 // getRouteURL fetches the Route and returns the HTTPS URL, or empty string if not found
 func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *clawv1alpha1.Claw) (string, error) {
 	logger := log.FromContext(ctx)
+	routeName := getRouteName(instance.Name)
 
 	// Create an unstructured object to fetch the Route (OpenShift-specific resource)
 	route := &unstructured.Unstructured{}
@@ -95,11 +99,11 @@ func (r *ClawResourceReconciler) getRouteURL(ctx context.Context, instance *claw
 
 	if err := r.Get(ctx, client.ObjectKey{
 		Namespace: instance.Namespace,
-		Name:      ClawRouteName,
+		Name:      routeName,
 	}, route); err != nil {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
 			// Route not found (or CRD not registered on non-OpenShift clusters)
-			logger.Info("Route not found or CRD not registered", "name", ClawRouteName)
+			logger.Info("Route not found or CRD not registered", "name", routeName)
 			return "", nil
 		}
 		return "", fmt.Errorf("failed to get Route: %w", err)
@@ -172,23 +176,24 @@ func setReadyCondition(instance *clawv1alpha1.Claw, ready bool, pendingDeploymen
 	})
 }
 
-// getGatewayToken fetches the gateway token from the claw-gateway-token Secret and Base64-decodes it.
+// getGatewayToken fetches the gateway token from the gateway token Secret and Base64-decodes it.
 // Returns the token string, or empty string if the Secret cannot be read.
-func (r *ClawResourceReconciler) getGatewayToken(ctx context.Context, namespace string) string {
+func (r *ClawResourceReconciler) getGatewayToken(ctx context.Context, namespace, instanceName string) string {
 	logger := log.FromContext(ctx)
+	secretName := getGatewaySecretName(instanceName)
 
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{
 		Namespace: namespace,
-		Name:      ClawGatewaySecretName,
+		Name:      secretName,
 	}, secret); err != nil {
-		logger.Error(err, "Failed to get gateway secret for status URL", "secret", ClawGatewaySecretName)
+		logger.Error(err, "Failed to get gateway secret for status URL", "secret", secretName)
 		return ""
 	}
 
 	tokenBytes, exists := secret.Data[GatewayTokenKeyName]
 	if !exists || len(tokenBytes) == 0 {
-		logger.Info("Gateway token not found in secret", "secret", ClawGatewaySecretName, "key", GatewayTokenKeyName)
+		logger.Info("Gateway token not found in secret", "secret", secretName, "key", GatewayTokenKeyName)
 		return ""
 	}
 
@@ -219,7 +224,7 @@ func buildClawURL(routeURL, token string) string {
 // updateStatus updates the Claw status with current deployment conditions
 func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	// check deployment readiness
-	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace)
+	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace, instance.Name)
 	if err != nil {
 		return fmt.Errorf("failed to check deployment readiness: %w", err)
 	}
@@ -228,7 +233,7 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 	setReadyCondition(instance, ready, pending)
 
 	// Expose gateway secret name in status
-	instance.Status.GatewayTokenSecretRef = ClawGatewaySecretName
+	instance.Status.GatewayTokenSecretRef = getGatewaySecretName(instance.Name)
 
 	// Populate URL field only when both deployments are ready
 	if ready {
@@ -237,7 +242,7 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 			return fmt.Errorf("failed to get Route URL: %w", err)
 		}
 
-		token := r.getGatewayToken(ctx, instance.Namespace)
+		token := r.getGatewayToken(ctx, instance.Namespace, instance.Name)
 		instance.Status.URL = buildClawURL(routeURL, token)
 	} else {
 		// Clear URL when deployments are not ready

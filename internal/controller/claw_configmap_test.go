@@ -163,7 +163,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
 		cm := &unstructured.Unstructured{}
 		cm.SetKind(ConfigMapKind)
-		cm.SetName(ClawConfigMapName)
+		cm.SetName(getConfigMapName(testInstanceName))
 		cm.Object["data"] = map[string]any{
 			"operator.json": jsonContent,
 		}
@@ -200,7 +200,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, credentials))
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
 
 		config := getConfig(t, objects)
 		providers := getProviders(t, config)
@@ -227,7 +227,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		err := injectProvidersIntoConfigMap(objects, credentials)
+		err := injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "anthropic-vertex")

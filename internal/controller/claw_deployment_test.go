@@ -32,7 +32,7 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 	makeDeployment := func() []*unstructured.Unstructured {
 		dep := &unstructured.Unstructured{}
 		dep.SetKind(DeploymentKind)
-		dep.SetName(ClawDeploymentName)
+		dep.SetName(getClawDeploymentName(testInstanceName))
 		dep.Object["spec"] = map[string]any{
 			"template": map[string]any{
 				"spec": map[string]any{
@@ -67,7 +67,7 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForVertex(objects, toResolved(credentials)))
+		require.NoError(t, configureClawDeploymentForVertex(objects, toResolved(credentials), testInstanceName))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)
@@ -102,7 +102,7 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 		vol := volumes[0].(map[string]any)
 		assert.Equal(t, "vertex-adc", vol["name"])
 		cmRef := vol["configMap"].(map[string]any)
-		assert.Equal(t, ClawVertexADCConfigMapName, cmRef["name"])
+		assert.Equal(t, getVertexADCConfigMapName(testInstanceName), cmRef["name"])
 	})
 
 	t.Run("should be no-op when no vertex credentials exist", func(t *testing.T) {
@@ -116,7 +116,7 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForVertex(objects, toResolved(credentials)))
+		require.NoError(t, configureClawDeploymentForVertex(objects, toResolved(credentials), testInstanceName))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)

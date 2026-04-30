@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: claw-proxy
+  name: CLAW_INSTANCE_NAME-proxy
   labels:
     app: claw-proxy
 spec:
@@ -68,7 +68,7 @@ spec:
       volumes:
         - name: proxy-config
           configMap:
-            name: claw-proxy-config
+            name: CLAW_INSTANCE_NAME-proxy-config
         - name: proxy-ca
           secret:
-            secretName: claw-proxy-ca
+            secretName: CLAW_INSTANCE_NAME-proxy-ca

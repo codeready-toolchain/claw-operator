@@ -22,14 +22,12 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -43,7 +41,7 @@ import (
 func TestClawConfigMapController(t *testing.T) {
 
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create ConfigMap for Claw named 'instance'", func(t *testing.T) {
@@ -58,7 +56,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap)
 				return err == nil
@@ -77,7 +75,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap)
 				if err != nil {
@@ -106,7 +104,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -139,7 +137,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -153,6 +151,10 @@ func TestClawConfigMapController(t *testing.T) {
 			include, hasInclude := config["$include"]
 			require.True(t, hasInclude, "openclaw.json must contain $include directive")
 			assert.Equal(t, "./operator.json", include, "$include should reference operator.json")
+
+			gateway, hasGateway := config["gateway"].(map[string]any)
+			require.True(t, hasGateway, "openclaw.json seed must contain gateway section for config safety check")
+			assert.Equal(t, "local", gateway["mode"], "gateway.mode must be present to survive OpenClaw write-back")
 
 			agents, hasAgents := config["agents"].(map[string]any)
 			require.True(t, hasAgents, "openclaw.json seed should contain agents section")
@@ -177,7 +179,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -199,7 +201,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -224,7 +226,7 @@ func TestClawConfigMapController(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap) == nil
 			}, "ConfigMap should be created")
@@ -234,30 +236,27 @@ func TestClawConfigMapController(t *testing.T) {
 		})
 	})
 
-	t.Run("When reconciling an Claw with different name", func(t *testing.T) {
+	t.Run("When reconciling a Claw with different name", func(t *testing.T) {
 		const resourceName = "other-instance"
 		ctx := context.Background()
 
-		t.Run("should skip ConfigMap creation for non-matching names", func(t *testing.T) {
+		t.Run("should create ConfigMap for the named instance", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-				if err := deleteAndWait(&clawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
-					t.Fatalf("cleanup failed: %v", err)
-				}
+				deleteAndWaitAllResources(t, namespace, resourceName)
 			})
 
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
 
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-			time.Sleep(2 * time.Second)
 
 			configMap := &corev1.ConfigMap{}
-			err := k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawConfigMapName,
-				Namespace: namespace,
-			}, configMap)
-			require.Error(t, err, "ConfigMap should not have been created for non-instance Claw")
+			waitFor(t, timeout, interval, func() bool {
+				return k8sClient.Get(ctx, client.ObjectKey{
+					Name:      getConfigMapName(resourceName),
+					Namespace: namespace,
+				}, configMap) == nil
+			}, "ConfigMap should be created for the named instance")
 		})
 	})
 }
@@ -267,7 +266,7 @@ func TestClawConfigMapController(t *testing.T) {
 func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create PVC for Claw named 'instance'", func(t *testing.T) {
@@ -282,7 +281,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			pvc := &corev1.PersistentVolumeClaim{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawPVCName,
+					Name:      getPVCName(testInstanceName),
 					Namespace: namespace,
 				}, pvc)
 				return err == nil
@@ -301,7 +300,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 			pvc := &corev1.PersistentVolumeClaim{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawPVCName,
+					Name:      getPVCName(testInstanceName),
 					Namespace: namespace,
 				}, pvc)
 				if err != nil {
@@ -319,46 +318,27 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 		})
 	})
 
-	t.Run("When reconciling an Claw with different name", func(t *testing.T) {
+	t.Run("When reconciling a Claw with different name", func(t *testing.T) {
 		const resourceName = "other-instance"
 		ctx := context.Background()
 
-		t.Run("should skip PVC creation for non-matching names", func(t *testing.T) {
-			instance := &clawv1alpha1.Claw{}
-			err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawInstanceName, Namespace: namespace}, instance)
-			if err == nil {
-				_ = k8sClient.Delete(ctx, instance)
-			}
-
-			pvc := &corev1.PersistentVolumeClaim{}
-			err = k8sClient.Get(ctx, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}, pvc)
-			if err == nil {
-				pvc.Finalizers = []string{}
-				_ = k8sClient.Update(ctx, pvc)
-				_ = k8sClient.Delete(ctx, pvc)
-
-				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}, pvc)
-					return err != nil
-				}, "PVC should be deleted before test")
-			}
-
+		t.Run("should create PVC for the named instance", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-				if err := deleteAndWait(&clawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
-					t.Fatalf("cleanup failed: %v", err)
-				}
+				deleteAndWaitAllResources(t, namespace, resourceName)
 			})
 
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
 
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-			pvc = &corev1.PersistentVolumeClaim{}
+
+			pvc := &corev1.PersistentVolumeClaim{}
 			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: ClawPVCName, Namespace: namespace}, pvc)
-				return apierrors.IsNotFound(err)
-			}, "PVC should not have been created for non-instance Claw")
+				return k8sClient.Get(ctx, client.ObjectKey{
+					Name:      getPVCName(resourceName),
+					Namespace: namespace,
+				}, pvc) == nil
+			}, "PVC should be created for the named instance")
 		})
 	})
 }
@@ -368,7 +348,7 @@ func TestOpenClawPersistentVolumeClaimController(t *testing.T) {
 func TestOpenClawDeploymentController(t *testing.T) {
 
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create Deployment for Claw named 'instance'", func(t *testing.T) {
@@ -383,7 +363,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawDeploymentName,
+					Name:      getClawDeploymentName(testInstanceName),
 					Namespace: namespace,
 				}, deployment)
 				return err == nil
@@ -402,7 +382,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawDeploymentName,
+					Name:      getClawDeploymentName(testInstanceName),
 					Namespace: namespace,
 				}, deployment)
 				return err == nil
@@ -410,7 +390,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawDeploymentName,
+					Name:      getClawDeploymentName(testInstanceName),
 					Namespace: namespace,
 				}, deployment)
 				if err != nil {
@@ -440,7 +420,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			np := &netv1.NetworkPolicy{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawIngressNetworkPolicyName,
+					Name:      getIngressNetworkPolicyName(testInstanceName),
 					Namespace: namespace,
 				}, np)
 				return err == nil
@@ -455,30 +435,27 @@ func TestOpenClawDeploymentController(t *testing.T) {
 		})
 	})
 
-	t.Run("When reconciling an Claw with different name", func(t *testing.T) {
+	t.Run("When reconciling a Claw with different name", func(t *testing.T) {
 		const resourceName = "other-instance"
 		ctx := context.Background()
 
-		t.Run("should skip Deployment creation for non-matching names", func(t *testing.T) {
+		t.Run("should create Deployment for the named instance", func(t *testing.T) {
 			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-				if err := deleteAndWait(&clawv1alpha1.Claw{}, client.ObjectKey{Name: resourceName, Namespace: namespace}); err != nil {
-					t.Fatalf("cleanup failed: %v", err)
-				}
+				deleteAndWaitAllResources(t, namespace, resourceName)
 			})
 
 			createClawInstance(t, ctx, resourceName, namespace)
 			reconciler := createClawReconciler()
 
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-			time.Sleep(2 * time.Second)
 
 			deployment := &appsv1.Deployment{}
-			err := k8sClient.Get(ctx, client.ObjectKey{
-				Name:      ClawDeploymentName,
-				Namespace: namespace,
-			}, deployment)
-			require.Error(t, err, "Deployment should not have been created for non-instance Claw")
+			waitFor(t, timeout, interval, func() bool {
+				return k8sClient.Get(ctx, client.ObjectKey{
+					Name:      getClawDeploymentName(resourceName),
+					Namespace: namespace,
+				}, deployment) == nil
+			}, "Deployment should be created for the named instance")
 		})
 	})
 }
@@ -488,7 +465,7 @@ func TestOpenClawDeploymentController(t *testing.T) {
 func TestOpenClawGatewaySecretController(t *testing.T) {
 
 	t.Run("When reconciling an Claw named 'instance'", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create gateway Secret when Claw instance is reconciled", func(t *testing.T) {
@@ -503,7 +480,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				return err == nil
@@ -524,7 +501,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -551,7 +528,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				return err == nil && len(secret.Data[GatewayTokenKeyName]) > 0
@@ -563,7 +540,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret = &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -586,7 +563,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				return err == nil && len(secret.Data[GatewayTokenKeyName]) > 0
@@ -600,7 +577,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			newSecret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, newSecret)
 				if err != nil {
@@ -623,7 +600,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -654,7 +631,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			instance.Spec.Credentials = testCredentials()
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw")
 
-			gatewaySecret := createTestGatewaySecret(t, ClawGatewaySecretName, namespace)
+			gatewaySecret := createTestGatewaySecret(t, getGatewaySecretName(resourceName), namespace)
 			require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway Secret")
 			assert.Empty(t, gatewaySecret.OwnerReferences, "gateway Secret should not have owner references initially")
 
@@ -664,7 +641,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -693,7 +670,7 @@ func TestOpenClawGatewaySecretController(t *testing.T) {
 			secret := &corev1.Secret{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawGatewaySecretName,
+					Name:      getGatewaySecretName(testInstanceName),
 					Namespace: namespace,
 				}, secret)
 				if err != nil {
@@ -726,7 +703,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		t.Run("should replace OPENCLAW_ROUTE_HOST placeholder with Route host", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(ClawConfigMapName)
+			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
 				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
 			}
@@ -739,7 +716,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 				Scheme: scheme.Scheme,
 			}
 
-			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost)
+			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
 			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
 			operatorJSON, found, err := unstructured.NestedString(configMap.Object, "data", "operator.json")
@@ -752,7 +729,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		t.Run("should replace all occurrences of OPENCLAW_ROUTE_HOST placeholder", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(ClawConfigMapName)
+			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
 				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST","OPENCLAW_ROUTE_HOST"]}}}`,
 			}
@@ -765,7 +742,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 				Scheme: scheme.Scheme,
 			}
 
-			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost)
+			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
 			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
 			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
@@ -777,7 +754,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		t.Run("should use localhost fallback when routeHost is empty", func(t *testing.T) {
 			configMap := &unstructured.Unstructured{}
 			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(ClawConfigMapName)
+			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
 				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
 			}
@@ -790,7 +767,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 				Scheme: scheme.Scheme,
 			}
 
-			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost)
+			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
 			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
 			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
@@ -800,7 +777,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	})
 
 	t.Run("When reconciling with Route CRD not registered", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should create ConfigMap with localhost fallback when Route CRD not available", func(t *testing.T) {
@@ -857,7 +834,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			configMap := &corev1.ConfigMap{}
 			waitFor(t, timeout, interval, func() bool {
 				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      ClawConfigMapName,
+					Name:      getConfigMapName(testInstanceName),
 					Namespace: namespace,
 				}, configMap)
 				if err != nil {
@@ -873,7 +850,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	})
 
 	t.Run("Proxy deployment configuration", func(t *testing.T) {
-		const resourceName = ClawInstanceName
+		const resourceName = testInstanceName
 		ctx := context.Background()
 
 		t.Run("should build kustomized objects with proxy deployment", func(t *testing.T) {
@@ -887,12 +864,15 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			objects, err := reconciler.buildKustomizedObjects()
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			objects, err := reconciler.buildKustomizedObjects(instance)
 			require.NoError(t, err, "buildKustomizedObjects failed")
 
 			var proxyDeployment *unstructured.Unstructured
 			for _, obj := range objects {
-				if obj.GetKind() == DeploymentKind && obj.GetName() == ClawProxyDeploymentName {
+				if obj.GetKind() == DeploymentKind && obj.GetName() == getProxyDeploymentName(resourceName) {
 					proxyDeployment = obj
 					break
 				}
@@ -909,12 +889,15 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	t.Run("Init container config seeding", func(t *testing.T) {
 		t.Run("should always copy operator.json and conditionally seed user files", func(t *testing.T) {
 			reconciler := createClawReconciler()
-			objects, err := reconciler.buildKustomizedObjects()
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = testInstanceName
+			instance.Namespace = namespace
+			objects, err := reconciler.buildKustomizedObjects(instance)
 			require.NoError(t, err)
 
 			var deployment *unstructured.Unstructured
 			for _, obj := range objects {
-				if obj.GetKind() == DeploymentKind && obj.GetName() == ClawDeploymentName {
+				if obj.GetKind() == DeploymentKind && obj.GetName() == getClawDeploymentName(testInstanceName) {
 					deployment = obj
 					break
 				}

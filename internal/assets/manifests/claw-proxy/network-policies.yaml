@@ -3,7 +3,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: claw-egress
+  name: CLAW_INSTANCE_NAME-egress
   labels:
     app: claw
 spec:
@@ -43,7 +43,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: claw-proxy-egress
+  name: CLAW_INSTANCE_NAME-proxy-egress
   labels:
     app: claw-proxy
 spec:
