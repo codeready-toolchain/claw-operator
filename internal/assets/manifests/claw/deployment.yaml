@@ -146,13 +146,30 @@ spec:
               value: /etc/proxy-ca/ca.crt
             - name: GIT_SSL_CAINFO
               value: /etc/proxy-ca/ca.crt
+            # Rewrite all SSH URL forms to HTTPS — the slim image has no ssh
+            # binary, and some npm packages (e.g. @whiskeysockets/baileys →
+            # libsignal-node) declare git SSH dependencies that fail without it.
+            - name: GIT_CONFIG_COUNT
+              value: "3"
+            - name: GIT_CONFIG_KEY_0
+              value: url.https://github.com/.insteadOf
+            - name: GIT_CONFIG_VALUE_0
+              value: git+ssh://git@github.com/
+            - name: GIT_CONFIG_KEY_1
+              value: url.https://github.com/.insteadOf
+            - name: GIT_CONFIG_VALUE_1
+              value: ssh://git@github.com/
+            - name: GIT_CONFIG_KEY_2
+              value: url.https://github.com/.insteadOf
+            - name: GIT_CONFIG_VALUE_2
+              value: "git@github.com:"
           resources:
             requests:
-              memory: 512Mi
+              memory: 1Gi
               cpu: 250m
             limits:
-              memory: 2Gi
-              cpu: "1"
+              memory: 4Gi
+              cpu: "2"
           startupProbe:
             tcpSocket:
               port: 18789
