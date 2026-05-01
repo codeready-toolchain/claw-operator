@@ -252,21 +252,35 @@ wait-ready: ## Wait for the Claw instance to become ready and print the URL. Usa
 	@token_secret=$$($(KUBECTL) get claw $(CLAW) -n $(NS) -o jsonpath='{.status.gatewayTokenSecretRef}'); \
 	echo "Token: $$($(KUBECTL) get secret $$token_secret -n $(NS) -o jsonpath='{.data.token}' | base64 -d)"
 
+# Approve pairing by directly writing pending.json/paired.json on the PVC.
+# The CLI's gateway RPC path (device.pair.approve) requires the caller to hold
+# all scopes being granted — a delegation security model. When running via
+# kubectl exec, the shared gateway token creates a device-less connection whose
+# scopes are stripped, so the delegation check fails. This mirrors the CLI's own
+# local fallback (approvePairingWithFallback in devices-cli.ts).
+APPROVE_SCRIPT = var fs=require("fs"),crypto=require("crypto"),p=require("path"),dir=p.join(process.env.HOME||"/home/node",".openclaw","devices"),rid=process.env.APPROVE_RID,pf=p.join(dir,"pending.json"),af=p.join(dir,"paired.json"),pending=JSON.parse(fs.readFileSync(pf,"utf8")),e=pending[rid];if(!e){console.error("unknown requestId: "+rid);process.exit(1)}var paired;try{paired=JSON.parse(fs.readFileSync(af,"utf8"))}catch(err){if(err.code==="ENOENT"){paired={}}else{throw err}}var roles=e.roles&&e.roles.length?e.roles:e.role?[e.role]:["operator"],scopes=e.scopes||[],tokens=(paired[e.deviceId]||{}).tokens||{},now=Date.now();roles.forEach(function(r){tokens[r]={token:crypto.randomBytes(32).toString("base64url"),role:r,scopes:scopes,createdAtMs:now}});paired[e.deviceId]={deviceId:e.deviceId,publicKey:e.publicKey,displayName:e.displayName,platform:e.platform,deviceFamily:e.deviceFamily,clientId:e.clientId,clientMode:e.clientMode,role:e.role,roles:roles,scopes:scopes,approvedScopes:scopes,remoteIp:e.remoteIp,tokens:tokens,createdAtMs:(paired[e.deviceId]||{}).createdAtMs||now,approvedAtMs:now};delete pending[rid];fs.writeFileSync(af,JSON.stringify(paired,null,2));fs.writeFileSync(pf,JSON.stringify(pending,null,2));console.log("Approved device "+e.deviceId.substring(0,12)+"... for roles: "+roles.join(", "))
+LIST_SCRIPT = var fs=require("fs"),p=require("path"),dir=p.join(process.env.HOME||"/home/node",".openclaw","devices");try{var d=JSON.parse(fs.readFileSync(p.join(dir,"pending.json"),"utf8"));Object.values(d).sort(function(a,b){return(b.ts||0)-(a.ts||0)}).forEach(function(r){console.log(r.requestId+" "+(r.platform||"unknown")+" "+(r.clientMode||""))})}catch(_){}
+
 .PHONY: approve-pairing
 approve-pairing: ## Approve a device pairing request. Usage: make approve-pairing NS=... [CLAW=instance] [REQUEST_ID=...]
 	@if [ -n "$(REQUEST_ID)" ]; then \
-		$(KUBECTL) exec -n $(NS) deployment/$(CLAW) -- node /app/dist/index.js devices approve $(REQUEST_ID); \
+		$(KUBECTL) exec -n $(NS) deployment/$(CLAW) -c gateway -- \
+			env APPROVE_RID="$(REQUEST_ID)" node -e '$(APPROVE_SCRIPT)'; \
 	else \
-		output=$$($(KUBECTL) exec -n $(NS) deployment/$(CLAW) -- node /app/dist/index.js devices list 2>/dev/null); \
-		rid=$$(echo "$$output" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1); \
+		output=$$($(KUBECTL) exec -n $(NS) deployment/$(CLAW) -c gateway -- \
+			node -e '$(LIST_SCRIPT)' 2>/dev/null); \
+		rid=$$(echo "$$output" | head -1 | cut -d' ' -f1); \
 		if [ -z "$$rid" ]; then \
 			echo "No pending pairing requests found."; \
 			exit 1; \
 		fi; \
 		echo "Found pairing request: $$rid"; \
+		desc=$$(echo "$$output" | head -1 | cut -d' ' -f2-); \
+		if [ -n "$$desc" ]; then echo "  Device: $$desc"; fi; \
 		read -r -p "Approve? [y/N] " ans; \
 		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 0;; esac; \
-		$(KUBECTL) exec -n $(NS) deployment/$(CLAW) -- node /app/dist/index.js devices approve "$$rid"; \
+		$(KUBECTL) exec -n $(NS) deployment/$(CLAW) -c gateway -- \
+			env APPROVE_RID="$$rid" node -e '$(APPROVE_SCRIPT)'; \
 	fi
 
 .PHONY: dev-cleanup

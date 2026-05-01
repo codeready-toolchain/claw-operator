@@ -265,6 +265,11 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ Append port entries to claw-proxy-egress NetworkPolicy egress[0].ports[]
    └─ No-op when all ports are 443 or no kubernetes credentials present
   ↓
+7e. stampGatewayConfigHash(objects, instanceName)
+   ├─ Hash entire ConfigMap data (operator.json, openclaw.json, etc.)
+   ├─ Stamp SHA-256 hash as annotation on gateway pod template
+   └─ Triggers gateway pod rollout when ConfigMap content changes (e.g., after operator upgrade)
+  ↓
 8. Filter for remaining resources (kind != "Route")
   ↓
 9. Set namespace and owner references on remaining objects
@@ -322,6 +327,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `applyResources()` — applies list of unstructured objects using server-side apply
 - `configureProxyImage()` — overrides proxy Deployment container image if `ProxyImage` is set (from `PROXY_IMAGE` env var); no-op when empty (preserves embedded default for `make run`)
 - `configureProxyDeployment()` — modifies claw-proxy deployment manifest in-place to reference user's Secret BEFORE applying (ensures pod template changes trigger restarts when Secret reference changes)
+- `stampGatewayConfigHash()` — hashes gateway ConfigMap data and stamps it on the gateway pod template annotation to trigger rollouts when operator-managed config changes
 - `stampSecretVersionAnnotation()` — adds Secret ResourceVersion annotation to pod template BEFORE applying (ensures pod template changes trigger restarts when Secret data changes, not just reference)
 - `getDeploymentAvailableStatus()` — fetches Deployment and checks its Available condition
 - `checkDeploymentsReady()` — checks if both claw and claw-proxy Deployments are ready
