@@ -17,11 +17,14 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
@@ -125,7 +128,73 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 	})
 }
 
-// --- Gateway config hash stamping tests ---
+// --- Gateway config hash integration tests ---
+
+func TestGatewayConfigHashIntegration(t *testing.T) {
+	const resourceName = testInstanceName
+	ctx := context.Background()
+
+	t.Run("should stamp gateway config hash annotation on pod template", func(t *testing.T) {
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		createClawInstance(t, ctx, resourceName, namespace)
+		reconciler := createClawReconciler()
+
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			err := k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment)
+			return err == nil
+		}, "Deployment should be created")
+
+		hash, exists := deployment.Spec.Template.Annotations[clawv1alpha1.AnnotationKeyGatewayConfigHash]
+		assert.True(t, exists, "gateway-config-hash annotation should be present on pod template")
+		assert.Regexp(t, `^[0-9a-f]{64}$`, hash, "hash should be a 64-char hex SHA-256")
+	})
+
+	t.Run("should produce stable gateway config hash across reconciliations", func(t *testing.T) {
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		createClawInstance(t, ctx, resourceName, namespace)
+		reconciler := createClawReconciler()
+
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+		hash1, ok1 := deployment.Spec.Template.Annotations[clawv1alpha1.AnnotationKeyGatewayConfigHash]
+		require.True(t, ok1, "gateway-config-hash annotation must be present after first reconcile")
+		require.NotEmpty(t, hash1, "gateway-config-hash must not be empty after first reconcile")
+
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		err := k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getClawDeploymentName(testInstanceName),
+			Namespace: namespace,
+		}, deployment)
+		require.NoError(t, err)
+		hash2, ok2 := deployment.Spec.Template.Annotations[clawv1alpha1.AnnotationKeyGatewayConfigHash]
+		require.True(t, ok2, "gateway-config-hash annotation must be present after second reconcile")
+		require.NotEmpty(t, hash2, "gateway-config-hash must not be empty after second reconcile")
+
+		assert.Equal(t, hash1, hash2, "hash should be stable when config hasn't changed")
+	})
+}
+
+// --- Gateway config hash stamping unit tests ---
 
 func TestStampGatewayConfigHash(t *testing.T) {
 	makeObjects := func(operatorJSON string) []*unstructured.Unstructured {

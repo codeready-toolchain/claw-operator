@@ -407,61 +407,6 @@ func TestOpenClawDeploymentController(t *testing.T) {
 			}, "Deployment should have correct owner reference")
 		})
 
-		t.Run("should stamp gateway config hash annotation on pod template", func(t *testing.T) {
-			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-			})
-
-			createClawInstance(t, ctx, resourceName, namespace)
-			reconciler := createClawReconciler()
-
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			deployment := &appsv1.Deployment{}
-			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{
-					Name:      getClawDeploymentName(testInstanceName),
-					Namespace: namespace,
-				}, deployment)
-				return err == nil
-			}, "Deployment should be created")
-
-			hash, exists := deployment.Spec.Template.Annotations[clawv1alpha1.AnnotationKeyGatewayConfigHash]
-			assert.True(t, exists, "gateway-config-hash annotation should be present on pod template")
-			assert.Regexp(t, `^[0-9a-f]{64}$`, hash, "hash should be a 64-char hex SHA-256")
-		})
-
-		t.Run("should produce stable gateway config hash across reconciliations", func(t *testing.T) {
-			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-			})
-
-			createClawInstance(t, ctx, resourceName, namespace)
-			reconciler := createClawReconciler()
-
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			deployment := &appsv1.Deployment{}
-			waitFor(t, timeout, interval, func() bool {
-				return k8sClient.Get(ctx, client.ObjectKey{
-					Name:      getClawDeploymentName(testInstanceName),
-					Namespace: namespace,
-				}, deployment) == nil
-			}, "Deployment should be created")
-			hash1 := deployment.Spec.Template.Annotations[clawv1alpha1.AnnotationKeyGatewayConfigHash]
-
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			err := k8sClient.Get(ctx, client.ObjectKey{
-				Name:      getClawDeploymentName(testInstanceName),
-				Namespace: namespace,
-			}, deployment)
-			require.NoError(t, err)
-			hash2 := deployment.Spec.Template.Annotations[clawv1alpha1.AnnotationKeyGatewayConfigHash]
-
-			assert.Equal(t, hash1, hash2, "hash should be stable when config hasn't changed")
-		})
-
 		t.Run("should create ingress NetworkPolicy with correct owner reference", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
