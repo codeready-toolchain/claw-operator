@@ -472,6 +472,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
 	}
 
+	// Stamp gateway config hash to trigger rollout when ConfigMap content changes
+	if err := stampGatewayConfigHash(objects, instance.Name); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to stamp gateway config hash: %w", err)
+	}
+
 	// Filter out Route (applied in phase above) and proxy ConfigMap (controller-managed)
 	remainingObjects := []*unstructured.Unstructured{}
 	for _, obj := range objects {

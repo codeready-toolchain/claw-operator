@@ -124,3 +124,92 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 		assert.Len(t, envVars, 1, "should only have original HOME env var")
 	})
 }
+
+// --- Gateway config hash stamping tests ---
+
+func TestStampGatewayConfigHash(t *testing.T) {
+	makeObjects := func(operatorJSON string) []*unstructured.Unstructured {
+		cm := &unstructured.Unstructured{}
+		cm.SetKind(ConfigMapKind)
+		cm.SetName(getConfigMapName(testInstanceName))
+		cm.Object["data"] = map[string]any{
+			"operator.json": operatorJSON,
+			"openclaw.json": `{"$include":"./operator.json"}`,
+		}
+
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"metadata": map[string]any{},
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{"name": ClawGatewayContainerName},
+					},
+				},
+			},
+		}
+		return []*unstructured.Unstructured{cm, dep}
+	}
+
+	t.Run("should stamp hash annotation on gateway deployment", func(t *testing.T) {
+		objects := makeObjects(`{"gateway":{"auth":{"mode":"token","scopes":["operator.admin"]}}}`)
+		require.NoError(t, stampGatewayConfigHash(objects, testInstanceName))
+
+		annotations, _, _ := unstructured.NestedStringMap(objects[1].Object, "spec", "template", "metadata", "annotations")
+		hash, exists := annotations[clawv1alpha1.AnnotationKeyGatewayConfigHash]
+		assert.True(t, exists, "gateway-config-hash annotation should exist")
+		assert.Len(t, hash, 64, "hash should be a 64-char hex SHA-256")
+	})
+
+	t.Run("should produce different hashes for different config content", func(t *testing.T) {
+		objects1 := makeObjects(`{"gateway":{"auth":{"mode":"token"}}}`)
+		require.NoError(t, stampGatewayConfigHash(objects1, testInstanceName))
+
+		objects2 := makeObjects(`{"gateway":{"auth":{"mode":"token","scopes":["operator.admin"]}}}`)
+		require.NoError(t, stampGatewayConfigHash(objects2, testInstanceName))
+
+		ann1, _, _ := unstructured.NestedStringMap(objects1[1].Object, "spec", "template", "metadata", "annotations")
+		ann2, _, _ := unstructured.NestedStringMap(objects2[1].Object, "spec", "template", "metadata", "annotations")
+		assert.NotEqual(t, ann1[clawv1alpha1.AnnotationKeyGatewayConfigHash],
+			ann2[clawv1alpha1.AnnotationKeyGatewayConfigHash],
+			"different config should produce different hashes")
+	})
+
+	t.Run("should produce identical hashes for identical content", func(t *testing.T) {
+		config := `{"gateway":{"port":18789}}`
+		objects1 := makeObjects(config)
+		require.NoError(t, stampGatewayConfigHash(objects1, testInstanceName))
+
+		objects2 := makeObjects(config)
+		require.NoError(t, stampGatewayConfigHash(objects2, testInstanceName))
+
+		ann1, _, _ := unstructured.NestedStringMap(objects1[1].Object, "spec", "template", "metadata", "annotations")
+		ann2, _, _ := unstructured.NestedStringMap(objects2[1].Object, "spec", "template", "metadata", "annotations")
+		assert.Equal(t, ann1[clawv1alpha1.AnnotationKeyGatewayConfigHash],
+			ann2[clawv1alpha1.AnnotationKeyGatewayConfigHash],
+			"identical config should produce identical hashes")
+	})
+
+	t.Run("should return error when ConfigMap is missing", func(t *testing.T) {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+
+		err := stampGatewayConfigHash([]*unstructured.Unstructured{dep}, testInstanceName)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found in manifests")
+	})
+
+	t.Run("should return error when gateway deployment is missing", func(t *testing.T) {
+		cm := &unstructured.Unstructured{}
+		cm.SetKind(ConfigMapKind)
+		cm.SetName(getConfigMapName(testInstanceName))
+		cm.Object["data"] = map[string]any{"operator.json": "{}"}
+
+		err := stampGatewayConfigHash([]*unstructured.Unstructured{cm}, testInstanceName)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found for config hash stamping")
+	})
+}

@@ -12,8 +12,7 @@ data:
         "bind": "lan",
         "port": 18789,
         "auth": {
-          "mode": "token",
-          "scopes": ["operator.admin"]
+          "mode": "token"
         },
         "controlUi": {
           "enabled": true,

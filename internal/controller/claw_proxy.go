@@ -22,6 +22,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -819,6 +820,62 @@ func stampProxyConfigHash(objects []*unstructured.Unstructured, instance *clawv1
 		return nil
 	}
 	return fmt.Errorf("claw-proxy deployment not found for config hash stamping")
+}
+
+// stampGatewayConfigHash computes a SHA-256 hash of the gateway ConfigMap data and
+// stamps it on the gateway pod template. This triggers a rollout when operator.json
+// or other operator-managed config files change (e.g., after an operator upgrade).
+func stampGatewayConfigHash(objects []*unstructured.Unstructured, instanceName string) error {
+	configMapName := getConfigMapName(instanceName)
+	var configData map[string]any
+	for _, obj := range objects {
+		if obj.GetKind() == ConfigMapKind && obj.GetName() == configMapName {
+			var found bool
+			var err error
+			configData, found, err = unstructured.NestedMap(obj.Object, "data")
+			if err != nil {
+				return fmt.Errorf("failed to extract data from ConfigMap %s: %w", configMapName, err)
+			}
+			if !found {
+				return fmt.Errorf("data not found in ConfigMap %s", configMapName)
+			}
+			break
+		}
+	}
+	if configData == nil {
+		return fmt.Errorf("ConfigMap %s not found in manifests", configMapName)
+	}
+
+	keys := make([]string, 0, len(configData))
+	for k := range configData {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	h := sha256.New()
+	for _, k := range keys {
+		_, _ = fmt.Fprintf(h, "%s=%v\n", k, configData[k])
+	}
+	hash := fmt.Sprintf("%x", h.Sum(nil))
+
+	gatewayName := getClawDeploymentName(instanceName)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		annotations, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations[clawv1alpha1.AnnotationKeyGatewayConfigHash] = hash
+
+		if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
+			return fmt.Errorf("failed to set gateway config hash annotation: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("gateway deployment %s not found for config hash stamping", gatewayName)
 }
 
 // stampSecretVersionAnnotation fetches each credential's referenced Secret and stamps
