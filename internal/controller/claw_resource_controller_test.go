@@ -92,7 +92,7 @@ func TestClawConfigMapController(t *testing.T) {
 			}, "ConfigMap should have correct owner reference")
 		})
 
-		t.Run("should have operator.json with gateway config and providers", func(t *testing.T) {
+		t.Run("should have operator-gateway.json and operator-models.json", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -109,23 +109,29 @@ func TestClawConfigMapController(t *testing.T) {
 				}, configMap) == nil
 			}, "ConfigMap should be created")
 
-			operatorJSON, ok := configMap.Data["operator.json"]
-			require.True(t, ok, "operator.json key must exist")
+			gatewayJSON, ok := configMap.Data["operator-gateway.json"]
+			require.True(t, ok, "operator-gateway.json key must exist")
 
-			var config map[string]any
-			require.NoError(t, json.Unmarshal([]byte(operatorJSON), &config))
+			var gatewayConfig map[string]any
+			require.NoError(t, json.Unmarshal([]byte(gatewayJSON), &gatewayConfig))
 
-			_, hasGateway := config["gateway"]
-			assert.True(t, hasGateway, "operator.json should contain gateway section")
+			_, hasAuth := gatewayConfig["auth"]
+			assert.True(t, hasAuth, "operator-gateway.json should contain auth section")
 
-			_, hasModels := config["models"]
-			assert.True(t, hasModels, "operator.json should contain models section")
+			_, hasControlUi := gatewayConfig["controlUi"]
+			assert.True(t, hasControlUi, "operator-gateway.json should contain controlUi section")
 
-			_, hasAgents := config["agents"]
-			assert.False(t, hasAgents, "operator.json must not contain agents section (user-owned)")
+			modelsJSON, ok := configMap.Data["operator-models.json"]
+			require.True(t, ok, "operator-models.json key must exist")
+
+			var modelsConfig map[string]any
+			require.NoError(t, json.Unmarshal([]byte(modelsJSON), &modelsConfig))
+
+			_, hasProviders := modelsConfig["providers"]
+			assert.True(t, hasProviders, "operator-models.json should contain providers section")
 		})
 
-		t.Run("should have openclaw.json seed with $include directive", func(t *testing.T) {
+		t.Run("should have openclaw.json seed with nested $include directives", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -148,13 +154,17 @@ func TestClawConfigMapController(t *testing.T) {
 			var config map[string]any
 			require.NoError(t, json.Unmarshal([]byte(openclawJSON), &config))
 
-			include, hasInclude := config["$include"]
-			require.True(t, hasInclude, "openclaw.json must contain $include directive")
-			assert.Equal(t, "./operator.json", include, "$include should reference operator.json")
+			_, hasRootInclude := config["$include"]
+			assert.False(t, hasRootInclude, "openclaw.json must NOT have root-level $include (blocks config writes)")
 
 			gateway, hasGateway := config["gateway"].(map[string]any)
-			require.True(t, hasGateway, "openclaw.json seed must contain gateway section for config safety check")
+			require.True(t, hasGateway, "openclaw.json seed must contain gateway section")
+			assert.Equal(t, "./operator-gateway.json", gateway["$include"], "$include should reference operator-gateway.json")
 			assert.Equal(t, "local", gateway["mode"], "gateway.mode must be present to survive OpenClaw write-back")
+
+			models, hasModels := config["models"].(map[string]any)
+			require.True(t, hasModels, "openclaw.json seed must contain models section")
+			assert.Equal(t, "./operator-models.json", models["$include"], "$include should reference operator-models.json")
 
 			agents, hasAgents := config["agents"].(map[string]any)
 			require.True(t, hasAgents, "openclaw.json seed should contain agents section")
@@ -705,7 +715,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			configMap.SetKind(ConfigMapKind)
 			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
-				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
+				"operator-gateway.json": `{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}`,
 			}
 
 			objects := []*unstructured.Unstructured{configMap}
@@ -719,11 +729,11 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
 			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
-			operatorJSON, found, err := unstructured.NestedString(configMap.Object, "data", "operator.json")
-			require.NoError(t, err, "failed to get operator.json")
-			assert.True(t, found, "operator.json not found in ConfigMap data")
-			assert.Contains(t, operatorJSON, routeHost)
-			assert.NotContains(t, operatorJSON, "OPENCLAW_ROUTE_HOST")
+			gatewayJSON, found, err := unstructured.NestedString(configMap.Object, "data", "operator-gateway.json")
+			require.NoError(t, err, "failed to get operator-gateway.json")
+			assert.True(t, found, "operator-gateway.json not found in ConfigMap data")
+			assert.Contains(t, gatewayJSON, routeHost)
+			assert.NotContains(t, gatewayJSON, "OPENCLAW_ROUTE_HOST")
 		})
 
 		t.Run("should replace all occurrences of OPENCLAW_ROUTE_HOST placeholder", func(t *testing.T) {
@@ -731,7 +741,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			configMap.SetKind(ConfigMapKind)
 			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
-				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST","OPENCLAW_ROUTE_HOST"]}}}`,
+				"operator-gateway.json": `{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST","OPENCLAW_ROUTE_HOST"]}}`,
 			}
 
 			objects := []*unstructured.Unstructured{configMap}
@@ -745,10 +755,10 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
 			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
-			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
-			hostCount := strings.Count(operatorJSON, routeHost)
+			gatewayJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator-gateway.json")
+			hostCount := strings.Count(gatewayJSON, routeHost)
 			assert.Equal(t, 2, hostCount, "expected 2 occurrences of routeHost")
-			assert.NotContains(t, operatorJSON, "OPENCLAW_ROUTE_HOST")
+			assert.NotContains(t, gatewayJSON, "OPENCLAW_ROUTE_HOST")
 		})
 
 		t.Run("should use localhost fallback when routeHost is empty", func(t *testing.T) {
@@ -756,7 +766,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			configMap.SetKind(ConfigMapKind)
 			configMap.SetName(getConfigMapName(testInstanceName))
 			configMap.Object["data"] = map[string]any{
-				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
+				"operator-gateway.json": `{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}`,
 			}
 
 			objects := []*unstructured.Unstructured{configMap}
@@ -770,9 +780,9 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
 			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
 
-			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
-			assert.Contains(t, operatorJSON, "http://localhost:18789")
-			assert.NotContains(t, operatorJSON, "OPENCLAW_ROUTE_HOST")
+			gatewayJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator-gateway.json")
+			assert.Contains(t, gatewayJSON, "http://localhost:18789")
+			assert.NotContains(t, gatewayJSON, "OPENCLAW_ROUTE_HOST")
 		})
 	})
 
@@ -840,12 +850,12 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 				if err != nil {
 					return false
 				}
-				operatorJSON, ok := configMap.Data["operator.json"]
+				gatewayJSON, ok := configMap.Data["operator-gateway.json"]
 				if !ok {
 					return false
 				}
-				return strings.Contains(operatorJSON, "http://localhost:18789")
-			}, "ConfigMap should contain localhost fallback in operator.json")
+				return strings.Contains(gatewayJSON, "http://localhost:18789")
+			}, "ConfigMap should contain localhost fallback in operator-gateway.json")
 		})
 	})
 
@@ -887,7 +897,7 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	})
 
 	t.Run("Init container config seeding", func(t *testing.T) {
-		t.Run("should always copy operator.json and conditionally seed user files", func(t *testing.T) {
+		t.Run("should always copy operator config files and conditionally seed user files", func(t *testing.T) {
 			reconciler := createClawReconciler()
 			instance := &clawv1alpha1.Claw{}
 			instance.Name = testInstanceName
@@ -920,8 +930,10 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			}
 			require.NotEmpty(t, initConfigScript, "init-config container should exist")
 
-			assert.Contains(t, initConfigScript, "cp /config/operator.json /home/node/.openclaw/operator.json",
-				"operator.json should always be copied unconditionally")
+			assert.Contains(t, initConfigScript, "cp /config/operator-gateway.json /home/node/.openclaw/operator-gateway.json",
+				"operator-gateway.json should always be copied unconditionally")
+			assert.Contains(t, initConfigScript, "cp /config/operator-models.json /home/node/.openclaw/operator-models.json",
+				"operator-models.json should always be copied unconditionally")
 			assert.Contains(t, initConfigScript, "[ -f /home/node/.openclaw/openclaw.json ] || cp",
 				"openclaw.json should only be seeded if missing")
 			assert.Contains(t, initConfigScript, "[ -f /home/node/.openclaw/workspace/AGENTS.md ] || cp",

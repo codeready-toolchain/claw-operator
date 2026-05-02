@@ -201,14 +201,14 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 		cm.SetKind(ConfigMapKind)
 		cm.SetName(getConfigMapName(testInstanceName))
 		cm.Object["data"] = map[string]any{
-			"operator.json": jsonContent,
+			"operator-models.json": jsonContent,
 		}
 		return []*unstructured.Unstructured{cm}
 	}
 
 	getConfig := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
 		t.Helper()
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator-models.json")
 		require.NoError(t, err)
 		var config map[string]any
 		require.NoError(t, json.Unmarshal([]byte(raw), &config))
@@ -217,12 +217,11 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 
 	getProviders := func(t *testing.T, config map[string]any) map[string]any {
 		t.Helper()
-		models := config["models"].(map[string]any)
-		return models["providers"].(map[string]any)
+		return config["providers"].(map[string]any)
 	}
 
 	t.Run("should map GCP anthropic to anthropic-vertex provider key", func(t *testing.T) {
-		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		objects := makeConfigMap(`{"providers":{}}`)
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "anthropic-vertex",
@@ -251,7 +250,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 	})
 
 	t.Run("should use plain hostname for global location", func(t *testing.T) {
-		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		objects := makeConfigMap(`{"providers":{}}`)
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "anthropic-vertex",
@@ -274,7 +273,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 	})
 
 	t.Run("should set maxTokens and no api for non-anthropic vertex provider", func(t *testing.T) {
-		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		objects := makeConfigMap(`{"providers":{}}`)
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "meta-vertex",
@@ -302,7 +301,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 	})
 
 	t.Run("should reject duplicate vertex providers", func(t *testing.T) {
-		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		objects := makeConfigMap(`{"providers":{}}`)
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "claude-vertex-1", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",

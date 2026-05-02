@@ -23,7 +23,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
   - `gcp` (GCPConfig, optional): Required when type is `gcp`. Fields: `project` (GCP project ID, minLength=1), `location` (GCP region, minLength=1)
   - `pathToken` (PathTokenConfig, optional): Required when type is `pathToken`. Fields: `prefix` (URL path prefix, minLength=1)
   - `oauth2` (OAuth2Config, optional): Required when type is `oauth2`. Fields: `clientID` (minLength=1), `tokenURL` (minLength=1), `scopes` ([]string, optional)
-  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `operator.json` (included by the user-owned `openclaw.json` via `$include`). When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
+  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `operator-models.json` (included by the user-owned `openclaw.json` via nested `$include` in the `models` subtree). When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
   - `allowedPaths` ([]string, optional): Restricts which URL paths the proxy permits for this domain. Each entry is a path prefix (e.g., "/v1/api/"). If empty, all paths are allowed. Used by builtin passthrough domains (e.g., `raw.githubusercontent.com` is restricted to `/BerriAI/litellm/` and `/WhiskeySockets/Baileys/`) and available for user-defined credentials.
 
 **Status Fields:**
@@ -142,12 +142,13 @@ The operator uses a **single unified controller** that manages all resources usi
 The `claw-config` ConfigMap uses a **split config** approach to preserve user and application changes across reconciles:
 
 **Operator-managed files** (always overwritten on PVC by init container):
-- `operator.json` — Gateway settings, CORS origins, providers, proxy config. Rewritten every reconcile.
+- `operator-gateway.json` — Gateway settings (port, auth, CORS origins, trusted proxies). Rewritten every reconcile.
+- `operator-models.json` — Model providers configuration. Rewritten every reconcile.
 - `PROXY_SETUP.md` — Proxy architecture skill file (always present). Explains the proxy security model and how to configure access to external services (WhatsApp, custom domains). Init container copies to `skills/proxy/SKILL.md` for OpenClaw auto-discovery.
 - `KUBERNETES.md` — Kubernetes skill file (only when k8s credentials present). Always overwritten. Init container copies to `skills/kubernetes/SKILL.md` for OpenClaw auto-discovery.
 
 **User-owned files** (seeded once, then owned by user/OpenClaw):
-- `openclaw.json` — Contains `"$include": "./operator.json"` plus agent defaults (model aliases, primary model, agent list). Seeded only if file doesn't exist on PVC. User and OpenClaw Control UI changes survive pod restarts.
+- `openclaw.json` — Uses nested `$include` directives (`gateway.$include: ./operator-gateway.json`, `models.$include: ./operator-models.json`) plus agent defaults (model aliases, primary model, agent list), cron settings. Seeded only if file doesn't exist on PVC. User and OpenClaw Control UI changes survive pod restarts. The `$include` directives are at subtree level (not root), which allows OpenClaw's config write-back (plugin installs, UI changes) to modify sibling paths like `plugins.installs` without triggering the include-flatten protection.
 - `AGENTS.md` — System prompt. Seeded only if file doesn't exist on PVC.
 
 OpenClaw's `$include` mechanism deep-merges the included file with sibling keys at config load time. Sibling keys (user's root file) win over included values for primitives, objects merge recursively, arrays concatenate. The write-back logic avoids pulling included values into the root file on save.
@@ -242,7 +243,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
   ↓
 7. injectRouteHostIntoConfigMap(objects, routeHost)
    ├─ Find claw-config ConfigMap in objects
-   ├─ Extract data["operator.json"] string
+   ├─ Extract data["operator-gateway.json"] string
    ├─ Replace "OPENCLAW_ROUTE_HOST" placeholder with routeHost (https://...)
    ├─ If routeHost is empty (vanilla Kubernetes): use "http://localhost:18789" fallback
    └─ Set modified JSON back into ConfigMap
@@ -251,7 +252,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ Filter credentials with Provider set
    ├─ For gateway-routed providers: resolveProviderInfo(cred) → upstream + basePath as baseUrl (MITM proxy injects credentials transparently)
    ├─ For Vertex SDK providers (GCP + non-Google, e.g., anthropic): map to "{provider}-vertex" key with real Vertex AI URL, api mapping, and "gcp-vertex-credentials" apiKey
-   ├─ Write providers into data["operator.json"] (agent defaults are user-owned in openclaw.json seed)
+   ├─ Write providers into data["operator-models.json"] (agent defaults are user-owned in openclaw.json seed)
    └─ Credentials without Provider are MITM-only (no provider entry)
   ↓
 7c. injectKubernetesSkill(objects, resolvedCreds)
@@ -266,7 +267,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    └─ No-op when all ports are 443 or no kubernetes credentials present
   ↓
 7e. stampGatewayConfigHash(objects, instanceName)
-   ├─ Hash entire ConfigMap data (operator.json, openclaw.json, etc.)
+   ├─ Hash entire ConfigMap data (operator-gateway.json, operator-models.json, openclaw.json, etc.)
    ├─ Stamp SHA-256 hash as annotation on gateway pod template
    └─ Triggers gateway pod rollout when ConfigMap content changes (e.g., after operator upgrade)
   ↓
@@ -307,8 +308,8 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `applyRouteOnly()` — applies only Route resource from Kustomize manifests (Phase 2)
 - `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
-- `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in `operator.json` with Route host (or localhost fallback)
-- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `operator.json`. Provider baseUrl points to real upstream URLs (e.g., `https://generativelanguage.googleapis.com/v1beta`); the MITM proxy injects credentials transparently via HTTP_PROXY. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL. Does not touch agent defaults (user-owned in openclaw.json seed)
+- `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in `operator-gateway.json` with Route host (or localhost fallback)
+- `injectProvidersIntoConfigMap()` — dynamically builds `providers` in `operator-models.json`. Provider baseUrl points to real upstream URLs (e.g., `https://generativelanguage.googleapis.com/v1beta`); the MITM proxy injects credentials transparently via HTTP_PROXY. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL. Does not touch agent defaults (user-owned in openclaw.json seed)
 - `resolveAndApplyCredentials()` — orchestrates credential resolution: resolves provider defaults, validates credentials (returning `[]resolvedCredential`), applies sanitized kubeconfig ConfigMap for kubernetes credentials, and applies proxy CA
 - `resolveCredentials()` — validates all credentials and referenced Secrets. For `kubernetes` type, parses kubeconfig with `client-go/tools/clientcmd`, validates token-only auth, extracts cluster/context metadata. Returns `[]resolvedCredential` (replaces former `validateCredentials`)
 - `parseAndValidateKubeconfig()` — parses kubeconfig bytes, validates all users use token-based auth (rejects client certs, exec, auth provider), validates unique token per server `hostname:port`, returns `kubeconfigData`
@@ -368,7 +369,7 @@ var ManifestsFS embed.FS
 
 The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
-- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, PROXY_SETUP.md for proxy architecture skill, KUBERNETES.md for k8s skill)
+- **configmap.yaml** — OpenClaw configuration (operator-gateway.json and operator-models.json for operator-managed settings, openclaw.json as user-owned seed with nested `$include` directives, AGENTS.md seed, PROXY_SETUP.md for proxy architecture skill, KUBERNETES.md for k8s skill)
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
 - **deployment.yaml** — OpenClaw application pods (init containers with readOnlyRootFilesystem, gateway without; PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` for persistent tool state; `wait-for-proxy` init container ensures proxy is ready before gateway starts; `OPENCLAW_PROXY_ACTIVE=1` env var enables native managed proxy support)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)

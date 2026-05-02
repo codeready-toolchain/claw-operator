@@ -765,21 +765,20 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		cm.SetKind(ConfigMapKind)
 		cm.SetName(getConfigMapName(testInstanceName))
 		cm.Object["data"] = map[string]any{
-			"operator.json": jsonContent,
+			"operator-models.json": jsonContent,
 		}
 		return []*unstructured.Unstructured{cm}
 	}
 
-	baseJSON := `{"models":{"providers":{}},"gateway":{"port":18789}}`
+	baseJSON := `{"providers":{}}`
 
 	getProviders := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
 		t.Helper()
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator-models.json")
 		require.NoError(t, err)
 		var config map[string]any
 		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-		models := config["models"].(map[string]any)
-		return models["providers"].(map[string]any)
+		return config["providers"].(map[string]any)
 	}
 
 	t.Run("should inject google provider with correct baseUrl", func(t *testing.T) {
@@ -867,16 +866,16 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 		assert.Equal(t, "https://europe-west1-aiplatform.googleapis.com/v1/projects/my-proj/locations/europe-west1/publishers/google", google["baseUrl"])
 	})
 
-	t.Run("should preserve other config sections", func(t *testing.T) {
+	t.Run("should preserve providers key structure after injection", func(t *testing.T) {
 		objects := makeConfigMap(baseJSON)
 		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(nil)))
 
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator-models.json")
 		require.NoError(t, err)
 		var config map[string]any
 		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-		gateway := config["gateway"].(map[string]any)
-		assert.Equal(t, float64(18789), gateway["port"])
+		_, hasProviders := config["providers"]
+		assert.True(t, hasProviders, "providers key should exist after injection")
 	})
 
 	t.Run("should skip pathToken credentials even with provider set", func(t *testing.T) {
@@ -1018,15 +1017,13 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 			}, cm) == nil
 		}, "ConfigMap should be created")
 
-		operatorJSON, ok := cm.Data["operator.json"]
-		require.True(t, ok, "operator.json should exist")
+		modelsJSON, ok := cm.Data["operator-models.json"]
+		require.True(t, ok, "operator-models.json should exist")
 
 		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(operatorJSON), &config))
+		require.NoError(t, json.Unmarshal([]byte(modelsJSON), &config))
 
-		models, ok := config["models"].(map[string]any)
-		require.True(t, ok, "models section should exist")
-		providers, ok := models["providers"].(map[string]any)
+		providers, ok := config["providers"].(map[string]any)
 		require.True(t, ok, "providers section should exist")
 		require.Contains(t, providers, "google", "google provider should be injected")
 
@@ -1063,10 +1060,9 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		}, "ConfigMap should be created")
 
 		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator-models.json"]), &config))
 
-		models := config["models"].(map[string]any)
-		providers := models["providers"].(map[string]any)
+		providers := config["providers"].(map[string]any)
 		assert.Empty(t, providers, "providers should be empty when no credentials have provider set")
 	})
 
@@ -1085,10 +1081,9 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		}, "ConfigMap should be created")
 
 		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator-models.json"]), &config))
 
-		models := config["models"].(map[string]any)
-		providers := models["providers"].(map[string]any)
+		providers := config["providers"].(map[string]any)
 		assert.Empty(t, providers, "providers should be empty for MITM-only credentials")
 	})
 }

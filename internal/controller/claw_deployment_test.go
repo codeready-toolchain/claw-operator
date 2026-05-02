@@ -202,8 +202,8 @@ func TestStampGatewayConfigHash(t *testing.T) {
 		cm.SetKind(ConfigMapKind)
 		cm.SetName(getConfigMapName(testInstanceName))
 		cm.Object["data"] = map[string]any{
-			"operator.json": operatorJSON,
-			"openclaw.json": `{"$include":"./operator.json"}`,
+			"operator-gateway.json": operatorJSON,
+			"openclaw.json":         `{"gateway":{"$include":"./operator-gateway.json"}}`,
 		}
 
 		dep := &unstructured.Unstructured{}
@@ -275,7 +275,7 @@ func TestStampGatewayConfigHash(t *testing.T) {
 		cm := &unstructured.Unstructured{}
 		cm.SetKind(ConfigMapKind)
 		cm.SetName(getConfigMapName(testInstanceName))
-		cm.Object["data"] = map[string]any{"operator.json": "{}"}
+		cm.Object["data"] = map[string]any{"operator-gateway.json": "{}"}
 
 		err := stampGatewayConfigHash([]*unstructured.Unstructured{cm}, testInstanceName)
 		assert.Error(t, err)

@@ -755,7 +755,7 @@ func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*
 	return r.applyResources(ctx, routeObjects)
 }
 
-// injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator.json with actual Route host.
+// injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator-gateway.json with actual Route host.
 // If routeHost is empty (vanilla Kubernetes), uses localhost fallback.
 func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstructured.Unstructured, routeHost, instanceName string) error {
 	replacement := routeHost
@@ -766,18 +766,18 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 	configMapName := getConfigMapName(instanceName)
 	for _, obj := range objects {
 		if obj.GetKind() == ConfigMapKind && obj.GetName() == configMapName {
-			operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
+			gatewayJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator-gateway.json")
 			if err != nil {
-				return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
+				return fmt.Errorf("failed to extract operator-gateway.json from ConfigMap: %w", err)
 			}
 			if !found {
-				return fmt.Errorf("operator.json not found in ConfigMap data")
+				return fmt.Errorf("operator-gateway.json not found in ConfigMap data")
 			}
 
-			updatedJSON := strings.ReplaceAll(operatorJSON, "OPENCLAW_ROUTE_HOST", replacement)
+			updatedJSON := strings.ReplaceAll(gatewayJSON, "OPENCLAW_ROUTE_HOST", replacement)
 
-			if err := unstructured.SetNestedField(obj.Object, updatedJSON, "data", "operator.json"); err != nil {
-				return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
+			if err := unstructured.SetNestedField(obj.Object, updatedJSON, "data", "operator-gateway.json"); err != nil {
+				return fmt.Errorf("failed to set updated operator-gateway.json in ConfigMap: %w", err)
 			}
 
 			return nil
@@ -787,7 +787,7 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 }
 
-// injectProvidersIntoConfigMap dynamically builds the models.providers section of operator.json
+// injectProvidersIntoConfigMap dynamically builds the providers section of operator-models.json
 // from credentials that have Provider set. Gateway-routed providers get a baseUrl pointing to
 // the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since traffic
 // flows through the MITM proxy which injects GCP credentials transparently.
@@ -839,33 +839,28 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance
 			continue
 		}
 
-		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
+		modelsJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator-models.json")
 		if err != nil {
-			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
+			return fmt.Errorf("failed to extract operator-models.json from ConfigMap: %w", err)
 		}
 		if !found {
-			return fmt.Errorf("operator.json not found in ConfigMap data")
+			return fmt.Errorf("operator-models.json not found in ConfigMap data")
 		}
 
 		var config map[string]any
-		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse operator.json: %w", err)
+		if err := json.Unmarshal([]byte(modelsJSON), &config); err != nil {
+			return fmt.Errorf("failed to parse operator-models.json: %w", err)
 		}
 
-		models, _ := config["models"].(map[string]any)
-		if models == nil {
-			models = map[string]any{}
-			config["models"] = models
-		}
-		models["providers"] = providers
+		config["providers"] = providers
 
 		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 		if err != nil {
-			return fmt.Errorf("failed to marshal operator.json: %w", err)
+			return fmt.Errorf("failed to marshal operator-models.json: %w", err)
 		}
 
-		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
-			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
+		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator-models.json"); err != nil {
+			return fmt.Errorf("failed to set updated operator-models.json in ConfigMap: %w", err)
 		}
 		return nil
 	}

@@ -823,8 +823,8 @@ func stampProxyConfigHash(objects []*unstructured.Unstructured, instance *clawv1
 }
 
 // stampGatewayConfigHash computes a SHA-256 hash of the gateway ConfigMap data and
-// stamps it on the gateway pod template. This triggers a rollout when operator.json
-// or other operator-managed config files change (e.g., after an operator upgrade).
+// stamps it on the gateway pod template. This triggers a rollout when operator-managed
+// config files change (e.g., after an operator upgrade).
 func stampGatewayConfigHash(objects []*unstructured.Unstructured, instanceName string) error {
 	configMapName := getConfigMapName(instanceName)
 	var configData map[string]any

@@ -34,7 +34,8 @@ spec:
             - sh
             - -c
             - |
-              cp /config/operator.json /home/node/.openclaw/operator.json
+              cp /config/operator-gateway.json /home/node/.openclaw/operator-gateway.json
+              cp /config/operator-models.json /home/node/.openclaw/operator-models.json
               mkdir -p /home/node/.openclaw/workspace /home/node/.openclaw/.local /home/node/.openclaw/.cache /home/node/.openclaw/.config/codex
               [ -f /home/node/.openclaw/openclaw.json ] || cp /config/openclaw.json /home/node/.openclaw/openclaw.json
               [ -f /home/node/.openclaw/workspace/AGENTS.md ] || cp /config/AGENTS.md /home/node/.openclaw/workspace/AGENTS.md

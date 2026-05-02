@@ -5,32 +5,34 @@ metadata:
   labels:
     app: claw
 data:
-  operator.json: |
+  operator-gateway.json: |
     {
-      "gateway": {
-        "mode": "local",
-        "bind": "lan",
-        "port": 18789,
-        "auth": {
-          "mode": "token"
-        },
-        "controlUi": {
-          "enabled": true,
-          "allowedOrigins": ["OPENCLAW_ROUTE_HOST"]
-        },
-        "trustedProxies": ["10.0.0.0/8", "172.16.0.0/12"]
+      "mode": "local",
+      "bind": "lan",
+      "port": 18789,
+      "auth": {
+        "mode": "token"
       },
-      "models": {
-        "providers": {}
+      "controlUi": {
+        "enabled": true,
+        "allowedOrigins": ["OPENCLAW_ROUTE_HOST"]
       },
-      "cron": { "enabled": false }
+      "trustedProxies": ["10.0.0.0/8", "172.16.0.0/12"]
+    }
+  operator-models.json: |
+    {
+      "providers": {}
     }
   openclaw.json: |
     {
-      "$include": "./operator.json",
       "gateway": {
+        "$include": "./operator-gateway.json",
         "mode": "local"
       },
+      "models": {
+        "$include": "./operator-models.json"
+      },
+      "cron": { "enabled": false },
       "agents": {
         "defaults": {
           "model": { "primary": "google/gemini-3-flash-preview" },
