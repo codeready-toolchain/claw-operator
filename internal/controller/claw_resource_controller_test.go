@@ -148,13 +148,11 @@ func TestClawConfigMapController(t *testing.T) {
 			var config map[string]any
 			require.NoError(t, json.Unmarshal([]byte(openclawJSON), &config))
 
-			include, hasInclude := config["$include"]
-			require.True(t, hasInclude, "openclaw.json must contain $include directive")
-			assert.Equal(t, "./operator.json", include, "$include should reference operator.json")
+			_, hasInclude := config["$include"]
+			assert.False(t, hasInclude, "openclaw.json seed must not contain $include directive")
 
-			gateway, hasGateway := config["gateway"].(map[string]any)
-			require.True(t, hasGateway, "openclaw.json seed must contain gateway section for config safety check")
-			assert.Equal(t, "local", gateway["mode"], "gateway.mode must be present to survive OpenClaw write-back")
+			_, hasGateway := config["gateway"]
+			assert.False(t, hasGateway, "openclaw.json seed must not contain gateway section (operator-managed)")
 
 			agents, hasAgents := config["agents"].(map[string]any)
 			require.True(t, hasAgents, "openclaw.json seed should contain agents section")
@@ -165,6 +163,10 @@ func TestClawConfigMapController(t *testing.T) {
 			model, hasModel := defaults["model"].(map[string]any)
 			require.True(t, hasModel, "defaults should have model config")
 			assert.NotEmpty(t, model["primary"], "should have a primary model set")
+
+			mergeJS, hasMergeJS := configMap.Data["merge.js"]
+			assert.True(t, hasMergeJS, "merge.js key must exist in ConfigMap")
+			assert.Contains(t, mergeJS, "deepMerge", "merge.js should contain deepMerge function")
 		})
 
 		t.Run("should have AGENTS.md seed content", func(t *testing.T) {
@@ -886,8 +888,8 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		})
 	})
 
-	t.Run("Init container config seeding", func(t *testing.T) {
-		t.Run("should always copy operator.json and conditionally seed user files", func(t *testing.T) {
+	t.Run("Init container config merge", func(t *testing.T) {
+		t.Run("should use gateway image and node merge script", func(t *testing.T) {
 			reconciler := createClawReconciler()
 			instance := &clawv1alpha1.Claw{}
 			instance.Name = testInstanceName
@@ -909,27 +911,35 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			var initConfigScript string
+			var initConfig map[string]any
 			for _, ic := range initContainers {
 				container := ic.(map[string]any)
-				if container["name"] == "init-config" {
-					cmds := container["command"].([]any)
-					initConfigScript = cmds[len(cmds)-1].(string)
+				if container["name"] == ClawInitConfigContainerName {
+					initConfig = container
 					break
 				}
 			}
-			require.NotEmpty(t, initConfigScript, "init-config container should exist")
+			require.NotNil(t, initConfig, "init-config container should exist")
 
-			assert.Contains(t, initConfigScript, "cp /config/operator.json /home/node/.openclaw/operator.json",
-				"operator.json should always be copied unconditionally")
-			assert.Contains(t, initConfigScript, "[ -f /home/node/.openclaw/openclaw.json ] || cp",
-				"openclaw.json should only be seeded if missing")
-			assert.Contains(t, initConfigScript, "[ -f /home/node/.openclaw/workspace/AGENTS.md ] || cp",
-				"AGENTS.md should only be seeded if missing")
-			assert.Contains(t, initConfigScript, "cp /config/PROXY_SETUP.md /home/node/.openclaw/workspace/skills/proxy/SKILL.md",
-				"PROXY_SETUP.md should always be copied to proxy skill directory")
-			assert.Contains(t, initConfigScript, "if [ -f /config/KUBERNETES.md ]",
-				"KUBERNETES.md should be copied only when present in ConfigMap")
+			image, _, _ := unstructured.NestedString(initConfig, "image")
+			assert.Contains(t, image, "ghcr.io/openclaw/openclaw",
+				"init-config should use the gateway image")
+
+			cmds := initConfig["command"].([]any)
+			assert.Equal(t, "node", cmds[0], "init-config should run node")
+			assert.Equal(t, "/config/merge.js", cmds[1], "init-config should execute merge.js")
+
+			envVars, _, _ := unstructured.NestedSlice(initConfig, "env")
+			var configModeEnv map[string]any
+			for _, e := range envVars {
+				env := e.(map[string]any)
+				if env["name"] == ClawConfigModeEnvVar {
+					configModeEnv = env
+					break
+				}
+			}
+			require.NotNil(t, configModeEnv, "CLAW_CONFIG_MODE env var should exist")
+			assert.Equal(t, "merge", configModeEnv["value"], "default config mode should be merge")
 		})
 	})
 }

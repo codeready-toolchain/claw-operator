@@ -203,7 +203,7 @@ func TestStampGatewayConfigHash(t *testing.T) {
 		cm.SetName(getConfigMapName(testInstanceName))
 		cm.Object["data"] = map[string]any{
 			"operator.json": operatorJSON,
-			"openclaw.json": `{"$include":"./operator.json"}`,
+			"openclaw.json": `{"agents":{"defaults":{"model":{"primary":"test"}}}}`,
 		}
 
 		dep := &unstructured.Unstructured{}
@@ -280,5 +280,218 @@ func TestStampGatewayConfigHash(t *testing.T) {
 		err := stampGatewayConfigHash([]*unstructured.Unstructured{cm}, testInstanceName)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not found for config hash stamping")
+	})
+}
+
+// --- Config mode integration tests ---
+
+func TestConfigModeIntegration(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("should set CLAW_CONFIG_MODE=overwrite on init-config when spec.configMode is overwrite", func(t *testing.T) {
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.ConfigMode = clawv1alpha1.ConfigModeOverwrite
+		instance.Spec.Credentials = testCredentials()
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+
+		var configModeValue string
+		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
+			if ic.Name == ClawInitConfigContainerName {
+				for _, env := range ic.Env {
+					if env.Name == ClawConfigModeEnvVar {
+						configModeValue = env.Value
+					}
+				}
+			}
+		}
+		assert.Equal(t, "overwrite", configModeValue,
+			"init-config should have CLAW_CONFIG_MODE=overwrite from spec.configMode")
+	})
+
+	t.Run("should default CLAW_CONFIG_MODE=merge when spec.configMode is not set", func(t *testing.T) {
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		createClawInstance(t, ctx, testInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+
+		var configModeValue string
+		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
+			if ic.Name == ClawInitConfigContainerName {
+				for _, env := range ic.Env {
+					if env.Name == ClawConfigModeEnvVar {
+						configModeValue = env.Value
+					}
+				}
+			}
+		}
+		assert.Equal(t, "merge", configModeValue,
+			"init-config should default to CLAW_CONFIG_MODE=merge")
+	})
+}
+
+// --- Config mode deployment unit tests ---
+
+func TestConfigureClawDeploymentConfigMode(t *testing.T) {
+	makeDeployment := func() []*unstructured.Unstructured {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"initContainers": []any{
+						map[string]any{
+							"name": ClawInitConfigContainerName,
+							"env": []any{
+								map[string]any{"name": ClawConfigModeEnvVar, "value": "merge"},
+							},
+						},
+					},
+					"containers": []any{
+						map[string]any{
+							"name": ClawGatewayContainerName,
+						},
+					},
+				},
+			},
+		}
+		return []*unstructured.Unstructured{dep}
+	}
+
+	modeTests := []struct {
+		name     string
+		mode     clawv1alpha1.ConfigMode
+		expected string
+	}{
+		{name: "default merge when unset", mode: "", expected: "merge"},
+		{name: "overwrite when specified", mode: clawv1alpha1.ConfigModeOverwrite, expected: "overwrite"},
+		{name: "merge when explicitly set", mode: clawv1alpha1.ConfigModeMerge, expected: "merge"},
+	}
+	for _, tt := range modeTests {
+		t.Run(tt.name, func(t *testing.T) {
+			objects := makeDeployment()
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = testInstanceName
+			instance.Spec.ConfigMode = tt.mode
+
+			require.NoError(t, configureClawDeploymentConfigMode(objects, instance))
+
+			initContainers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "initContainers")
+			container := initContainers[0].(map[string]any)
+			envVars := container["env"].([]any)
+
+			var modeEnv map[string]any
+			for _, e := range envVars {
+				env := e.(map[string]any)
+				if env["name"] == ClawConfigModeEnvVar {
+					modeEnv = env
+					break
+				}
+			}
+			require.NotNil(t, modeEnv, "CLAW_CONFIG_MODE should exist")
+			assert.Equal(t, tt.expected, modeEnv["value"])
+		})
+	}
+
+	t.Run("should add env var when not already present", func(t *testing.T) {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"initContainers": []any{
+						map[string]any{
+							"name": ClawInitConfigContainerName,
+							"env":  []any{},
+						},
+					},
+					"containers": []any{
+						map[string]any{"name": ClawGatewayContainerName},
+					},
+				},
+			},
+		}
+		objects := []*unstructured.Unstructured{dep}
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.ConfigMode = clawv1alpha1.ConfigModeOverwrite
+
+		require.NoError(t, configureClawDeploymentConfigMode(objects, instance))
+
+		initContainers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "initContainers")
+		container := initContainers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		require.Len(t, envVars, 1, "env var should have been appended")
+		env := envVars[0].(map[string]any)
+		assert.Equal(t, ClawConfigModeEnvVar, env["name"])
+		assert.Equal(t, "overwrite", env["value"])
+	})
+
+	t.Run("should return error when deployment is missing", func(t *testing.T) {
+		objects := []*unstructured.Unstructured{}
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+
+		err := configureClawDeploymentConfigMode(objects, instance)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "claw deployment not found")
+	})
+
+	t.Run("should return error when init-config container is missing", func(t *testing.T) {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"initContainers": []any{
+						map[string]any{"name": "some-other-container"},
+					},
+					"containers": []any{
+						map[string]any{"name": ClawGatewayContainerName},
+					},
+				},
+			},
+		}
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+
+		err := configureClawDeploymentConfigMode([]*unstructured.Unstructured{dep}, instance)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), ClawInitConfigContainerName)
 	})
 }

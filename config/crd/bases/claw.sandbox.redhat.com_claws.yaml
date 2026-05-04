@@ -46,6 +46,17 @@ spec:
           spec:
             description: ClawSpec defines the desired state of Claw
             properties:
+              configMode:
+                default: merge
+                description: |-
+                  ConfigMode controls how operator config is applied on pod start.
+                  "merge" (default) deep-merges operator settings into the existing
+                  user config, preserving user-owned keys. "overwrite" fully replaces
+                  the config on every pod start.
+                enum:
+                - merge
+                - overwrite
+                type: string
               credentials:
                 description: Credentials configures proxy credential injection per
                   domain.

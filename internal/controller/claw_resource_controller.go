@@ -57,10 +57,12 @@ import (
 const (
 	ClawResourceKind = "Claw"
 
-	GatewayTokenKeyName      = "token"
-	ClawProxyContainerName   = "proxy"
-	ClawGatewayContainerName = "gateway"
-	DefaultKubectlImage      = "quay.io/openshift/origin-cli:4.21"
+	GatewayTokenKeyName         = "token"
+	ClawProxyContainerName      = "proxy"
+	ClawGatewayContainerName    = "gateway"
+	ClawInitConfigContainerName = "init-config"
+	ClawConfigModeEnvVar        = "CLAW_CONFIG_MODE"
+	DefaultKubectlImage         = "quay.io/openshift/origin-cli:4.21"
 
 	// Kubernetes resource kinds
 	RouteKind                 = "Route"
@@ -576,6 +578,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	}
 	if err := configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage, instance.Name); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Kubernetes: %w", err)
+	}
+	if err := configureClawDeploymentConfigMode(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure claw deployment config mode: %w", err)
 	}
 	return nil
 }
