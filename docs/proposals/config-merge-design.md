@@ -80,11 +80,11 @@ ConfigMap                          PVC (openclaw.json)
 |---|---|---|
 | `gateway.*` | Operator | **Overwritten** — CORS origins, auth mode, bind, port, trustedProxies |
 | `models.providers` | Operator | **Overwritten** — tracks credentials in Claw CR |
-| `cron` | Operator | **Overwritten** |
 | `agents.*` | User | **Preserved** — model aliases, primary model, agent list, workspace |
 | `plugins.*` | User | **Preserved** — plugin installs, allow/deny lists |
 | `channels.*` | User | **Preserved** — WhatsApp, Telegram, etc. |
 | `tools.*` | User | **Preserved** |
+| `cron.*` | User | **Preserved** — scheduled tasks |
 
 ### Deep merge semantics
 
@@ -102,19 +102,35 @@ A top-level enum on `ClawSpec` with values `merge` (default) and `overwrite`:
 
 - **`overwrite`**: init container fully overwrites `openclaw.json` with the
   operator-managed config on every pod start. User edits are wiped. Suitable for
-  managed deployments (Dev Sandbox shared instances) where the operator is the
-  sole config authority.
+  managed deployments where the operator is the sole config authority.
 
 ### Init container
 
-Uses the gateway image (`ghcr.io/openclaw/openclaw:slim`) — same image as the
-main container, already cached. Provides Node.js for the merge script. Replaces
-the current busybox-based `init-config` container.
+Uses the gateway image (`ghcr.io/openclaw/openclaw`) — same base image reference
+as the main container. Kustomize's `images` transformer pins both to the same
+version tag (e.g., `2026.4.29-slim`), so bumping the tag in `kustomization.yaml`
+updates both containers atomically. Already cached on the node. Provides Node.js
+for the merge script. Replaces the current busybox-based `init-config` container.
 
-**Merge mode script** (pseudocode):
+**Script delivery:** The merge script is stored as a `merge.js` key in the
+`claw-config` ConfigMap (already mounted at `/config`). The init container
+command is simply `node /config/merge.js`. This avoids YAML quoting issues for
+multi-line JavaScript and keeps the deployment manifest clean. The operator
+regenerates the ConfigMap on every reconcile, so script updates deploy
+automatically with operator upgrades.
+
+**Deployment command:**
+```yaml
+command: ["node", "/config/merge.js"]
+env:
+  - name: CLAW_CONFIG_MODE
+    value: "merge"  # or "overwrite"
+```
+
+**merge.js** (pseudocode — stored in ConfigMap):
 ```javascript
-const base = JSON.parse(fs.readFileSync("/home/node/.openclaw/openclaw.json"));
-const ops = JSON.parse(fs.readFileSync("/config/operator.json"));
+const fs = require("fs");
+const mode = process.env.CLAW_CONFIG_MODE || "merge";
 
 function deepMerge(target, source) {
   const result = { ...target };
@@ -129,17 +145,18 @@ function deepMerge(target, source) {
   return result;
 }
 
-fs.writeFileSync("/home/node/.openclaw/openclaw.json",
-  JSON.stringify(deepMerge(base, ops), null, 2));
-```
+const ops = JSON.parse(fs.readFileSync("/config/operator.json", "utf8"));
+const pvcPath = "/home/node/.openclaw/openclaw.json";
 
-**Overwrite mode script** (pseudocode):
-```javascript
-const seed = JSON.parse(fs.readFileSync("/config/openclaw.json"));
-const ops = JSON.parse(fs.readFileSync("/config/operator.json"));
-// Always start from seed (ignore PVC state) — user edits don't survive
-fs.writeFileSync("/home/node/.openclaw/openclaw.json",
-  JSON.stringify(deepMerge(seed, ops), null, 2));
+if (mode === "merge" && fs.existsSync(pvcPath)) {
+  // Merge: operator config wins over existing user config
+  const base = JSON.parse(fs.readFileSync(pvcPath, "utf8"));
+  fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(base, ops), null, 2));
+} else {
+  // Overwrite (or first run): start from seed, merge operator config
+  const seed = JSON.parse(fs.readFileSync("/config/openclaw.json", "utf8"));
+  fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2));
+}
 ```
 
 The key difference: merge mode reads the **existing PVC file** as the base (preserving
@@ -165,8 +182,7 @@ data:
   operator.json: |
     {
       "gateway": { ... },
-      "models": { "providers": { ... } },
-      "cron": { "enabled": false }
+      "models": { "providers": { ... } }
     }
   openclaw.json: |
     {
@@ -204,25 +220,28 @@ the proxy deployment via `configureProxyDeployment`).
 
 ## Implementation Plan
 
-### Phase 1: Drop `$include` and implement merge
+Single PR — phases below are implementation order within the branch, not
+separate deliverables. The operator is pre-production, so no migration or
+intermediate-state concerns.
+
+### Step 1: ConfigMap and deployment changes
 
 1. Update `configmap.yaml`: remove `$include` and `gateway` section from
-   `openclaw.json` seed
-2. Update `deployment.yaml`: change `init-config` to gateway image, implement
-   merge/overwrite script with mode detection
+   `openclaw.json` seed, add `merge.js` key
+2. Update `deployment.yaml`: change `init-config` to gateway image, set
+   command to `node /config/merge.js`
 3. Update tests: assert no `$include` in `openclaw.json` seed, verify ConfigMap
-   content
+   contains `merge.js` key
 
-### Phase 2: Add `spec.configMode` to CRD
+### Step 2: CRD field and controller wiring
 
 4. Add `ConfigMode` field to `ClawSpec` in `claw_types.go` with enum validation
 5. Run `make manifests && make generate`
 6. Update controller to inject `CLAW_CONFIG_MODE` env var on init container
    (new function `configureClawDeploymentConfigMode` following existing patterns)
-7. Init script already branches on `$CLAW_CONFIG_MODE` from Phase 1
-8. Add tests for both modes (merge preserves user keys, overwrite resets)
+7. Add tests for both modes (merge preserves user keys, overwrite resets)
 
-### Phase 3: Update documentation
+### Step 3: Documentation
 
-9. Update `CLAUDE.md` with new config approach
-10. Update `PROXY_SETUP.md` if needed
+8. Update `CLAUDE.md` with new config approach
+9. Update `PROXY_SETUP.md` if needed
