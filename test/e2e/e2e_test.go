@@ -440,7 +440,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				`controller_runtime_reconcile_total{controller="claw",result="success"}`)
 		})
 
-		t.Run("should create claw-config ConfigMap with split config layering", func(t *testing.T) {
+		t.Run("should create claw-config ConfigMap with deep-merge config", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)
 				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
@@ -466,7 +466,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
-			t.Log("waiting for Claw Ready condition")
+			t.Log("waiting for Claw ProxyConfigured condition")
 			ctx := context.Background()
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {
@@ -498,18 +498,47 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			providers := models["providers"].(map[string]any)
 			assert.NotEmpty(t, providers, "should have injected provider from credential")
 
-			t.Log("verifying openclaw.json seed has $include directive")
+			t.Log("verifying openclaw.json seed is user-owned (no $include)")
 			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
 				"-o", "jsonpath={.data.openclaw\\.json}",
 				"-n", userNamespace)
 			openclawJSON, err := utils.Run(t, cmd)
 			require.NoError(t, err, "config ConfigMap should have openclaw.json")
-			assert.Contains(t, openclawJSON, `"$include"`,
-				"openclaw.json should contain $include directive")
-			assert.Contains(t, openclawJSON, `./operator.json`,
-				"$include should reference operator.json")
+			assert.NotContains(t, openclawJSON, `"$include"`,
+				"openclaw.json should not contain $include (replaced by deep-merge)")
 			assert.Contains(t, openclawJSON, `"agents"`,
 				"openclaw.json seed should contain agents section")
+
+			t.Log("verifying merge.js script is present in ConfigMap")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
+				"-o", "jsonpath={.data.merge\\.js}",
+				"-n", userNamespace)
+			mergeJS, err := utils.Run(t, cmd)
+			require.NoError(t, err, "config ConfigMap should have merge.js")
+			assert.Contains(t, mergeJS, "deepMerge",
+				"merge.js should contain the deep-merge function")
+
+			t.Log("verifying init-config container uses gateway image and merge script")
+			clawDeployName := clawInstanceName
+			initJP := `jsonpath={.spec.template.spec.initContainers[?(@.name=="init-config")].command}`
+			cmd = exec.Command("kubectl", "get", "deployment", clawDeployName,
+				"-o", initJP, "-n", userNamespace)
+			initCmd, err := utils.Run(t, cmd)
+			require.NoError(t, err, "should be able to read init-config command")
+			assert.Contains(t, initCmd, "node",
+				"init-config should use node runtime")
+			assert.Contains(t, initCmd, "/config/merge.js",
+				"init-config should run merge.js script")
+
+			t.Log("verifying CLAW_CONFIG_MODE env var defaults to merge")
+			envJP := `jsonpath={.spec.template.spec.initContainers[?(@.name=="init-config")]` +
+				`.env[?(@.name=="CLAW_CONFIG_MODE")].value}`
+			cmd = exec.Command("kubectl", "get", "deployment", clawDeployName,
+				"-o", envJP, "-n", userNamespace)
+			configMode, err := utils.Run(t, cmd)
+			require.NoError(t, err, "should be able to read CLAW_CONFIG_MODE")
+			assert.Equal(t, "merge", configMode,
+				"CLAW_CONFIG_MODE should default to merge")
 
 			t.Log("verifying AGENTS.md seed is present")
 			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
