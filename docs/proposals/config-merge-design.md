@@ -26,8 +26,8 @@ deployment tool (openclaw-operator, openclaw-installer, NemoClaw, paude).
    standard config mutations (plugin install, `config.patch`, UI settings) work.
 
 2. **Operator controls what it needs to** — gateway settings, CORS origins,
-   provider definitions, and cron are always overwritten. The operator is the
-   source of truth for infrastructure config.
+   and provider definitions are always overwritten. The operator is the source
+   of truth for infrastructure config.
 
 3. **User changes survive pod restarts** (in `merge` mode) — keys the operator
    doesn't touch (plugins, agent config, model preferences, channels) persist on
@@ -64,7 +64,7 @@ ConfigMap                          PVC (openclaw.json)
 │  agents: {user-owned, preserved}     │
 │  plugins: {user-owned, preserved}    │
 │  channels: {user-owned, preserved}   │
-│  cron: {from operator.json}          │
+│  cron: {user-owned, preserved}       │
 └──────────────────────────────────────┘
          │
   OpenClaw loads ──▶ plain JSON, no includes
@@ -209,7 +209,7 @@ Key changes from current:
 ### Controller changes
 
 Minimal. The controller continues to:
-- Build `operator.json` with gateway settings, CORS, providers, cron
+- Build `operator.json` with gateway settings, CORS, providers
 - Inject Route host, providers, skills into the ConfigMap
 - Stamp config hash for rollout detection
 
