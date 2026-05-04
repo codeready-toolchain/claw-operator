@@ -389,76 +389,40 @@ func TestConfigureClawDeploymentConfigMode(t *testing.T) {
 		return []*unstructured.Unstructured{dep}
 	}
 
-	t.Run("should set merge mode by default", func(t *testing.T) {
-		objects := makeDeployment()
-		instance := &clawv1alpha1.Claw{}
-		instance.Name = testInstanceName
+	modeTests := []struct {
+		name     string
+		mode     clawv1alpha1.ConfigMode
+		expected string
+	}{
+		{name: "default merge when unset", mode: "", expected: "merge"},
+		{name: "overwrite when specified", mode: clawv1alpha1.ConfigModeOverwrite, expected: "overwrite"},
+		{name: "merge when explicitly set", mode: clawv1alpha1.ConfigModeMerge, expected: "merge"},
+	}
+	for _, tt := range modeTests {
+		t.Run(tt.name, func(t *testing.T) {
+			objects := makeDeployment()
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = testInstanceName
+			instance.Spec.ConfigMode = tt.mode
 
-		require.NoError(t, configureClawDeploymentConfigMode(objects, instance))
+			require.NoError(t, configureClawDeploymentConfigMode(objects, instance))
 
-		initContainers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "initContainers")
-		container := initContainers[0].(map[string]any)
-		envVars := container["env"].([]any)
+			initContainers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "initContainers")
+			container := initContainers[0].(map[string]any)
+			envVars := container["env"].([]any)
 
-		var modeEnv map[string]any
-		for _, e := range envVars {
-			env := e.(map[string]any)
-			if env["name"] == ClawConfigModeEnvVar {
-				modeEnv = env
-				break
+			var modeEnv map[string]any
+			for _, e := range envVars {
+				env := e.(map[string]any)
+				if env["name"] == ClawConfigModeEnvVar {
+					modeEnv = env
+					break
+				}
 			}
-		}
-		require.NotNil(t, modeEnv, "CLAW_CONFIG_MODE should exist")
-		assert.Equal(t, "merge", modeEnv["value"])
-	})
-
-	t.Run("should set overwrite mode when specified", func(t *testing.T) {
-		objects := makeDeployment()
-		instance := &clawv1alpha1.Claw{}
-		instance.Name = testInstanceName
-		instance.Spec.ConfigMode = clawv1alpha1.ConfigModeOverwrite
-
-		require.NoError(t, configureClawDeploymentConfigMode(objects, instance))
-
-		initContainers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "initContainers")
-		container := initContainers[0].(map[string]any)
-		envVars := container["env"].([]any)
-
-		var modeEnv map[string]any
-		for _, e := range envVars {
-			env := e.(map[string]any)
-			if env["name"] == ClawConfigModeEnvVar {
-				modeEnv = env
-				break
-			}
-		}
-		require.NotNil(t, modeEnv, "CLAW_CONFIG_MODE should exist")
-		assert.Equal(t, "overwrite", modeEnv["value"])
-	})
-
-	t.Run("should set merge mode when ConfigMode is explicitly merge", func(t *testing.T) {
-		objects := makeDeployment()
-		instance := &clawv1alpha1.Claw{}
-		instance.Name = testInstanceName
-		instance.Spec.ConfigMode = clawv1alpha1.ConfigModeMerge
-
-		require.NoError(t, configureClawDeploymentConfigMode(objects, instance))
-
-		initContainers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "initContainers")
-		container := initContainers[0].(map[string]any)
-		envVars := container["env"].([]any)
-
-		var modeEnv map[string]any
-		for _, e := range envVars {
-			env := e.(map[string]any)
-			if env["name"] == ClawConfigModeEnvVar {
-				modeEnv = env
-				break
-			}
-		}
-		require.NotNil(t, modeEnv, "CLAW_CONFIG_MODE should exist")
-		assert.Equal(t, "merge", modeEnv["value"])
-	})
+			require.NotNil(t, modeEnv, "CLAW_CONFIG_MODE should exist")
+			assert.Equal(t, tt.expected, modeEnv["value"])
+		})
+	}
 
 	t.Run("should add env var when not already present", func(t *testing.T) {
 		dep := &unstructured.Unstructured{}

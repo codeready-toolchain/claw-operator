@@ -97,14 +97,19 @@ data:
 
     // Merge or overwrite openclaw.json
     const ops = JSON.parse(fs.readFileSync(path.join(configDir, "operator.json"), "utf8"));
+    const seed = JSON.parse(fs.readFileSync(path.join(configDir, "openclaw.json"), "utf8"));
     const pvcPath = path.join(pvcDir, "openclaw.json");
 
     if (mode === "merge" && fs.existsSync(pvcPath)) {
-      const base = JSON.parse(fs.readFileSync(pvcPath, "utf8"));
+      let base = seed;
+      try {
+        base = JSON.parse(fs.readFileSync(pvcPath, "utf8"));
+      } catch (err) {
+        console.warn("[init-config] existing openclaw.json is invalid JSON; falling back to seed");
+      }
       fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(base, ops), null, 2));
       console.log("[init-config] merged operator.json into existing openclaw.json");
     } else {
-      const seed = JSON.parse(fs.readFileSync(path.join(configDir, "openclaw.json"), "utf8"));
       fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2));
       console.log(`[init-config] wrote openclaw.json (mode=${mode}, first_run=${!fs.existsSync(pvcPath)})`);
     }
