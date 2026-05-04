@@ -13,6 +13,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 ### Claw CRD
 
 **Spec Fields:**
+- `configMode` (ConfigMode, optional, default="merge"): Controls how operator config is applied on pod start. `merge` deep-merges operator settings into the existing user config (preserving user-owned keys like plugins, channels, agent customizations). `overwrite` fully replaces `openclaw.json` on every pod start with operator-managed config.
 - `credentials` ([]CredentialSpec, optional): Array of credential configurations for proxy credential injection per domain. Each entry defines a credential with:
   - `name` (string, required, minLength=1): Unique identifier for this credential
   - `type` (CredentialType, required): Credential injection mechanism. Enum: `apiKey`, `bearer`, `gcp`, `pathToken`, `oauth2`, `none`, `kubernetes`
@@ -23,7 +24,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
   - `gcp` (GCPConfig, optional): Required when type is `gcp`. Fields: `project` (GCP project ID, minLength=1), `location` (GCP region, minLength=1)
   - `pathToken` (PathTokenConfig, optional): Required when type is `pathToken`. Fields: `prefix` (URL path prefix, minLength=1)
   - `oauth2` (OAuth2Config, optional): Required when type is `oauth2`. Fields: `clientID` (minLength=1), `tokenURL` (minLength=1), `scopes` ([]string, optional)
-  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `operator.json` (included by the user-owned `openclaw.json` via `$include`). When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
+  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `operator.json` (deep-merged into the user's `openclaw.json` by the init container). When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
   - `allowedPaths` ([]string, optional): Restricts which URL paths the proxy permits for this domain. Each entry is a path prefix (e.g., "/v1/api/"). If empty, all paths are allowed. Used by builtin passthrough domains (e.g., `raw.githubusercontent.com` is restricted to `/BerriAI/litellm/` and `/WhiskeySockets/Baileys/`) and available for user-defined credentials.
 
 **Status Fields:**
@@ -137,20 +138,35 @@ The operator uses a **single unified controller** that manages all resources usi
 - Graceful fallback: localhost CORS origin on vanilla Kubernetes (no Route CRD)
 - Future-proof: adding new resources only requires updating kustomization.yaml
 
-### Config layering via $include
+### Config deep-merge at init time
 
-The `claw-config` ConfigMap uses a **split config** approach to preserve user and application changes across reconciles:
+The `claw-config` ConfigMap uses a **deep-merge** approach to preserve user and application changes across reconciles. No `$include` directives — OpenClaw sees a plain JSON file with no write barriers. All standard config mutations (plugin install, `config.patch`, channel setup) work normally.
 
-**Operator-managed files** (always overwritten on PVC by init container):
-- `operator.json` — Gateway settings, CORS origins, providers, proxy config. Rewritten every reconcile.
-- `PROXY_SETUP.md` — Proxy architecture skill file (always present). Explains the proxy security model and how to configure access to external services (WhatsApp, custom domains). Init container copies to `skills/proxy/SKILL.md` for OpenClaw auto-discovery.
-- `KUBERNETES.md` — Kubernetes skill file (only when k8s credentials present). Always overwritten. Init container copies to `skills/kubernetes/SKILL.md` for OpenClaw auto-discovery.
+**Init container** (`init-config`):
+Uses the gateway image (`ghcr.io/openclaw/openclaw`) for Node.js. Runs `node /config/merge.js` on every pod start. Kustomize's `images` transformer pins both `init-config` and the main gateway container to the same image tag. The `CLAW_CONFIG_MODE` env var (from `spec.configMode`) controls merge behavior.
 
-**User-owned files** (seeded once, then owned by user/OpenClaw):
-- `openclaw.json` — Contains `"$include": "./operator.json"` plus agent defaults (model aliases, primary model, agent list). Seeded only if file doesn't exist on PVC. User and OpenClaw Control UI changes survive pod restarts.
-- `AGENTS.md` — System prompt. Seeded only if file doesn't exist on PVC.
+**Config merge modes** (controlled by `spec.configMode`):
+- **`merge`** (default): Deep-merges `operator.json` into the existing PVC `openclaw.json`. Objects merge recursively (operator keys win), arrays and primitives from operator replace user values. User-owned keys (plugins, channels, agents, cron) survive restarts.
+- **`overwrite`**: Deep-merges `operator.json` into the ConfigMap `openclaw.json` seed (ignoring PVC). User edits are wiped on every restart.
 
-OpenClaw's `$include` mechanism deep-merges the included file with sibling keys at config load time. Sibling keys (user's root file) win over included values for primitives, objects merge recursively, arrays concatenate. The write-back logic avoids pulling included values into the root file on save.
+**ConfigMap keys:**
+- `operator.json` — Operator-managed: gateway settings, CORS origins, providers. Rewritten every reconcile. Read from ConfigMap mount at `/config/`, not written to PVC.
+- `openclaw.json` — User-owned seed: agent defaults (model aliases, primary model, agent list). No `$include`, no `gateway` section. Seeded to PVC on first run only (merge mode) or used as base every restart (overwrite mode).
+- `merge.js` — The init container merge script. Stored in ConfigMap, executed via `node /config/merge.js`. Updated automatically with operator upgrades.
+- `AGENTS.md` — System prompt seed. Copied to PVC if missing.
+- `PROXY_SETUP.md` — Proxy architecture skill. Always copied to `skills/proxy/SKILL.md`.
+- `KUBERNETES.md` — Kubernetes skill (injected by controller when k8s credentials present). Always copied to `skills/kubernetes/SKILL.md`.
+
+**Who owns what on the PVC:**
+| Config section | Owner | Behavior on pod restart (merge mode) |
+|---|---|---|
+| `gateway.*` | Operator | Overwritten — CORS origins, auth mode, bind, port |
+| `models.providers` | Operator | Overwritten — tracks credentials in Claw CR |
+| `agents.*` | User | Preserved — model aliases, primary model, agent list |
+| `plugins.*` | User | Preserved — plugin installs, allow/deny lists |
+| `channels.*` | User | Preserved — WhatsApp, Telegram, etc. |
+| `tools.*` | User | Preserved |
+| `cron.*` | User | Preserved — scheduled tasks |
 
 ### Reconciliation flow
 
@@ -233,6 +249,9 @@ PHASE 3: ConfigMap Injection and Remaining Resources
  │  ├─ Mount claw-kube-config ConfigMap as read-only volume at /etc/kube/
  │  ├─ Add emptyDir volume (kubectl-bin) mounted at /opt/kube-tools on gateway
  │  └─ Add init-kubectl init container that copies kubectl binary from kubectlImage to shared volume
+   ├─ configureClawDeploymentConfigMode(objects, instance):
+ │  ├─ Find init-config init container in claw deployment
+ │  └─ Set CLAW_CONFIG_MODE env var to spec.configMode value (default: "merge")
  ├─ stampSecretVersionAnnotation(ctx, objects, instance)
  │  ├─ Fetch user's Secrets to get their ResourceVersions
  │  ├─ Find claw-proxy Deployment in parsed objects
@@ -320,6 +339,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `usesVertexSDK()` — returns true when a credential should use the native Vertex AI SDK (type == gcp && provider != "" && provider != "google")
 - `configureClawDeploymentForVertex()` — adds GOOGLE_APPLICATION_CREDENTIALS, ANTHROPIC_VERTEX_PROJECT_ID env vars and stub ADC volume mount to the claw deployment when Vertex SDK credentials exist
 - `configureClawDeploymentForKubernetes()` — when kubernetes credentials exist: mounts the sanitized kubeconfig ConfigMap (`claw-kube-config`) at `/etc/kube/`, sets `KUBECONFIG=/etc/kube/config` and `PATH` env vars, adds an `init-kubectl` init container that copies kubectl from the configured image into a shared emptyDir volume mounted at `/opt/kube-tools`
+- `configureClawDeploymentConfigMode()` — sets `CLAW_CONFIG_MODE` env var on the `init-config` init container based on `spec.configMode`. Defaults to `"merge"` if not set
 - `injectKubePortsIntoNetworkPolicy()` — adds non-443 ports from kubeconfig cluster server URLs to the `claw-proxy-egress` NetworkPolicy. In-memory patching before apply, same pattern as `injectRouteHostIntoConfigMap`
 - `injectKubernetesSkill()` — writes a `KUBERNETES.md` key into the `claw-config` ConfigMap with OpenClaw skill frontmatter listing available contexts, clusters, namespaces, and current-context. Init container copies to `skills/kubernetes/SKILL.md` for auto-discovery
 - `applyVertexADCConfigMap()` — creates/updates the stub ADC ConfigMap (claw-vertex-adc) with dummy authorized_user credentials for Vertex SDK token refresh bootstrap. Only created when Vertex SDK credentials exist
@@ -346,6 +366,8 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `ClawIngressNetworkPolicyName = "claw-ingress"` — ingress NetworkPolicy restricting gateway access to OpenShift router
 - `GatewayTokenKeyName = "token"` — data key for gateway token in gateway Secret
 - `ClawGatewayContainerName = "gateway"` — container name in the claw deployment
+- `ClawInitConfigContainerName = "init-config"` — init container that deep-merges operator config into `openclaw.json`
+- `ClawConfigModeEnvVar = "CLAW_CONFIG_MODE"` — env var controlling merge vs overwrite behavior
 - `ClawVertexADCConfigMapName = "claw-vertex-adc"` — ConfigMap containing stub ADC for Vertex AI SDK
 - `ClawKubeConfigMapName = "claw-kube-config"` — ConfigMap containing sanitized kubeconfig for kubernetes credentials
 - `ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"` — proxy egress NetworkPolicy (dynamically patched for non-443 kubernetes ports)
@@ -368,9 +390,9 @@ var ManifestsFS embed.FS
 
 The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
-- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed with `$include`, AGENTS.md seed, PROXY_SETUP.md for proxy architecture skill, KUBERNETES.md for k8s skill)
+- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed, merge.js for init-time deep-merge, AGENTS.md seed, PROXY_SETUP.md for proxy architecture skill, KUBERNETES.md for k8s skill)
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
-- **deployment.yaml** — OpenClaw application pods (init containers with readOnlyRootFilesystem, gateway without; PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` for persistent tool state; `wait-for-proxy` init container ensures proxy is ready before gateway starts; `OPENCLAW_PROXY_ACTIVE=1` env var enables native managed proxy support)
+- **deployment.yaml** — OpenClaw application pods (`init-config` uses the gateway image with Node.js to deep-merge operator config into `openclaw.json`; `wait-for-proxy` init container ensures proxy is ready before gateway starts; PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` for persistent tool state; `OPENCLAW_PROXY_ACTIVE=1` env var enables native managed proxy support)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)
 - **route.yaml** — OpenShift Route for external HTTPS access (skipped on non-OpenShift)
 - **proxy-configmap.yaml** — Proxy configuration for LLM API proxy
@@ -506,6 +528,6 @@ t.Cleanup(func() {
 ## Conventions
 
 - Owner references are set on all created resources via `controllerutil.SetControllerReference`
-- Pod security: non-root (uid 65532), restricted seccomp, all capabilities dropped. Init containers and the proxy use `readOnlyRootFilesystem: true`. The gateway container does not — it runs dynamic AI agent tools that write to unpredictable `$HOME` paths. PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` provide persistent writable storage for tool state
+- Pod security: non-root (uid 65532), restricted seccomp, all capabilities dropped. The `wait-for-proxy` init container and proxy use `readOnlyRootFilesystem: true`. The `init-config` init container and gateway container do not — `init-config` runs Node.js which needs writable `/tmp`, and the gateway runs dynamic AI agent tools that write to unpredictable `$HOME` paths. PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` provide persistent writable storage for tool state
 - Linting config in `.golangci.yml` — notable: `lll`, `dupl` enabled
 - License header required (template in `hack/boilerplate.go.txt`)

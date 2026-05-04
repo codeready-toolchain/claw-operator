@@ -22,35 +22,26 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: init-config
-          image: mirror.gcr.io/library/busybox:1.37
+          image: ghcr.io/openclaw/openclaw:slim
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
           command:
-            - sh
-            - -c
-            - |
-              cp /config/operator.json /home/node/.openclaw/operator.json
-              mkdir -p /home/node/.openclaw/workspace /home/node/.openclaw/.local /home/node/.openclaw/.cache /home/node/.openclaw/.config/codex
-              [ -f /home/node/.openclaw/openclaw.json ] || cp /config/openclaw.json /home/node/.openclaw/openclaw.json
-              [ -f /home/node/.openclaw/workspace/AGENTS.md ] || cp /config/AGENTS.md /home/node/.openclaw/workspace/AGENTS.md
-              mkdir -p /home/node/.openclaw/workspace/skills/proxy
-              cp /config/PROXY_SETUP.md /home/node/.openclaw/workspace/skills/proxy/SKILL.md
-              if [ -f /config/KUBERNETES.md ]; then
-                mkdir -p /home/node/.openclaw/workspace/skills/kubernetes
-                cp /config/KUBERNETES.md /home/node/.openclaw/workspace/skills/kubernetes/SKILL.md
-              fi
+            - node
+            - /config/merge.js
+          env:
+            - name: CLAW_CONFIG_MODE
+              value: merge
           resources:
             requests:
-              memory: 32Mi
+              memory: 64Mi
               cpu: 50m
             limits:
-              memory: 64Mi
-              cpu: 100m
+              memory: 128Mi
+              cpu: 200m
           volumeMounts:
             - name: claw-home
               mountPath: /home/node/.openclaw

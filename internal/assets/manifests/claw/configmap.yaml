@@ -27,10 +27,6 @@ data:
     }
   openclaw.json: |
     {
-      "$include": "./operator.json",
-      "gateway": {
-        "mode": "local"
-      },
       "agents": {
         "defaults": {
           "model": { "primary": "google/gemini-3-flash-preview" },
@@ -50,6 +46,82 @@ data:
           }
         ]
       }
+    }
+  merge.js: |
+    const fs = require("fs");
+    const path = require("path");
+    const mode = process.env.CLAW_CONFIG_MODE || "merge";
+    const configDir = "/config";
+    const pvcDir = "/home/node/.openclaw";
+    const workspaceDir = path.join(pvcDir, "workspace");
+
+    function deepMerge(target, source) {
+      const result = { ...target };
+      for (const key of Object.keys(source)) {
+        if (
+          source[key] &&
+          typeof source[key] === "object" &&
+          !Array.isArray(source[key]) &&
+          result[key] &&
+          typeof result[key] === "object" &&
+          !Array.isArray(result[key])
+        ) {
+          result[key] = deepMerge(result[key], source[key]);
+        } else {
+          result[key] = source[key];
+        }
+      }
+      return result;
+    }
+
+    function seedIfMissing(src, dest) {
+      if (!fs.existsSync(dest)) {
+        const dir = path.dirname(dest);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.copyFileSync(src, dest);
+        console.log(`[init-config] seeded ${dest}`);
+      }
+    }
+
+    function copyAlways(src, dest) {
+      const dir = path.dirname(dest);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.copyFileSync(src, dest);
+      console.log(`[init-config] copied ${dest}`);
+    }
+
+    // Ensure directories exist
+    for (const sub of ["workspace", ".local", ".cache", ".config/codex"]) {
+      fs.mkdirSync(path.join(pvcDir, sub), { recursive: true });
+    }
+
+    // Merge or overwrite openclaw.json
+    const ops = JSON.parse(fs.readFileSync(path.join(configDir, "operator.json"), "utf8"));
+    const pvcPath = path.join(pvcDir, "openclaw.json");
+
+    if (mode === "merge" && fs.existsSync(pvcPath)) {
+      const base = JSON.parse(fs.readFileSync(pvcPath, "utf8"));
+      fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(base, ops), null, 2));
+      console.log("[init-config] merged operator.json into existing openclaw.json");
+    } else {
+      const seed = JSON.parse(fs.readFileSync(path.join(configDir, "openclaw.json"), "utf8"));
+      fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2));
+      console.log(`[init-config] wrote openclaw.json (mode=${mode}, first_run=${!fs.existsSync(pvcPath)})`);
+    }
+
+    // Seed user-owned files
+    seedIfMissing(path.join(configDir, "AGENTS.md"), path.join(workspaceDir, "AGENTS.md"));
+
+    // Always copy operator-managed skill files
+    copyAlways(
+      path.join(configDir, "PROXY_SETUP.md"),
+      path.join(workspaceDir, "skills", "proxy", "SKILL.md")
+    );
+
+    // Copy Kubernetes skill if present in ConfigMap
+    const k8sSkill = path.join(configDir, "KUBERNETES.md");
+    if (fs.existsSync(k8sSkill)) {
+      copyAlways(k8sSkill, path.join(workspaceDir, "skills", "kubernetes", "SKILL.md"));
     }
   AGENTS.md: |
     # OpenClaw Assistant

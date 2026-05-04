@@ -800,6 +800,73 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 	return fmt.Errorf("claw deployment not found in manifests")
 }
 
+// configureClawDeploymentConfigMode sets the CLAW_CONFIG_MODE env var on the
+// init-config init container in the claw (gateway) deployment. This controls
+// whether the merge script deep-merges operator config into the existing user
+// config ("merge") or fully overwrites it ("overwrite").
+func configureClawDeploymentConfigMode(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	mode := string(instance.Spec.ConfigMode)
+	if mode == "" {
+		mode = string(clawv1alpha1.ConfigModeMerge)
+	}
+
+	gatewayName := getClawDeploymentName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		initContainers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "initContainers")
+		if err != nil {
+			return fmt.Errorf("failed to get init containers from claw deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("initContainers field not found in claw deployment")
+		}
+
+		for i, ic := range initContainers {
+			container, ok := ic.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _, _ := unstructured.NestedString(container, "name")
+			if name != ClawInitConfigContainerName {
+				continue
+			}
+
+			envVars, _, _ := unstructured.NestedSlice(container, "env")
+
+			updated := false
+			for j, e := range envVars {
+				env, ok := e.(map[string]any)
+				if !ok {
+					continue
+				}
+				if env["name"] == ClawConfigModeEnvVar {
+					env["value"] = mode
+					envVars[j] = env
+					updated = true
+					break
+				}
+			}
+			if !updated {
+				envVars = append(envVars, map[string]any{
+					"name":  ClawConfigModeEnvVar,
+					"value": mode,
+				})
+			}
+
+			if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
+				return fmt.Errorf("failed to set env vars on init-config container: %w", err)
+			}
+			initContainers[i] = container
+			return unstructured.SetNestedSlice(obj.Object, initContainers, "spec", "template", "spec", "initContainers")
+		}
+		return fmt.Errorf("container %q not found in claw deployment", ClawInitConfigContainerName)
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
+}
+
 // stampProxyConfigHash adds a hash annotation to the proxy pod template to trigger
 // rollouts when the proxy config changes.
 func stampProxyConfigHash(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, hash string) error {

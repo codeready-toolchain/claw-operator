@@ -34,6 +34,16 @@ const (
 	CredentialTypeKubernetes CredentialType = "kubernetes"
 )
 
+// ConfigMode controls how operator.json is merged into the user's openclaw.json
+// at pod start time.
+// +kubebuilder:validation:Enum=merge;overwrite
+type ConfigMode string
+
+const (
+	ConfigModeMerge     ConfigMode = "merge"
+	ConfigModeOverwrite ConfigMode = "overwrite"
+)
+
 // Condition types for Claw status.
 const (
 	ConditionTypeReady               = "Ready"
@@ -177,6 +187,14 @@ type CredentialSpec struct {
 
 // ClawSpec defines the desired state of Claw
 type ClawSpec struct {
+	// ConfigMode controls how operator config is applied on pod start.
+	// "merge" (default) deep-merges operator settings into the existing
+	// user config, preserving user-owned keys. "overwrite" fully replaces
+	// the config on every pod start.
+	// +optional
+	// +kubebuilder:default=merge
+	ConfigMode ConfigMode `json:"configMode,omitempty"`
+
 	// Credentials configures proxy credential injection per domain.
 	// +optional
 	Credentials []CredentialSpec `json:"credentials,omitempty"`
