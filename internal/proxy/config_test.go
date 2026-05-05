@@ -176,6 +176,30 @@ func TestMatchRouteMultiDomain(t *testing.T) {
 		require.NotNil(t, route)
 		assert.Equal(t, "CRED_V2", route.EnvVar)
 	})
+
+	t.Run("selects longest matching prefix among overlapping allowedPaths", func(t *testing.T) {
+		overlap := &Config{
+			Routes: []Route{
+				{Domain: "api.example.com", Injector: "bearer", EnvVar: "CRED_BROAD", AllowedPaths: []string{"/api/"}},
+				{Domain: "api.example.com", Injector: "bearer", EnvVar: "CRED_SPECIFIC", AllowedPaths: []string{"/api/admin/"}},
+			},
+		}
+		route := overlap.MatchRoute("api.example.com", "/api/admin/users")
+		require.NotNil(t, route)
+		assert.Equal(t, "CRED_SPECIFIC", route.EnvVar)
+	})
+
+	t.Run("falls back to broad prefix when specific does not match", func(t *testing.T) {
+		overlap := &Config{
+			Routes: []Route{
+				{Domain: "api.example.com", Injector: "bearer", EnvVar: "CRED_BROAD", AllowedPaths: []string{"/api/"}},
+				{Domain: "api.example.com", Injector: "bearer", EnvVar: "CRED_SPECIFIC", AllowedPaths: []string{"/api/admin/"}},
+			},
+		}
+		route := overlap.MatchRoute("api.example.com", "/api/public/data")
+		require.NotNil(t, route)
+		assert.Equal(t, "CRED_BROAD", route.EnvVar)
+	})
 }
 
 func TestNeedsMITMForHost(t *testing.T) {
@@ -212,6 +236,17 @@ func TestNeedsMITMForHost(t *testing.T) {
 			},
 		}
 		assert.True(t, mixed.NeedsMITMForHost("api.example.com"))
+	})
+
+	t.Run("exact passthrough takes priority over suffix MITM", func(t *testing.T) {
+		cfg := &Config{
+			Routes: []Route{
+				{Domain: "example.com", Injector: "none"},
+				{Domain: ".example.com", Injector: "bearer", EnvVar: "CRED_X"},
+			},
+		}
+		assert.False(t, cfg.NeedsMITMForHost("example.com"))
+		assert.True(t, cfg.NeedsMITMForHost("api.example.com"))
 	})
 }
 

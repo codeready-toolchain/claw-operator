@@ -227,7 +227,7 @@ Telegram requires a proxy change (pathToken replacement). Discord uses existing 
    - Update skill frontmatter description to mention messaging channels
 5. **End-to-end testing:** Verify both channels work with placeholder tokens
 
-### PR2: Slack
+### PR2: Slack - DONE
 
 Extends the proxy's routing model to support multiple routes per domain with path-based discrimination. Architecturally distinct from PR1 — modifies how route matching and injector storage work.
 

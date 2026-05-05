@@ -133,9 +133,12 @@ func (c *Config) MatchRoute(host, path string) *Route {
 		return matches[0]
 	}
 
-	// Multiple routes for the same host: prefer the one whose AllowedPaths
-	// matches the request path, fall back to the catch-all (no AllowedPaths).
-	var catchAll *Route
+	// Multiple routes for the same host: pick the route whose AllowedPaths
+	// entry is the longest prefix match for the request path. This prevents
+	// broad prefixes (e.g. "/api/") from shadowing more specific ones
+	// (e.g. "/api/admin/"). Fall back to the catch-all (no AllowedPaths).
+	var catchAll, best *Route
+	var bestLen int
 	for _, r := range matches {
 		if len(r.AllowedPaths) == 0 {
 			if catchAll == nil {
@@ -143,15 +146,23 @@ func (c *Config) MatchRoute(host, path string) *Route {
 			}
 			continue
 		}
-		if r.PathAllowed(path) {
-			return r
+		for _, prefix := range r.AllowedPaths {
+			if strings.HasPrefix(path, prefix) && len(prefix) > bestLen {
+				best = r
+				bestLen = len(prefix)
+			}
 		}
+	}
+	if best != nil {
+		return best
 	}
 	return catchAll
 }
 
-// NeedsMITMForHost reports whether any route matching the host requires MITM.
-// Used at CONNECT time when the request path is not yet known.
+// NeedsMITMForHost reports whether a matching route requires MITM for the host.
+// Exact hostname matches take priority: if any exact match exists, only those
+// routes are considered. Suffix/wildcard matches are evaluated only when no
+// exact match is found. Used at CONNECT time when the request path is unknown.
 func (c *Config) NeedsMITMForHost(host string) bool {
 	hostLower := strings.ToLower(host)
 
@@ -160,13 +171,27 @@ func (c *Config) NeedsMITMForHost(host string) bool {
 		hostname = h
 	}
 
+	var hasExact, exactNeedsMITM, suffixNeedsMITM bool
 	for i := range c.Routes {
 		domain := strings.ToLower(c.Routes[i].Domain)
-		if domainMatches(domain, hostLower, hostname) && c.Routes[i].NeedsMITM() {
-			return true
+		if !domainMatches(domain, hostLower, hostname) {
+			continue
+		}
+		if strings.HasPrefix(domain, ".") {
+			if c.Routes[i].NeedsMITM() {
+				suffixNeedsMITM = true
+			}
+		} else {
+			hasExact = true
+			if c.Routes[i].NeedsMITM() {
+				exactNeedsMITM = true
+			}
 		}
 	}
-	return false
+	if hasExact {
+		return exactNeedsMITM
+	}
+	return suffixNeedsMITM
 }
 
 // MatchRouteByPath finds the first gateway route whose PathPrefix matches the request path.
