@@ -369,7 +369,104 @@ The `kubernetes` credential uses the proxy's existing **MITM forward proxy mode*
 
 The gateway pod **cannot** reach any API server directly — egress is restricted to the proxy by NetworkPolicy. The assistant never sees real tokens; only the sanitized kubeconfig with placeholder values.
 
-## WhatsApp
+## Messaging Channels
+
+Messaging channels (Telegram, Discord, WhatsApp) use different authentication mechanisms. Unlike LLM providers, messaging channel credentials are injected transparently by the proxy — OpenClaw is configured with placeholder tokens and never sees the real secrets.
+
+### Telegram
+
+The Telegram Bot API embeds the bot token in the URL path (`/bot<TOKEN>/method`). The proxy uses `pathToken` credential injection to replace the placeholder with the real token on every request.
+
+**1. Create a bot** via [@BotFather](https://t.me/BotFather) and copy the bot token.
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic telegram-bot-secret \
+  --from-literal=token=YOUR_BOT_TOKEN \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: telegram
+      type: pathToken
+      secretRef:
+        name: telegram-bot-secret
+        key: token
+      domain: "api.telegram.org"
+      pathToken:
+        prefix: "/bot"
+EOF
+```
+
+**4. Configure OpenClaw** with a placeholder token:
+
+```sh
+openclaw channels add --channel telegram --token placeholder
+```
+
+The proxy intercepts requests like `/botplaceholder/sendMessage` and forwards them as `/bot<REAL_TOKEN>/sendMessage`. The real token never reaches the gateway pod.
+
+### Discord
+
+Discord Bot API uses `Authorization: Bot <TOKEN>` header authentication. The proxy uses `apiKey` credential injection with a `Bot ` value prefix. Discord also requires passthrough domains for its WebSocket gateway and CDN.
+
+**1. Create a bot** in the [Discord Developer Portal](https://discord.com/developers/applications) and copy the bot token.
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic discord-bot-secret \
+  --from-literal=token=YOUR_BOT_TOKEN \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: discord
+      type: apiKey
+      secretRef:
+        name: discord-bot-secret
+        key: token
+      domain: "discord.com"
+      apiKey:
+        header: Authorization
+        valuePrefix: "Bot "
+    - name: discord-gateway
+      type: none
+      domain: "gateway.discord.gg"
+    - name: discord-cdn
+      type: none
+      domain: "cdn.discordapp.com"
+EOF
+```
+
+**4. Configure OpenClaw** with a placeholder token:
+
+```sh
+openclaw channels add --channel discord --token placeholder
+```
+
+The `discord-gateway` and `discord-cdn` entries allow Discord's WebSocket connection and media/avatar downloads without credential injection.
+
+### WhatsApp
 
 OpenClaw supports WhatsApp as a messaging channel via WhatsApp Web (the Baileys library). The gateway maintains a linked-device session over WebSocket to WhatsApp's servers.
 

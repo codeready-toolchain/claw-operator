@@ -20,11 +20,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 )
 
-// PathTokenInjector prepends a token into the URL path.
-// For example, Telegram bots use /bot<token>/method — the prefix is "/bot"
-// and the token is read from an env var, yielding /bot<token>/original/path.
+// PathTokenInjector replaces a placeholder token in the URL path with the real
+// credential. The client sends requests with a placeholder already embedded
+// (e.g., /bot<placeholder>/sendMessage). The injector strips the placeholder
+// segment and inserts the real token from an env var.
 type PathTokenInjector struct {
 	envVar         string
 	pathPrefix     string
@@ -50,7 +52,19 @@ func (p *PathTokenInjector) Inject(req *http.Request) error {
 	if token == "" {
 		return fmt.Errorf("credential env var %s is empty", p.envVar)
 	}
-	req.URL.Path = p.pathPrefix + token + req.URL.Path
+
+	path := req.URL.Path
+	if !strings.HasPrefix(path, p.pathPrefix) {
+		return fmt.Errorf("path %q does not start with expected prefix %q", path, p.pathPrefix)
+	}
+
+	remainder := path[len(p.pathPrefix):]
+	if idx := strings.IndexByte(remainder, '/'); idx >= 0 {
+		req.URL.Path = p.pathPrefix + token + remainder[idx:]
+	} else {
+		req.URL.Path = p.pathPrefix + token
+	}
+
 	for k, v := range p.defaultHeaders {
 		req.Header.Set(k, v)
 	}

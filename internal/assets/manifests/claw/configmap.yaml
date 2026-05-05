@@ -135,7 +135,7 @@ data:
   PROXY_SETUP.md: |
     ---
     name: proxy-setup
-    description: "Network proxy architecture and how to configure access to external services like WhatsApp."
+    description: "Network proxy architecture and how to configure access to external services like WhatsApp, Telegram, and Discord."
     ---
 
     # Proxy Architecture
@@ -282,6 +282,70 @@ data:
 
     **Step 5.** Tell the user to scan the QR code with their phone
     (WhatsApp → Linked Devices).
+
+    ### Telegram
+
+    Telegram Bot API embeds the bot token in the URL path (`/bot<TOKEN>/method`).
+    The proxy uses `pathToken` credential injection: OpenClaw is configured with a
+    placeholder token, and the proxy replaces it with the real token on every request.
+
+    The user needs to add this credential entry to the Claw CR:
+
+    ```yaml
+        - name: telegram
+          type: pathToken
+          secretRef:
+            name: telegram-bot-secret
+            key: token
+          domain: "api.telegram.org"
+          pathToken:
+            prefix: "/bot"
+    ```
+
+    OpenClaw config: set the bot token to any placeholder value (e.g., `placeholder`).
+    The proxy strips whatever token it finds and injects the real one:
+    ```sh
+    openclaw channels add --channel telegram --token placeholder
+    ```
+
+    The real bot token is stored in the Kubernetes Secret and never reaches the
+    gateway pod. The proxy intercepts `/botplaceholder/sendMessage` and forwards
+    it as `/bot<REAL_TOKEN>/sendMessage`.
+
+    ### Discord
+
+    Discord Bot API uses `Authorization: Bot <TOKEN>` header authentication. The
+    proxy uses `apiKey` credential injection with `valuePrefix: "Bot "` to inject
+    the real token into the Authorization header.
+
+    The user needs to add these credential entries to the Claw CR:
+
+    ```yaml
+        - name: discord
+          type: apiKey
+          secretRef:
+            name: discord-bot-secret
+            key: token
+          domain: "discord.com"
+          apiKey:
+            header: Authorization
+            valuePrefix: "Bot "
+        - name: discord-gateway
+          type: none
+          domain: "gateway.discord.gg"
+        - name: discord-cdn
+          type: none
+          domain: "cdn.discordapp.com"
+    ```
+
+    OpenClaw config: set the bot token to any placeholder value:
+    ```sh
+    openclaw channels add --channel discord --token placeholder
+    ```
+
+    The `discord-gateway` and `discord-cdn` entries are passthrough domains for
+    Discord's WebSocket gateway and CDN (media/avatars). They don't need credential
+    injection.
 
     ## Custom domains
 

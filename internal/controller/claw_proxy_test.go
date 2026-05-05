@@ -360,6 +360,35 @@ func TestGenerateProxyConfig(t *testing.T) {
 		assert.Equal(t, "/bot", route.PathPrefix)
 	})
 
+	t.Run("should generate config with Discord apiKey credential", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name: "discord",
+				Type: clawv1alpha1.CredentialTypeAPIKey,
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "discord-bot-secret",
+					Key:  "token",
+				},
+				Domain: "discord.com",
+				APIKey: &clawv1alpha1.APIKeyConfig{
+					Header:      "Authorization",
+					ValuePrefix: "Bot ",
+				},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials))
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "discord.com")
+		assert.Equal(t, "api_key", route.Injector)
+		assert.Equal(t, "Authorization", route.Header)
+		assert.Equal(t, "Bot ", route.ValuePrefix)
+		assert.Equal(t, "CRED_DISCORD", route.EnvVar)
+	})
+
 	t.Run("should generate config with oauth2 route", func(t *testing.T) {
 		credentials := []clawv1alpha1.CredentialSpec{
 			{

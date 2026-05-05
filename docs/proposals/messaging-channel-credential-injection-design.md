@@ -207,7 +207,7 @@ Bolt-shaped placeholders (`xoxb-placeholder`, `xapp-placeholder`) pass Bolt's st
 
 ## Implementation Plan
 
-### PR1: Telegram + Discord
+### PR1: Telegram + Discord - DONE
 
 Telegram requires a proxy change (pathToken replacement). Discord uses existing injectors unchanged. Grouped into one PR — small proxy diff, shared documentation scope.
 
