@@ -200,6 +200,30 @@ func TestMatchRouteMultiDomain(t *testing.T) {
 		require.NotNil(t, route)
 		assert.Equal(t, "CRED_BROAD", route.EnvVar)
 	})
+
+	t.Run("exact host match takes priority over suffix match", func(t *testing.T) {
+		cfg := &Config{
+			Routes: []Route{
+				{Domain: ".example.com", Injector: "bearer", EnvVar: "CRED_SUFFIX"},
+				{Domain: "example.com", Injector: "bearer", EnvVar: "CRED_EXACT"},
+			},
+		}
+		route := cfg.MatchRoute("example.com", "/any")
+		require.NotNil(t, route)
+		assert.Equal(t, "CRED_EXACT", route.EnvVar)
+	})
+
+	t.Run("exact path entry does not overmatch", func(t *testing.T) {
+		cfg := &Config{
+			Routes: []Route{
+				{Domain: "slack.com", Injector: "bearer", EnvVar: "CRED_APP", AllowedPaths: []string{"/api/apps.connections.open"}},
+				{Domain: "slack.com", Injector: "bearer", EnvVar: "CRED_BOT"},
+			},
+		}
+		route := cfg.MatchRoute("slack.com", "/api/apps.connections.openfoo")
+		require.NotNil(t, route)
+		assert.Equal(t, "CRED_BOT", route.EnvVar, "should fall through to catch-all, not overmatch the exact entry")
+	})
 }
 
 func TestNeedsMITMForHost(t *testing.T) {
@@ -288,6 +312,9 @@ func TestPathAllowed(t *testing.T) {
 		{name: "multiple prefixes any match allows", allowedPaths: []string{"/foo/", "/bar/"}, path: "/bar/baz", want: true},
 		{name: "multiple prefixes none match rejects", allowedPaths: []string{"/foo/", "/bar/"}, path: "/qux/baz", want: false},
 		{name: "partial prefix does not match", allowedPaths: []string{"/BerriAI/litellm/"}, path: "/BerriAI/litellm-fork/main/file", want: false},
+		{name: "exact entry matches exact path", allowedPaths: []string{"/api/apps.connections.open"}, path: "/api/apps.connections.open", want: true},
+		{name: "exact entry rejects longer path", allowedPaths: []string{"/api/apps.connections.open"}, path: "/api/apps.connections.openfoo", want: false},
+		{name: "exact entry rejects subpath", allowedPaths: []string{"/api/apps.connections.open"}, path: "/api/apps.connections.open/extra", want: false},
 	}
 
 	for _, tt := range tests {

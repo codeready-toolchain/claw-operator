@@ -60,15 +60,24 @@ func (r *Route) NeedsMITM() bool {
 	return len(r.AllowedPaths) > 0 || len(r.DefaultHeaders) > 0
 }
 
+// pathEntryMatches reports whether path matches an AllowedPaths entry.
+// Entries ending with "/" use prefix semantics; all others require exact match.
+func pathEntryMatches(path, entry string) bool {
+	if strings.HasSuffix(entry, "/") {
+		return strings.HasPrefix(path, entry)
+	}
+	return path == entry
+}
+
 // PathAllowed reports whether the request path is permitted by this route.
 // If AllowedPaths is empty the route is unrestricted. Otherwise the path
-// must start with at least one of the listed prefixes.
+// must match at least one entry (exact for bare paths, prefix for "/" entries).
 func (r *Route) PathAllowed(path string) bool {
 	if len(r.AllowedPaths) == 0 {
 		return true
 	}
-	for _, prefix := range r.AllowedPaths {
-		if strings.HasPrefix(path, prefix) {
+	for _, entry := range r.AllowedPaths {
+		if pathEntryMatches(path, entry) {
 			return true
 		}
 	}
@@ -118,14 +127,23 @@ func (c *Config) MatchRoute(host, path string) *Route {
 		hostname = h
 	}
 
-	var matches []*Route
+	var exactMatches, suffixMatches []*Route
 	for i := range c.Routes {
 		domain := strings.ToLower(c.Routes[i].Domain)
-		if domainMatches(domain, hostLower, hostname) {
-			matches = append(matches, &c.Routes[i])
+		if !domainMatches(domain, hostLower, hostname) {
+			continue
+		}
+		if strings.HasPrefix(domain, ".") {
+			suffixMatches = append(suffixMatches, &c.Routes[i])
+		} else {
+			exactMatches = append(exactMatches, &c.Routes[i])
 		}
 	}
 
+	matches := exactMatches
+	if len(matches) == 0 {
+		matches = suffixMatches
+	}
 	if len(matches) == 0 {
 		return nil
 	}
@@ -134,8 +152,8 @@ func (c *Config) MatchRoute(host, path string) *Route {
 	}
 
 	// Multiple routes for the same host: pick the route whose AllowedPaths
-	// entry is the longest prefix match for the request path. This prevents
-	// broad prefixes (e.g. "/api/") from shadowing more specific ones
+	// entry is the longest match for the request path. This prevents broad
+	// entries (e.g. "/api/") from shadowing more specific ones
 	// (e.g. "/api/admin/"). Fall back to the catch-all (no AllowedPaths).
 	var catchAll, best *Route
 	var bestLen int
@@ -146,10 +164,10 @@ func (c *Config) MatchRoute(host, path string) *Route {
 			}
 			continue
 		}
-		for _, prefix := range r.AllowedPaths {
-			if strings.HasPrefix(path, prefix) && len(prefix) > bestLen {
+		for _, entry := range r.AllowedPaths {
+			if pathEntryMatches(path, entry) && len(entry) > bestLen {
 				best = r
-				bestLen = len(prefix)
+				bestLen = len(entry)
 			}
 		}
 	}
