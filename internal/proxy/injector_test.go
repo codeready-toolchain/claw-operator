@@ -276,11 +276,50 @@ func TestPathTokenInjector(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req, _ := http.NewRequest(http.MethodPost, "https://api.telegram.org/sendMessage", nil)
-	require.NoError(t, inj.Inject(req))
+	t.Run("replaces placeholder token in path", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, "https://api.telegram.org/botplaceholder/sendMessage", nil)
+		require.NoError(t, inj.Inject(req))
 
-	assert.Equal(t, "/bot123456:ABC-DEF/sendMessage", req.URL.Path)
-	assert.Equal(t, "value", req.Header.Get("x-custom"))
+		assert.Equal(t, "/bot123456:ABC-DEF/sendMessage", req.URL.Path)
+		assert.Equal(t, "value", req.Header.Get("x-custom"))
+	})
+
+	t.Run("bare token without method", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, "https://api.telegram.org/botplaceholder", nil)
+		require.NoError(t, inj.Inject(req))
+
+		assert.Equal(t, "/bot123456:ABC-DEF", req.URL.Path)
+	})
+
+	t.Run("multiple path segments after token", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, "https://api.telegram.org/botplaceholder/sendMessage/extra", nil)
+		require.NoError(t, inj.Inject(req))
+
+		assert.Equal(t, "/bot123456:ABC-DEF/sendMessage/extra", req.URL.Path)
+	})
+
+	t.Run("prefix only with no token segment", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, "https://api.telegram.org/bot", nil)
+		require.NoError(t, inj.Inject(req))
+
+		assert.Equal(t, "/bot123456:ABC-DEF", req.URL.Path)
+	})
+
+	t.Run("realistic token with colons preserved", func(t *testing.T) {
+		t.Setenv("CRED_TELEGRAM", "7891011:XYZ_abc-123")
+
+		req, _ := http.NewRequest(http.MethodPost, "https://api.telegram.org/botdummy/getMe", nil)
+		require.NoError(t, inj.Inject(req))
+
+		assert.Equal(t, "/bot7891011:XYZ_abc-123/getMe", req.URL.Path)
+	})
+
+	t.Run("error when path does not start with prefix", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, "https://api.telegram.org/sendMessage", nil)
+		err := inj.Inject(req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not start with expected prefix")
+	})
 }
 
 func TestPathTokenInjectorEmptyEnvVar(t *testing.T) {
@@ -292,7 +331,7 @@ func TestPathTokenInjectorEmptyEnvVar(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req, _ := http.NewRequest(http.MethodPost, "https://api.telegram.org/sendMessage", nil)
+	req, _ := http.NewRequest(http.MethodPost, "https://api.telegram.org/botplaceholder/sendMessage", nil)
 	err = inj.Inject(req)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CRED_EMPTY_PATH is empty")
