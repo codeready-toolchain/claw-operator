@@ -127,7 +127,7 @@ func (c *Config) MatchRoute(host, path string) *Route {
 		hostname = h
 	}
 
-	var exactMatches, suffixMatches []*Route
+	var portExactMatches, exactMatches, suffixMatches []*Route
 	for i := range c.Routes {
 		domain := strings.ToLower(c.Routes[i].Domain)
 		if !domainMatches(domain, hostLower, hostname) {
@@ -135,12 +135,17 @@ func (c *Config) MatchRoute(host, path string) *Route {
 		}
 		if strings.HasPrefix(domain, ".") {
 			suffixMatches = append(suffixMatches, &c.Routes[i])
+		} else if _, _, err := net.SplitHostPort(domain); err == nil {
+			portExactMatches = append(portExactMatches, &c.Routes[i])
 		} else {
 			exactMatches = append(exactMatches, &c.Routes[i])
 		}
 	}
 
-	matches := exactMatches
+	matches := portExactMatches
+	if len(matches) == 0 {
+		matches = exactMatches
+	}
 	if len(matches) == 0 {
 		matches = suffixMatches
 	}
@@ -189,6 +194,7 @@ func (c *Config) NeedsMITMForHost(host string) bool {
 		hostname = h
 	}
 
+	var hasPortExact, portExactNeedsMITM bool
 	var hasExact, exactNeedsMITM, suffixNeedsMITM bool
 	for i := range c.Routes {
 		domain := strings.ToLower(c.Routes[i].Domain)
@@ -199,12 +205,20 @@ func (c *Config) NeedsMITMForHost(host string) bool {
 			if c.Routes[i].NeedsMITM() {
 				suffixNeedsMITM = true
 			}
+		} else if _, _, err := net.SplitHostPort(domain); err == nil {
+			hasPortExact = true
+			if c.Routes[i].NeedsMITM() {
+				portExactNeedsMITM = true
+			}
 		} else {
 			hasExact = true
 			if c.Routes[i].NeedsMITM() {
 				exactNeedsMITM = true
 			}
 		}
+	}
+	if hasPortExact {
+		return portExactNeedsMITM
 	}
 	if hasExact {
 		return exactNeedsMITM

@@ -390,6 +390,54 @@ func TestMatchRoutePortAware(t *testing.T) {
 	}
 }
 
+func TestMatchRoutePortExactPriority(t *testing.T) {
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "api.example.com", Injector: "none"},
+			{Domain: "api.example.com:6443", Injector: "kubernetes"},
+		},
+	}
+
+	t.Run("port-exact wins over bare-host regardless of config order", func(t *testing.T) {
+		route := cfg.MatchRoute("api.example.com:6443", "/any")
+		require.NotNil(t, route)
+		assert.Equal(t, "api.example.com:6443", route.Domain)
+	})
+
+	t.Run("bare-host still works for standard port", func(t *testing.T) {
+		route := cfg.MatchRoute("api.example.com:443", "/any")
+		require.NotNil(t, route)
+		assert.Equal(t, "api.example.com", route.Domain)
+	})
+
+	t.Run("bare-host works without port", func(t *testing.T) {
+		route := cfg.MatchRoute("api.example.com", "/any")
+		require.NotNil(t, route)
+		assert.Equal(t, "api.example.com", route.Domain)
+	})
+}
+
+func TestNeedsMITMForHostPortExactPriority(t *testing.T) {
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "api.example.com", Injector: "none"},
+			{Domain: "api.example.com:6443", Injector: "kubernetes"},
+		},
+	}
+
+	t.Run("port-exact MITM wins over bare-host passthrough", func(t *testing.T) {
+		assert.True(t, cfg.NeedsMITMForHost("api.example.com:6443"))
+	})
+
+	t.Run("bare-host passthrough used for standard port", func(t *testing.T) {
+		assert.False(t, cfg.NeedsMITMForHost("api.example.com:443"))
+	})
+
+	t.Run("bare-host passthrough used without port", func(t *testing.T) {
+		assert.False(t, cfg.NeedsMITMForHost("api.example.com"))
+	})
+}
+
 func TestRouteInjectorFieldNotSerialized(t *testing.T) {
 	route := Route{
 		Domain:   "example.com",
