@@ -17,181 +17,18 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
-
-// --- Vertex AI base URL tests ---
-
-func TestVertexAIBaseURL(t *testing.T) {
-	tests := []struct {
-		name     string
-		location string
-		want     string
-	}{
-		{
-			name:     "global uses plain hostname",
-			location: "global",
-			want:     "https://aiplatform.googleapis.com",
-		},
-		{
-			name:     "regional location uses prefix",
-			location: "us-east5",
-			want:     "https://us-east5-aiplatform.googleapis.com",
-		},
-		{
-			name:     "another region uses prefix",
-			location: "europe-west1",
-			want:     "https://europe-west1-aiplatform.googleapis.com",
-		},
-		{
-			name:     "us-central1 uses prefix",
-			location: "us-central1",
-			want:     "https://us-central1-aiplatform.googleapis.com",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, vertexAIBaseURL(tt.location))
-		})
-	}
-}
-
-// --- Vertex SDK helper tests ---
-
-func TestUsesVertexSDK(t *testing.T) {
-	tests := []struct {
-		name string
-		cred clawv1alpha1.CredentialSpec
-		want bool
-	}{
-		{
-			name: "GCP + anthropic uses Vertex SDK",
-			cred: clawv1alpha1.CredentialSpec{Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic"},
-			want: true,
-		},
-		{
-			name: "GCP + google does not use Vertex SDK",
-			cred: clawv1alpha1.CredentialSpec{Type: clawv1alpha1.CredentialTypeGCP, Provider: "google"},
-			want: false,
-		},
-		{
-			name: "GCP without provider does not use Vertex SDK",
-			cred: clawv1alpha1.CredentialSpec{Type: clawv1alpha1.CredentialTypeGCP},
-			want: false,
-		},
-		{
-			name: "apiKey + anthropic does not use Vertex SDK",
-			cred: clawv1alpha1.CredentialSpec{Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "anthropic"},
-			want: false,
-		},
-		{
-			name: "GCP + meta uses Vertex SDK",
-			cred: clawv1alpha1.CredentialSpec{Type: clawv1alpha1.CredentialTypeGCP, Provider: "meta"},
-			want: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, usesVertexSDK(tt.cred))
-		})
-	}
-}
-
-// --- Proxy config Vertex SDK tests ---
-
-func TestGenerateProxyConfigVertexSDK(t *testing.T) {
-	t.Run("should not create gateway route for GCP anthropic credential", func(t *testing.T) {
-		credentials := []clawv1alpha1.CredentialSpec{
-			{
-				Name:     "anthropic-vertex",
-				Type:     clawv1alpha1.CredentialTypeGCP,
-				Provider: "anthropic",
-				SecretRef: &clawv1alpha1.SecretRef{
-					Name: "vertex-sa",
-					Key:  "sa.json",
-				},
-				Domain: ".googleapis.com",
-				GCP: &clawv1alpha1.GCPConfig{
-					Project:  "my-project",
-					Location: "us-east5",
-				},
-			},
-		}
-
-		data, err := generateProxyConfig(toResolved(credentials))
-		require.NoError(t, err)
-
-		var cfg proxyConfig
-		require.NoError(t, json.Unmarshal(data, &cfg))
-		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
-		assert.Equal(t, "gcp", route.Injector)
-		assert.Empty(t, route.PathPrefix, "Vertex SDK provider should not have gateway path prefix")
-		assert.Empty(t, route.Upstream, "Vertex SDK provider should not have gateway upstream")
-	})
-
-	t.Run("should create gateway route for GCP google but not GCP anthropic", func(t *testing.T) {
-		credentials := []clawv1alpha1.CredentialSpec{
-			{
-				Name:     "gemini-vertex",
-				Type:     clawv1alpha1.CredentialTypeGCP,
-				Provider: "google",
-				SecretRef: &clawv1alpha1.SecretRef{
-					Name: "gcp-secret",
-					Key:  "sa.json",
-				},
-				Domain: ".googleapis.com",
-				GCP: &clawv1alpha1.GCPConfig{
-					Project:  "my-project",
-					Location: "us-central1",
-				},
-			},
-			{
-				Name:     "anthropic-vertex",
-				Type:     clawv1alpha1.CredentialTypeGCP,
-				Provider: "anthropic",
-				SecretRef: &clawv1alpha1.SecretRef{
-					Name: "vertex-sa",
-					Key:  "sa.json",
-				},
-				Domain: ".googleapis.com",
-				GCP: &clawv1alpha1.GCPConfig{
-					Project:  "my-project",
-					Location: "us-east5",
-				},
-			},
-		}
-
-		data, err := generateProxyConfig(toResolved(credentials))
-		require.NoError(t, err)
-
-		var cfg proxyConfig
-		require.NoError(t, json.Unmarshal(data, &cfg))
-		var googleRoute, anthropicRoute *proxyRoute
-		for i := range cfg.Routes {
-			if cfg.Routes[i].SAFilePath == "/etc/proxy/credentials/gemini-vertex/sa-key.json" {
-				googleRoute = &cfg.Routes[i]
-			}
-			if cfg.Routes[i].SAFilePath == "/etc/proxy/credentials/anthropic-vertex/sa-key.json" {
-				anthropicRoute = &cfg.Routes[i]
-			}
-		}
-
-		require.NotNil(t, googleRoute, "google GCP route should exist")
-		assert.Equal(t, "/gemini-vertex", googleRoute.PathPrefix, "google GCP should have gateway prefix")
-		assert.NotEmpty(t, googleRoute.Upstream, "google GCP should have gateway upstream")
-
-		require.NotNil(t, anthropicRoute, "anthropic GCP route should exist")
-		assert.Empty(t, anthropicRoute.PathPrefix, "anthropic GCP should not have gateway prefix")
-		assert.Empty(t, anthropicRoute.Upstream, "anthropic GCP should not have gateway upstream")
-	})
-}
 
 // --- Provider injection Vertex SDK tests ---
 
@@ -318,5 +155,255 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "anthropic-vertex")
+	})
+}
+
+// --- Provider injection into ConfigMap tests ---
+
+func TestInjectProvidersIntoConfigMap(t *testing.T) {
+	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
+		cm := &unstructured.Unstructured{}
+		cm.SetKind(ConfigMapKind)
+		cm.SetName(getConfigMapName(testInstanceName))
+		cm.Object["data"] = map[string]any{
+			"operator.json": jsonContent,
+		}
+		return []*unstructured.Unstructured{cm}
+	}
+
+	baseJSON := `{"models":{"providers":{}},"gateway":{"port":18789}}`
+
+	getProviders := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
+		t.Helper()
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
+		require.NoError(t, err)
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(raw), &config))
+		models := config["models"].(map[string]any)
+		return models["providers"].(map[string]any)
+	}
+
+	t.Run("should inject google provider with correct baseUrl", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "google",
+				Domain:   "generativelanguage.googleapis.com",
+			},
+		}
+
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		providers := getProviders(t, objects)
+		require.Contains(t, providers, "google")
+		google := providers["google"].(map[string]any)
+		assert.Equal(t, "https://generativelanguage.googleapis.com/v1beta", google["baseUrl"])
+		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
+	})
+
+	t.Run("should inject multiple providers", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "google",
+				Domain:   "generativelanguage.googleapis.com",
+			},
+			{
+				Name:     "claude",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "anthropic",
+				Domain:   "api.anthropic.com",
+			},
+		}
+
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		providers := getProviders(t, objects)
+		assert.Contains(t, providers, "google")
+		assert.Contains(t, providers, "anthropic")
+		anthropic := providers["anthropic"].(map[string]any)
+		assert.Equal(t, "https://api.anthropic.com", anthropic["baseUrl"])
+	})
+
+	t.Run("should leave providers empty when no provider is set", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:   "telegram",
+				Type:   clawv1alpha1.CredentialTypeAPIKey,
+				Domain: "api.telegram.org",
+			},
+		}
+
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		providers := getProviders(t, objects)
+		assert.Empty(t, providers)
+	})
+
+	t.Run("should use Vertex AI upstream for google gcp credential", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "google",
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-proj",
+					Location: "europe-west1",
+				},
+			},
+		}
+
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		providers := getProviders(t, objects)
+		require.Contains(t, providers, "google")
+		google := providers["google"].(map[string]any)
+		assert.Equal(t, "https://europe-west1-aiplatform.googleapis.com/v1/projects/my-proj/locations/europe-west1/publishers/google", google["baseUrl"])
+	})
+
+	t.Run("should preserve other config sections", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(nil)))
+
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
+		require.NoError(t, err)
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(raw), &config))
+		gateway := config["gateway"].(map[string]any)
+		assert.Equal(t, float64(18789), gateway["port"])
+	})
+
+	t.Run("should skip pathToken credentials even with provider set", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "telegram",
+				Type:     clawv1alpha1.CredentialTypePathToken,
+				Provider: "telegram",
+				Domain:   "api.telegram.org",
+				PathToken: &clawv1alpha1.PathTokenConfig{
+					Prefix: "/bot",
+				},
+			},
+		}
+
+		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		providers := getProviders(t, objects)
+		assert.Empty(t, providers, "pathToken credentials should not generate provider entries")
+	})
+
+	t.Run("should reject duplicate providers", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini-1", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+			{Name: "gemini-2", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+		}
+
+		err := injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate provider")
+		assert.Contains(t, err.Error(), "google")
+	})
+}
+
+// --- Dynamic provider injection integration tests ---
+
+func TestOpenClawDynamicProviders(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("should inject dynamic providers into ConfigMap after reconciliation", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstance(t, ctx, testInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getConfigMapName(testInstanceName),
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		operatorJSON, ok := cm.Data["operator.json"]
+		require.True(t, ok, "operator.json should exist")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(operatorJSON), &config))
+
+		models, ok := config["models"].(map[string]any)
+		require.True(t, ok, "models section should exist")
+		providers, ok := models["providers"].(map[string]any)
+		require.True(t, ok, "providers section should exist")
+		require.Contains(t, providers, "google", "google provider should be injected")
+
+		google, ok := providers["google"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "https://generativelanguage.googleapis.com/v1beta", google["baseUrl"])
+		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
+	})
+
+	t.Run("should have empty providers when no credentials have provider set", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:   "passthrough",
+				Type:   clawv1alpha1.CredentialTypeNone,
+				Domain: "example.com",
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getConfigMapName(testInstanceName),
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+
+		models := config["models"].(map[string]any)
+		providers := models["providers"].(map[string]any)
+		assert.Empty(t, providers, "providers should be empty when no credentials have provider set")
+	})
+
+	t.Run("should have empty providers for MITM-only credentials", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstanceMITMOnly(t, ctx, testInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getConfigMapName(testInstanceName),
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+
+		models := config["models"].(map[string]any)
+		providers := models["providers"].(map[string]any)
+		assert.Empty(t, providers, "providers should be empty for MITM-only credentials")
 	})
 }

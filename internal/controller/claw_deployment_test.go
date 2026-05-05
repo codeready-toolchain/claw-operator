@@ -495,3 +495,102 @@ func TestConfigureClawDeploymentConfigMode(t *testing.T) {
 		assert.Contains(t, err.Error(), ClawInitConfigContainerName)
 	})
 }
+
+// --- Kubernetes deployment configuration tests ---
+
+func TestConfigureClawDeploymentForKubernetes(t *testing.T) {
+	makeDeployment := func() []*unstructured.Unstructured {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name":         ClawGatewayContainerName,
+							"env":          []any{},
+							"volumeMounts": []any{},
+						},
+					},
+					"volumes": []any{},
+				},
+			},
+		}
+		return []*unstructured.Unstructured{dep}
+	}
+
+	t.Run("should add KUBECONFIG env, PATH, volumes, and init container", func(t *testing.T) {
+		objects := makeDeployment()
+		creds := []resolvedCredential{
+			{
+				CredentialSpec: clawv1alpha1.CredentialSpec{
+					Name:      "k8s",
+					Type:      clawv1alpha1.CredentialTypeKubernetes,
+					SecretRef: &clawv1alpha1.SecretRef{Name: "kube-secret", Key: "config"},
+				},
+				KubeConfig: &kubeconfigData{},
+			},
+		}
+
+		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds, DefaultKubectlImage, testInstanceName))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+
+		envVars := container["env"].([]any)
+		envMap := map[string]string{}
+		for _, e := range envVars {
+			env := e.(map[string]any)
+			envMap[env["name"].(string)] = env["value"].(string)
+		}
+		assert.Equal(t, "/etc/kube/config", envMap["KUBECONFIG"])
+		assert.Contains(t, envMap["PATH"], "/opt/kube-tools")
+
+		volumeMounts := container["volumeMounts"].([]any)
+		require.Len(t, volumeMounts, 2)
+		vmNames := map[string]string{}
+		for _, vm := range volumeMounts {
+			m := vm.(map[string]any)
+			vmNames[m["name"].(string)] = m["mountPath"].(string)
+		}
+		assert.Equal(t, "/etc/kube", vmNames["kube-config"])
+		assert.Equal(t, "/opt/kube-tools", vmNames["kubectl-bin"])
+
+		volumes, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "volumes")
+		require.Len(t, volumes, 2)
+		volNames := map[string]bool{}
+		for _, v := range volumes {
+			vol := v.(map[string]any)
+			volNames[vol["name"].(string)] = true
+		}
+		assert.True(t, volNames["kube-config"])
+		assert.True(t, volNames["kubectl-bin"])
+
+		initContainers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "initContainers")
+		require.Len(t, initContainers, 1)
+		initC := initContainers[0].(map[string]any)
+		assert.Equal(t, "init-kubectl", initC["name"])
+		assert.Equal(t, DefaultKubectlImage, initC["image"])
+	})
+
+	t.Run("should be no-op when no kubernetes credentials exist", func(t *testing.T) {
+		objects := makeDeployment()
+		creds := []resolvedCredential{
+			{
+				CredentialSpec: clawv1alpha1.CredentialSpec{
+					Name:   "gemini",
+					Type:   clawv1alpha1.CredentialTypeAPIKey,
+					Domain: "generativelanguage.googleapis.com",
+				},
+			},
+		}
+
+		require.NoError(t, configureClawDeploymentForKubernetes(objects, creds, DefaultKubectlImage, testInstanceName))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+		assert.Empty(t, envVars)
+	})
+}

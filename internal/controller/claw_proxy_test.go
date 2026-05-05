@@ -19,12 +19,15 @@ package controller
 import (
 	"context"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -659,261 +662,6 @@ func TestConfigureProxyImage(t *testing.T) {
 	})
 }
 
-func TestResolveProviderInfo(t *testing.T) {
-	tests := []struct {
-		name         string
-		cred         clawv1alpha1.CredentialSpec
-		wantUpstream string
-		wantBasePath string
-	}{
-		{
-			name: "google apiKey uses Gemini REST API",
-			cred: clawv1alpha1.CredentialSpec{
-				Provider: "google",
-				Type:     clawv1alpha1.CredentialTypeAPIKey,
-				Domain:   "generativelanguage.googleapis.com",
-			},
-			wantUpstream: "https://generativelanguage.googleapis.com",
-			wantBasePath: "/v1beta",
-		},
-		{
-			name: "google gcp uses Vertex AI",
-			cred: clawv1alpha1.CredentialSpec{
-				Provider: "google",
-				Type:     clawv1alpha1.CredentialTypeGCP,
-				Domain:   ".googleapis.com",
-				GCP: &clawv1alpha1.GCPConfig{
-					Project:  "my-project",
-					Location: "us-central1",
-				},
-			},
-			wantUpstream: "https://us-central1-aiplatform.googleapis.com",
-			wantBasePath: "/v1/projects/my-project/locations/us-central1/publishers/google",
-		},
-		{
-			name: "anthropic bearer uses domain directly",
-			cred: clawv1alpha1.CredentialSpec{
-				Provider: "anthropic",
-				Type:     clawv1alpha1.CredentialTypeBearer,
-				Domain:   "api.anthropic.com",
-			},
-			wantUpstream: "https://api.anthropic.com",
-			wantBasePath: "",
-		},
-		{
-			name: "anthropic gcp uses Vertex AI with anthropic publisher",
-			cred: clawv1alpha1.CredentialSpec{
-				Provider: "anthropic",
-				Type:     clawv1alpha1.CredentialTypeGCP,
-				Domain:   ".googleapis.com",
-				GCP: &clawv1alpha1.GCPConfig{
-					Project:  "my-project",
-					Location: "us-east5",
-				},
-			},
-			wantUpstream: "https://us-east5-aiplatform.googleapis.com",
-			wantBasePath: "/v1/projects/my-project/locations/us-east5/publishers/anthropic",
-		},
-		{
-			name: "gcp global location uses plain hostname",
-			cred: clawv1alpha1.CredentialSpec{
-				Provider: "anthropic",
-				Type:     clawv1alpha1.CredentialTypeGCP,
-				Domain:   ".googleapis.com",
-				GCP: &clawv1alpha1.GCPConfig{
-					Project:  "my-project",
-					Location: "global",
-				},
-			},
-			wantUpstream: "https://aiplatform.googleapis.com",
-			wantBasePath: "/v1/projects/my-project/locations/global/publishers/anthropic",
-		},
-		{
-			name: "unknown provider with exact domain",
-			cred: clawv1alpha1.CredentialSpec{
-				Provider: "custom-llm",
-				Type:     clawv1alpha1.CredentialTypeBearer,
-				Domain:   "api.custom-llm.com",
-			},
-			wantUpstream: "https://api.custom-llm.com",
-			wantBasePath: "",
-		},
-		{
-			name: "unknown provider with suffix domain strips dot",
-			cred: clawv1alpha1.CredentialSpec{
-				Provider: "custom",
-				Type:     clawv1alpha1.CredentialTypeBearer,
-				Domain:   ".custom.ai",
-			},
-			wantUpstream: "https://custom.ai",
-			wantBasePath: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			info := resolveProviderInfo(tt.cred)
-			assert.Equal(t, tt.wantUpstream, info.Upstream)
-			assert.Equal(t, tt.wantBasePath, info.BasePath)
-		})
-	}
-}
-
-func TestInjectProvidersIntoConfigMap(t *testing.T) {
-	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
-		cm := &unstructured.Unstructured{}
-		cm.SetKind(ConfigMapKind)
-		cm.SetName(getConfigMapName(testInstanceName))
-		cm.Object["data"] = map[string]any{
-			"operator.json": jsonContent,
-		}
-		return []*unstructured.Unstructured{cm}
-	}
-
-	baseJSON := `{"models":{"providers":{}},"gateway":{"port":18789}}`
-
-	getProviders := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
-		t.Helper()
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
-		require.NoError(t, err)
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-		models := config["models"].(map[string]any)
-		return models["providers"].(map[string]any)
-	}
-
-	t.Run("should inject google provider with correct baseUrl", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
-		credentials := []clawv1alpha1.CredentialSpec{
-			{
-				Name:     "gemini",
-				Type:     clawv1alpha1.CredentialTypeAPIKey,
-				Provider: "google",
-				Domain:   "generativelanguage.googleapis.com",
-			},
-		}
-
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
-
-		providers := getProviders(t, objects)
-		require.Contains(t, providers, "google")
-		google := providers["google"].(map[string]any)
-		assert.Equal(t, "https://generativelanguage.googleapis.com/v1beta", google["baseUrl"])
-		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
-	})
-
-	t.Run("should inject multiple providers", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
-		credentials := []clawv1alpha1.CredentialSpec{
-			{
-				Name:     "gemini",
-				Type:     clawv1alpha1.CredentialTypeAPIKey,
-				Provider: "google",
-				Domain:   "generativelanguage.googleapis.com",
-			},
-			{
-				Name:     "claude",
-				Type:     clawv1alpha1.CredentialTypeBearer,
-				Provider: "anthropic",
-				Domain:   "api.anthropic.com",
-			},
-		}
-
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
-
-		providers := getProviders(t, objects)
-		assert.Contains(t, providers, "google")
-		assert.Contains(t, providers, "anthropic")
-		anthropic := providers["anthropic"].(map[string]any)
-		assert.Equal(t, "https://api.anthropic.com", anthropic["baseUrl"])
-	})
-
-	t.Run("should leave providers empty when no provider is set", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
-		credentials := []clawv1alpha1.CredentialSpec{
-			{
-				Name:   "telegram",
-				Type:   clawv1alpha1.CredentialTypeAPIKey,
-				Domain: "api.telegram.org",
-			},
-		}
-
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
-
-		providers := getProviders(t, objects)
-		assert.Empty(t, providers)
-	})
-
-	t.Run("should use Vertex AI upstream for google gcp credential", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
-		credentials := []clawv1alpha1.CredentialSpec{
-			{
-				Name:     "vertex",
-				Type:     clawv1alpha1.CredentialTypeGCP,
-				Provider: "google",
-				Domain:   ".googleapis.com",
-				GCP: &clawv1alpha1.GCPConfig{
-					Project:  "my-proj",
-					Location: "europe-west1",
-				},
-			},
-		}
-
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
-
-		providers := getProviders(t, objects)
-		require.Contains(t, providers, "google")
-		google := providers["google"].(map[string]any)
-		assert.Equal(t, "https://europe-west1-aiplatform.googleapis.com/v1/projects/my-proj/locations/europe-west1/publishers/google", google["baseUrl"])
-	})
-
-	t.Run("should preserve other config sections", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(nil)))
-
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
-		require.NoError(t, err)
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-		gateway := config["gateway"].(map[string]any)
-		assert.Equal(t, float64(18789), gateway["port"])
-	})
-
-	t.Run("should skip pathToken credentials even with provider set", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
-		credentials := []clawv1alpha1.CredentialSpec{
-			{
-				Name:     "telegram",
-				Type:     clawv1alpha1.CredentialTypePathToken,
-				Provider: "telegram",
-				Domain:   "api.telegram.org",
-				PathToken: &clawv1alpha1.PathTokenConfig{
-					Prefix: "/bot",
-				},
-			},
-		}
-
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
-
-		providers := getProviders(t, objects)
-		assert.Empty(t, providers, "pathToken credentials should not generate provider entries")
-	})
-
-	t.Run("should reject duplicate providers", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
-		credentials := []clawv1alpha1.CredentialSpec{
-			{Name: "gemini-1", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
-			{Name: "gemini-2", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
-		}
-
-		err := injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "duplicate provider")
-		assert.Contains(t, err.Error(), "google")
-	})
-
-}
-
 func TestCredEnvVarName(t *testing.T) {
 	tests := []struct {
 		input string
@@ -1001,42 +749,326 @@ func TestOpenClawProxyConfigMap(t *testing.T) {
 	})
 }
 
-func TestOpenClawDynamicProviders(t *testing.T) {
+// --- Proxy config Vertex SDK tests ---
+
+func TestGenerateProxyConfigVertexSDK(t *testing.T) {
+	t.Run("should not create gateway route for GCP anthropic credential", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "anthropic-vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "anthropic",
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "vertex-sa",
+					Key:  "sa.json",
+				},
+				Domain: ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "us-east5",
+				},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials))
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
+		assert.Equal(t, "gcp", route.Injector)
+		assert.Empty(t, route.PathPrefix, "Vertex SDK provider should not have gateway path prefix")
+		assert.Empty(t, route.Upstream, "Vertex SDK provider should not have gateway upstream")
+	})
+
+	t.Run("should create gateway route for GCP google but not GCP anthropic", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini-vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "google",
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "gcp-secret",
+					Key:  "sa.json",
+				},
+				Domain: ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "us-central1",
+				},
+			},
+			{
+				Name:     "anthropic-vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "anthropic",
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "vertex-sa",
+					Key:  "sa.json",
+				},
+				Domain: ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "us-east5",
+				},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials))
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		var googleRoute, anthropicRoute *proxyRoute
+		for i := range cfg.Routes {
+			if cfg.Routes[i].SAFilePath == "/etc/proxy/credentials/gemini-vertex/sa-key.json" {
+				googleRoute = &cfg.Routes[i]
+			}
+			if cfg.Routes[i].SAFilePath == "/etc/proxy/credentials/anthropic-vertex/sa-key.json" {
+				anthropicRoute = &cfg.Routes[i]
+			}
+		}
+
+		require.NotNil(t, googleRoute, "google GCP route should exist")
+		assert.Equal(t, "/gemini-vertex", googleRoute.PathPrefix, "google GCP should have gateway prefix")
+		assert.NotEmpty(t, googleRoute.Upstream, "google GCP should have gateway upstream")
+
+		require.NotNil(t, anthropicRoute, "anthropic GCP route should exist")
+		assert.Empty(t, anthropicRoute.PathPrefix, "anthropic GCP should not have gateway prefix")
+		assert.Empty(t, anthropicRoute.Upstream, "anthropic GCP should not have gateway upstream")
+	})
+}
+
+// --- Proxy credential wiring tests ---
+
+func TestConfigureProxyForCredentials(t *testing.T) {
+	buildObjects := func(t *testing.T) (*clawv1alpha1.Claw, []*unstructured.Unstructured) {
+		t.Helper()
+		reconciler := createClawReconciler()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		objects, err := reconciler.buildKustomizedObjects(instance)
+		require.NoError(t, err)
+		return instance, objects
+	}
+
+	findProxyContainer := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
+		t.Helper()
+		for _, obj := range objects {
+			if obj.GetKind() == DeploymentKind && obj.GetName() == getProxyDeploymentName(testInstanceName) {
+				containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+				require.NotEmpty(t, containers)
+				c, ok := containers[0].(map[string]any)
+				require.True(t, ok)
+				return c
+			}
+		}
+		t.Fatal("proxy deployment not found")
+		return nil
+	}
+
+	findVolumes := func(t *testing.T, objects []*unstructured.Unstructured) []any {
+		t.Helper()
+		for _, obj := range objects {
+			if obj.GetKind() == DeploymentKind && obj.GetName() == getProxyDeploymentName(testInstanceName) {
+				vols, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
+				return vols
+			}
+		}
+		return nil
+	}
+
+	t.Run("should add GCP volume and mount for gcp credential", func(t *testing.T) {
+		instance, objects := buildObjects(t)
+		creds := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "vertex",
+				Type:      clawv1alpha1.CredentialTypeGCP,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "gcp-sa", Key: "sa.json"},
+				Domain:    ".googleapis.com",
+				GCP:       &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
+			},
+		}
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
+
+		container := findProxyContainer(t, objects)
+		mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
+
+		var foundMount bool
+		for _, m := range mounts {
+			mount := m.(map[string]any)
+			if mount["name"] == "cred-vertex" {
+				assert.Equal(t, "/etc/proxy/credentials/vertex", mount["mountPath"])
+				assert.Equal(t, true, mount["readOnly"])
+				foundMount = true
+			}
+		}
+		assert.True(t, foundMount, "GCP credential volume mount should be present")
+
+		volumes := findVolumes(t, objects)
+		var foundVol bool
+		for _, v := range volumes {
+			vol := v.(map[string]any)
+			if vol["name"] == "cred-vertex" {
+				foundVol = true
+				secret, ok := vol["secret"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, "gcp-sa", secret["secretName"])
+			}
+		}
+		assert.True(t, foundVol, "GCP credential volume should be present")
+	})
+
+	t.Run("should skip credentials with nil secretRef for apiKey type", func(t *testing.T) {
+		instance, objects := buildObjects(t)
+		creds := []clawv1alpha1.CredentialSpec{
+			{
+				Name:   "no-ref",
+				Type:   clawv1alpha1.CredentialTypeAPIKey,
+				Domain: "api.example.com",
+				APIKey: &clawv1alpha1.APIKeyConfig{Header: "x-api-key"},
+			},
+		}
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
+
+		container := findProxyContainer(t, objects)
+		envVars, _, _ := unstructured.NestedSlice(container, "env")
+		for _, e := range envVars {
+			env := e.(map[string]any)
+			assert.NotEqual(t, "CRED_NO_REF", env["name"], "should not add env var for credential without secretRef")
+		}
+	})
+
+	t.Run("should handle multiple credential types together", func(t *testing.T) {
+		instance, objects := buildObjects(t)
+		creds := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "gemini",
+				Type:      clawv1alpha1.CredentialTypeAPIKey,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "s1", Key: "k1"},
+				Domain:    ".googleapis.com",
+				APIKey:    &clawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"},
+			},
+			{
+				Name:      "openai",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{Name: "s2", Key: "k2"},
+				Domain:    "api.openai.com",
+			},
+		}
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
+
+		container := findProxyContainer(t, objects)
+		envVars, _, _ := unstructured.NestedSlice(container, "env")
+
+		envNames := make(map[string]bool)
+		for _, e := range envVars {
+			env := e.(map[string]any)
+			envNames[env["name"].(string)] = true
+		}
+		assert.True(t, envNames["CRED_GEMINI"], "should have CRED_GEMINI")
+		assert.True(t, envNames["CRED_OPENAI"], "should have CRED_OPENAI")
+	})
+
+	t.Run("should add kubernetes kubeconfig volume mount", func(t *testing.T) {
+		instance, objects := buildObjects(t)
+		creds := []resolvedCredential{
+			{
+				CredentialSpec: clawv1alpha1.CredentialSpec{
+					Name:      "k8s",
+					Type:      clawv1alpha1.CredentialTypeKubernetes,
+					SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+				},
+			},
+		}
+
+		require.NoError(t, configureProxyForCredentials(objects, instance, creds))
+
+		for _, obj := range objects {
+			if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(testInstanceName) {
+				continue
+			}
+			volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
+			var foundVol bool
+			for _, v := range volumes {
+				vol := v.(map[string]any)
+				if vol["name"] == testKubeCredVolume {
+					foundVol = true
+					secret := vol["secret"].(map[string]any)
+					assert.Equal(t, testKubeSecretName, secret["secretName"])
+					items := secret["items"].([]any)
+					item := items[0].(map[string]any)
+					assert.Equal(t, "config", item["key"])
+					assert.Equal(t, "kubeconfig", item["path"])
+				}
+			}
+			assert.True(t, foundVol, "kubernetes credential volume should be present")
+		}
+	})
+}
+
+// --- Secret version annotation tests ---
+
+func TestStampSecretVersionAnnotation(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("should inject dynamic providers into ConfigMap after reconciliation", func(t *testing.T) {
+	t.Run("should stamp Secret ResourceVersion on proxy pod template", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
 		createClawInstance(t, ctx, testInstanceName, namespace)
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
-		cm := &corev1.ConfigMap{}
-		waitFor(t, timeout, interval, func() bool {
-			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      getConfigMapName(testInstanceName),
-				Namespace: namespace,
-			}, cm) == nil
-		}, "ConfigMap should be created")
+		deployment := &appsv1.Deployment{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getProxyDeploymentName(testInstanceName),
+			Namespace: namespace,
+		}, deployment))
 
-		operatorJSON, ok := cm.Data["operator.json"]
-		require.True(t, ok, "operator.json should exist")
-
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(operatorJSON), &config))
-
-		models, ok := config["models"].(map[string]any)
-		require.True(t, ok, "models section should exist")
-		providers, ok := models["providers"].(map[string]any)
-		require.True(t, ok, "providers section should exist")
-		require.Contains(t, providers, "google", "google provider should be injected")
-
-		google, ok := providers["google"].(map[string]any)
-		require.True(t, ok)
-		assert.Equal(t, "https://generativelanguage.googleapis.com/v1beta", google["baseUrl"])
-		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
+		annotations := deployment.Spec.Template.Annotations
+		require.NotNil(t, annotations, "pod template annotations should exist")
+		geminiSecretVersionKey := clawv1alpha1.AnnotationPrefixSecretVersion + "gemini" + clawv1alpha1.AnnotationSuffixSecretVersion
+		rv, ok := annotations[geminiSecretVersionKey]
+		assert.True(t, ok, "gemini-secret-version annotation should exist")
+		assert.NotEmpty(t, rv, "ResourceVersion should not be empty")
 	})
 
-	t.Run("should have empty providers when no credentials have provider set", func(t *testing.T) {
+	t.Run("should update annotation when Secret data changes", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		createClawInstance(t, ctx, testInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getProxyDeploymentName(testInstanceName),
+			Namespace: namespace,
+		}, deployment))
+		geminiSecretVersionKey := clawv1alpha1.AnnotationPrefixSecretVersion + "gemini" + clawv1alpha1.AnnotationSuffixSecretVersion
+		originalRV := deployment.Spec.Template.Annotations[geminiSecretVersionKey]
+		require.NotEmpty(t, originalRV)
+
+		secret := &corev1.Secret{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      aiModelSecret,
+			Namespace: namespace,
+		}, secret))
+		secret.Data[aiModelSecretKey] = []byte("rotated-api-key")
+		require.NoError(t, k8sClient.Update(ctx, secret))
+
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getProxyDeploymentName(testInstanceName),
+			Namespace: namespace,
+		}, deployment))
+		newRV := deployment.Spec.Template.Annotations[geminiSecretVersionKey]
+		assert.NotEqual(t, originalRV, newRV,
+			"annotation should change after Secret data update (old=%s, new=%s)", originalRV, newRV)
+	})
+
+	t.Run("should skip credentials without secretRef", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
@@ -1054,41 +1086,105 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
-		cm := &corev1.ConfigMap{}
-		waitFor(t, timeout, interval, func() bool {
-			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      getConfigMapName(testInstanceName),
-				Namespace: namespace,
-			}, cm) == nil
-		}, "ConfigMap should be created")
+		deployment := &appsv1.Deployment{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getProxyDeploymentName(testInstanceName),
+			Namespace: namespace,
+		}, deployment))
 
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+		annotations := deployment.Spec.Template.Annotations
+		for key := range annotations {
+			assert.False(t, strings.HasSuffix(key, clawv1alpha1.AnnotationSuffixSecretVersion),
+				"should not have secret-version annotations for none-type credentials, found %s", key)
+		}
+	})
+}
 
-		models := config["models"].(map[string]any)
-		providers := models["providers"].(map[string]any)
-		assert.Empty(t, providers, "providers should be empty when no credentials have provider set")
+// --- Proxy config kubernetes route tests ---
+
+func TestGenerateProxyConfigKubernetes(t *testing.T) {
+	t.Run("should generate routes per cluster from kubeconfig", func(t *testing.T) {
+		creds := []resolvedCredential{
+			{
+				CredentialSpec: clawv1alpha1.CredentialSpec{
+					Name:      "k8s",
+					Type:      clawv1alpha1.CredentialTypeKubernetes,
+					SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+				},
+				KubeConfig: &kubeconfigData{
+					Clusters: []kubeconfigCluster{
+						{Name: "prod", Hostname: "api.prod.example.com", Port: "6443"},
+						{Name: "staging", Hostname: "api.staging.example.com", Port: "443"},
+					},
+				},
+			},
+		}
+
+		data, err := generateProxyConfig(creds)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		prodRoute := findRouteByDomain(t, cfg.Routes, "api.prod.example.com:6443")
+		assert.Equal(t, "kubernetes", prodRoute.Injector)
+		assert.Equal(t, "/etc/proxy/credentials/k8s/kubeconfig", prodRoute.KubeconfigPath)
+
+		stagingRoute := findRouteByDomain(t, cfg.Routes, "api.staging.example.com:443")
+		assert.Equal(t, "kubernetes", stagingRoute.Injector)
 	})
 
-	t.Run("should have empty providers for MITM-only credentials", func(t *testing.T) {
-		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		createClawInstanceMITMOnly(t, ctx, testInstanceName, namespace)
-		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+	t.Run("should skip kubernetes credential with nil kubeconfig", func(t *testing.T) {
+		creds := []resolvedCredential{
+			{
+				CredentialSpec: clawv1alpha1.CredentialSpec{
+					Name: "k8s",
+					Type: clawv1alpha1.CredentialTypeKubernetes,
+				},
+				KubeConfig: nil,
+			},
+		}
 
-		cm := &corev1.ConfigMap{}
-		waitFor(t, timeout, interval, func() bool {
-			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      getConfigMapName(testInstanceName),
-				Namespace: namespace,
-			}, cm) == nil
-		}, "ConfigMap should be created")
+		data, err := generateProxyConfig(creds)
+		require.NoError(t, err)
 
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		assert.Len(t, cfg.Routes, len(builtinPassthroughDomains))
+	})
 
-		models := config["models"].(map[string]any)
-		providers := models["providers"].(map[string]any)
-		assert.Empty(t, providers, "providers should be empty for MITM-only credentials")
+	t.Run("should include caCert when cluster has CAData", func(t *testing.T) {
+		caData := []byte("-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n")
+		creds := []resolvedCredential{
+			{
+				CredentialSpec: clawv1alpha1.CredentialSpec{
+					Name:      "k8s",
+					Type:      clawv1alpha1.CredentialTypeKubernetes,
+					SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+				},
+				KubeConfig: &kubeconfigData{
+					Clusters: []kubeconfigCluster{
+						{Name: "prod", Hostname: "api.prod.example.com", Port: "6443", CAData: caData},
+						{Name: "staging", Hostname: "api.staging.example.com", Port: "443"},
+					},
+				},
+			},
+		}
+
+		data, err := generateProxyConfig(creds)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		prodRoute := findRouteByDomain(t, cfg.Routes, "api.prod.example.com:6443")
+		assert.NotEmpty(t, prodRoute.CACert, "route with CAData should have caCert set")
+
+		decoded, err := base64.StdEncoding.DecodeString(prodRoute.CACert)
+		require.NoError(t, err)
+		assert.Equal(t, caData, decoded)
+
+		stagingRoute := findRouteByDomain(t, cfg.Routes, "api.staging.example.com:443")
+		assert.Empty(t, stagingRoute.CACert, "route without CAData should have empty caCert")
 	})
 }
