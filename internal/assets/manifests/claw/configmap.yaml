@@ -208,11 +208,23 @@ data:
 
     ### WhatsApp
 
-    WhatsApp Web uses phone-based QR pairing (not API keys). The proxy only needs to
-    allowlist the domains — no credential injection is required. Beyond `*.whatsapp.*`,
-    WhatsApp Web also relies on Meta's authentication and CDN infrastructure.
+    WhatsApp Web uses phone-based QR pairing (not API keys). Setup has TWO parts:
+    proxy domain allowlisting (Claw CR — needs the user) and plugin/channel
+    configuration (openclaw CLI — you do this yourself).
 
-    Add these entries to the `credentials` list:
+    **Do NOT** invent Claw CR fields like `spec.channels` — the Claw CRD has no
+    such field. Channel config lives in `openclaw.json` and you configure it
+    yourself using `openclaw config patch`.
+
+    **Important:** `openclaw config patch` WORKS. Config writes are NOT blocked.
+    Do not tell the user that config patches are blocked or protected — that is
+    incorrect.
+
+    #### Part 1: Proxy domains (user must do this)
+
+    The user needs to add these entries to the Claw CR `credentials` list.
+    Beyond `*.whatsapp.*`, WhatsApp Web also relies on Meta's auth and CDN
+    infrastructure.
 
     ```yaml
         - name: whatsapp
@@ -232,10 +244,44 @@ data:
           domain: ".fbcdn.net"
     ```
 
-    After the user updates the Claw CR, the remaining steps are:
-    1. Install the WhatsApp plugin: `openclaw plugins install @openclaw/whatsapp`
-    2. Link the device: `openclaw channels login --channel whatsapp`
-    3. Scan the QR code with their phone (WhatsApp → Linked Devices)
+    #### Part 2: Plugin and channel setup (you do this yourself)
+
+    Once the proxy domains are configured, run these commands yourself — do not
+    ask the user to do them.
+
+    **Step 1.** Install the WhatsApp plugin:
+    ```sh
+    openclaw plugins install @openclaw/whatsapp
+    ```
+    If it says "plugin already exists", use `--force` to re-install.
+
+    **Step 2.** Enable the plugin and configure the channel by running:
+    ```sh
+    echo '{"plugins":{"entries":{"whatsapp":{"enabled":true}}},"channels":{"whatsapp":{"enabled":true,"dmPolicy":"pairing","groupPolicy":"allowlist","debounceMs":0,"mediaMaxMb":50}}}' | openclaw config patch --stdin
+    ```
+    **This step is critical.** Without the `channels.whatsapp` config,
+    `channels login` will fail with "does not support login". The fields
+    `dmPolicy`, `groupPolicy`, `debounceMs`, `mediaMaxMb` are required. The
+    values above are sensible defaults but **may change in future plugin
+    versions**. If the patch is rejected or login still fails, run
+    `openclaw config schema`, find the `channels.whatsapp` section, and use
+    the required fields from the current schema.
+
+    **Step 3.** Tell the user to restart the pod so the gateway loads the
+    new plugin. The in-process `openclaw gateway restart` is NOT enough —
+    npm plugins only load on a full pod restart:
+    ```sh
+    oc delete pod -n <namespace> -l app=claw
+    ```
+    Wait for the new pod to be ready before continuing.
+
+    **Step 4.** Link the device:
+    ```sh
+    openclaw channels login --channel whatsapp
+    ```
+
+    **Step 5.** Tell the user to scan the QR code with their phone
+    (WhatsApp → Linked Devices).
 
     ## Custom domains
 
