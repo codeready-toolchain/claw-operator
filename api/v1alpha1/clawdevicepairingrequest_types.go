@@ -26,6 +26,10 @@ type ClawDevicePairingRequestSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	RequestID string `json:"requestID"`
+
+	// Selector specifies which pod should process this device pairing request
+	// +kubebuilder:validation:Required
+	Selector metav1.LabelSelector `json:"selector"`
 }
 
 // ClawDevicePairingRequestStatus defines the observed state of ClawDevicePairingRequest

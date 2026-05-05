@@ -220,6 +220,42 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 		// Conditions can be nil or empty initially (omitempty tag means API server may not return the field)
 		assert.Empty(t, fetched.Status.Conditions, "Status.Conditions should be empty initially")
 	})
+
+	t.Run("ClawDevicePairingRequest creation with valid selector", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-with-selector"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+		})
+
+		// Create ClawDevicePairingRequest with selector
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "selector-test-001",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app":      "claw",
+						"instance": "my-claw",
+					},
+				},
+			},
+		}
+
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create ClawDevicePairingRequest with selector")
+
+		// Verify resource was created with correct selector
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		assert.Equal(t, "selector-test-001", fetched.Spec.RequestID)
+		assert.NotNil(t, fetched.Spec.Selector.MatchLabels)
+		assert.Equal(t, "claw", fetched.Spec.Selector.MatchLabels["app"])
+		assert.Equal(t, "my-claw", fetched.Spec.Selector.MatchLabels["instance"])
+	})
 }
 
 // deleteAndWaitClawDevicePairingRequest deletes a ClawDevicePairingRequest and waits for it to be removed

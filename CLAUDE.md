@@ -66,9 +66,15 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
 
 **Spec Fields:**
 - `requestID` (string, required, minLength=1): Unique identifier for the pairing request
+- `selector` (metav1.LabelSelector, required): Label selector that specifies which Claw pod should process this device pairing request. The controller uses this selector to query for pods in the same namespace. The selector must match exactly one pod for the pairing request to be processed successfully.
 
 **Status Fields:**
-- `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking approval state
+- `conditions` ([]metav1.Condition, optional): Standard Kubernetes condition array tracking approval state. Condition types:
+  - `Ready`: Indicates whether the device pairing request has been processed
+    - `Status=False, Reason=InvalidSelector`: The selector cannot be converted to a valid labels.Selector
+    - `Status=False, Reason=NoMatchingPod`: No pods match the selector
+    - `Status=False, Reason=MultipleMatchingPods`: More than one pod matches the selector
+    - `Status=True, Reason=Ready`: Exactly one pod matches and the request can be processed
 
 **Printcolumns:**
 - `RequestID`: Shows request ID via JSONPath `.spec.requestID`
@@ -81,6 +87,49 @@ The CRD was renamed from `NodePairingRequestApproval` to `ClawDevicePairingReque
 3. Delete old CRs: `kubectl delete nodepairingrequestapprovals --all`
 4. Apply updated CRD: `make install` (or `kubectl apply -f config/crd/bases/`)
 5. Reapply edited CRs: `kubectl apply -f backup.yaml`
+
+**Adding selector field to existing ClawDevicePairingRequest resources (Breaking Change):**
+The `selector` field was added as a required field in the ClawDevicePairingRequest CRD. **IMPORTANT**: Before upgrading the CRD, you must update all existing ClawDevicePairingRequest resources to include a `selector` field, or they will fail validation after the CRD is upgraded.
+
+**Migration steps for adding selector field:**
+1. List existing ClawDevicePairingRequest resources: `kubectl get clawdevicepairingrequests --all-namespaces`
+2. For each resource, add a `selector` field to `spec` before upgrading the CRD:
+   ```yaml
+   apiVersion: claw.sandbox.redhat.com/v1alpha1
+   kind: ClawDevicePairingRequest
+   metadata:
+     name: my-pairing-request
+     namespace: default
+   spec:
+     requestID: "existing-request-id"
+     selector:  # Add this field
+       matchLabels:
+         app: claw
+         claw.sandbox.redhat.com/instance: instance  # Or your instance name
+   ```
+3. Apply the updated resources: `kubectl apply -f <updated-resource>.yaml`
+4. Upgrade the CRD: `make install` (or `kubectl apply -f config/crd/bases/`)
+
+**Selector usage example:**
+To create a device pairing request targeting a specific Claw instance pod:
+```yaml
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: ClawDevicePairingRequest
+metadata:
+  name: my-device-pairing
+  namespace: claw-operator
+spec:
+  requestID: "device-abc-123"
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: claw
+      claw.sandbox.redhat.com/instance: instance
+```
+
+The controller will:
+- Convert the selector to a labels.Selector
+- Query for pods in the same namespace matching the selector
+- Set a condition indicating success (exactly 1 match) or failure (0 or multiple matches)
 
 **Version Logging:**
 The operator logs version and build time at startup: `version` (short commit SHA) and `buildTime` (RFC3339). Injected via LDFLAGS during `container-build`. Local builds show defaults (`dev`/`unknown`).
