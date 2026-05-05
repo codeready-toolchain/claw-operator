@@ -149,6 +149,24 @@ func TestNewServer(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, srv.proxy)
 	})
+
+	t.Run("should create server with multiple routes for same domain", func(t *testing.T) {
+		t.Setenv("CRED_SLACK_APP", "xapp-test")
+		t.Setenv("CRED_SLACK_BOT", "xoxb-test")
+
+		cfg := &Config{
+			Routes: []Route{
+				{Domain: "slack.com", Injector: "bearer", EnvVar: "CRED_SLACK_APP", AllowedPaths: []string{"/api/apps.connections.open"}},
+				{Domain: "slack.com", Injector: "bearer", EnvVar: "CRED_SLACK_BOT"},
+			},
+		}
+		srv, err := NewServer(cfg, certPEM, keyPEM, logger)
+		require.NoError(t, err)
+		require.NotNil(t, srv)
+
+		require.NotNil(t, cfg.Routes[0].injector, "first route should have its own injector")
+		require.NotNil(t, cfg.Routes[1].injector, "second route should have its own injector")
+	})
 }
 
 func TestBuildRootCAPool(t *testing.T) {
@@ -468,6 +486,88 @@ func TestServerMITMCredentialInjection(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, string(body), "Bearer test-token-12345")
+}
+
+func TestServerMITMMultiRouteInjection(t *testing.T) {
+	certPEM, keyPEM := generateTestCA(t)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"path":"%s","auth":"%s"}`, r.URL.Path, r.Header.Get("Authorization"))
+	}))
+	defer upstream.Close()
+
+	t.Setenv("CRED_SLACK_APP", "xapp-real-app-token")
+	t.Setenv("CRED_SLACK_BOT", "xoxb-real-bot-token")
+
+	_, port, err := net.SplitHostPort(upstream.Listener.Addr().String())
+	require.NoError(t, err)
+
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "127.0.0.1", Injector: "bearer", EnvVar: "CRED_SLACK_APP", AllowedPaths: []string{"/api/apps.connections.open"}},
+			{Domain: "127.0.0.1", Injector: "bearer", EnvVar: "CRED_SLACK_BOT"},
+		},
+	}
+	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
+	require.NoError(t, err)
+	srv.proxy.Tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // test only
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	makeRequest := func(t *testing.T, path string) string {
+		t.Helper()
+		conn, err := net.Dial("tcp", ts.Listener.Addr().String())
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
+
+		target := fmt.Sprintf("127.0.0.1:%s", port)
+		_, err = fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+		require.NoError(t, err)
+
+		br := bufio.NewReader(conn)
+		resp, err := http.ReadResponse(br, nil)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		certBlock, _ := pem.Decode(certPEM)
+		require.NotNil(t, certBlock)
+		caCert, err := x509.ParseCertificate(certBlock.Bytes)
+		require.NoError(t, err)
+		caPool := x509.NewCertPool()
+		caPool.AddCert(caCert)
+
+		tlsConn := tls.Client(conn, &tls.Config{
+			RootCAs:    caPool,
+			ServerName: "127.0.0.1",
+			MinVersion: tls.VersionTLS12,
+		})
+		require.NoError(t, tlsConn.Handshake())
+
+		req, err := http.NewRequest(http.MethodPost, "https://127.0.0.1"+path, nil)
+		require.NoError(t, err)
+		require.NoError(t, req.Write(tlsConn))
+
+		resp, err = http.ReadResponse(bufio.NewReader(tlsConn), req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		body, _ := io.ReadAll(resp.Body)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		return string(body)
+	}
+
+	t.Run("app-token route for Socket Mode handshake path", func(t *testing.T) {
+		body := makeRequest(t, "/api/apps.connections.open")
+		assert.Contains(t, body, "Bearer xapp-real-app-token")
+	})
+
+	t.Run("bot-token route for general API path", func(t *testing.T) {
+		body := makeRequest(t, "/api/chat.postMessage")
+		assert.Contains(t, body, "Bearer xoxb-real-bot-token")
+	})
 }
 
 func TestTokenVendingResponse(t *testing.T) {

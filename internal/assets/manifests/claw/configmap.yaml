@@ -135,7 +135,7 @@ data:
   PROXY_SETUP.md: |
     ---
     name: proxy-setup
-    description: "Network proxy architecture and how to configure access to external services like WhatsApp, Telegram, and Discord."
+    description: "Network proxy architecture and how to configure access to external services like WhatsApp, Telegram, Discord, and Slack."
     ---
 
     # Proxy Architecture
@@ -302,11 +302,12 @@ data:
             prefix: "/bot"
     ```
 
-    OpenClaw config: set the bot token to any placeholder value (e.g., `placeholder`).
-    The proxy strips whatever token it finds and injects the real one:
+    Once the proxy credential is configured, configure the channel yourself — do not
+    ask the user to do this:
     ```sh
     openclaw channels add --channel telegram --token placeholder
     ```
+    The proxy strips whatever placeholder token it finds and injects the real one.
 
     The real bot token is stored in the Kubernetes Secret and never reaches the
     gateway pod. The proxy intercepts `/botplaceholder/sendMessage` and forwards
@@ -338,7 +339,8 @@ data:
           domain: "cdn.discordapp.com"
     ```
 
-    OpenClaw config: set the bot token to any placeholder value:
+    Once the proxy credentials are configured, configure the channel yourself — do not
+    ask the user to do this:
     ```sh
     openclaw channels add --channel discord --token placeholder
     ```
@@ -346,6 +348,47 @@ data:
     The `discord-gateway` and `discord-cdn` entries are passthrough domains for
     Discord's WebSocket gateway and CDN (media/avatars). They don't need credential
     injection.
+
+    ### Slack
+
+    Slack requires two tokens on the same domain (`slack.com`): an app-level token
+    (`xapp-...`) for Socket Mode and a bot token (`xoxb-...`) for the REST API. The
+    proxy uses `bearer` credential injection with `allowedPaths` to route each request
+    to the correct token.
+
+    The user needs to add these credential entries to the Claw CR:
+
+    ```yaml
+        - name: slack-app
+          type: bearer
+          secretRef:
+            name: slack-secret
+            key: app-token
+          domain: "slack.com"
+          allowedPaths: ["/api/apps.connections.open"]
+        - name: slack-bot
+          type: bearer
+          secretRef:
+            name: slack-secret
+            key: bot-token
+          domain: "slack.com"
+        - name: slack-ws
+          type: none
+          domain: ".slack.com"
+    ```
+
+    Once the proxy credentials are configured, configure the channel yourself — do not
+    ask the user to do this:
+    ```sh
+    openclaw channels add --channel slack --bot-token xoxb-placeholder --app-token xapp-placeholder
+    ```
+    The Bolt-shaped placeholders (`xoxb-placeholder`, `xapp-placeholder`) pass Slack's
+    startup regex validation. The proxy strips them and injects real tokens.
+
+    The `slack-app` credential handles the Socket Mode handshake (`/api/apps.connections.open`).
+    The `slack-bot` credential is the catch-all for all other `slack.com` API calls. The
+    `slack-ws` entry (suffix match `.slack.com`) passes through WebSocket connections to
+    `wss-primary.slack.com` without credential injection.
 
     ## Custom domains
 

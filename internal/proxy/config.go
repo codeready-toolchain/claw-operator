@@ -43,6 +43,8 @@ type Route struct {
 	KubeconfigPath string            `json:"kubeconfigPath,omitempty"`
 	CACert         string            `json:"caCert,omitempty"`
 	AllowedPaths   []string          `json:"allowedPaths,omitempty"`
+
+	injector Injector `json:"-"`
 }
 
 // NeedsMITM reports whether the route requires TLS interception (MITM).
@@ -91,15 +93,68 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// MatchRoute finds the first route matching the given host.
-// Exact matches are checked first (they appear first in the config by convention),
-// then suffix matches (domains starting with ".").
-// Port-qualified domains (e.g., "api.example.com:6443") match against the full
-// hostname:port from the request. Bare domains use hostname-only matching.
-func (c *Config) MatchRoute(host string) *Route {
+// domainMatches reports whether the route's domain matches the given host.
+func domainMatches(domain, hostLower, hostname string) bool {
+	if strings.HasPrefix(domain, ".") {
+		return strings.HasSuffix(hostname, domain) || hostname == domain[1:]
+	}
+	if _, _, err := net.SplitHostPort(domain); err == nil {
+		return hostLower == domain
+	}
+	return hostname == domain
+}
+
+// MatchRoute finds the best route matching the given host and request path.
+// When only one route matches the host, it is returned directly. When multiple
+// routes share the same domain, the path is used to discriminate: a route whose
+// AllowedPaths matches the request path is preferred over a catch-all route
+// (one with no AllowedPaths). If path is empty, the first matching route is
+// returned (used by CONNECT before the request path is known).
+func (c *Config) MatchRoute(host, path string) *Route {
 	hostLower := strings.ToLower(host)
 
-	// Extract hostname without port (IPv6-safe)
+	hostname := hostLower
+	if h, _, err := net.SplitHostPort(hostLower); err == nil {
+		hostname = h
+	}
+
+	var matches []*Route
+	for i := range c.Routes {
+		domain := strings.ToLower(c.Routes[i].Domain)
+		if domainMatches(domain, hostLower, hostname) {
+			matches = append(matches, &c.Routes[i])
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil
+	}
+	if len(matches) == 1 || path == "" {
+		return matches[0]
+	}
+
+	// Multiple routes for the same host: prefer the one whose AllowedPaths
+	// matches the request path, fall back to the catch-all (no AllowedPaths).
+	var catchAll *Route
+	for _, r := range matches {
+		if len(r.AllowedPaths) == 0 {
+			if catchAll == nil {
+				catchAll = r
+			}
+			continue
+		}
+		if r.PathAllowed(path) {
+			return r
+		}
+	}
+	return catchAll
+}
+
+// NeedsMITMForHost reports whether any route matching the host requires MITM.
+// Used at CONNECT time when the request path is not yet known.
+func (c *Config) NeedsMITMForHost(host string) bool {
+	hostLower := strings.ToLower(host)
+
 	hostname := hostLower
 	if h, _, err := net.SplitHostPort(hostLower); err == nil {
 		hostname = h
@@ -107,24 +162,11 @@ func (c *Config) MatchRoute(host string) *Route {
 
 	for i := range c.Routes {
 		domain := strings.ToLower(c.Routes[i].Domain)
-		if strings.HasPrefix(domain, ".") {
-			// Suffix match always uses hostname only
-			if strings.HasSuffix(hostname, domain) || hostname == domain[1:] {
-				return &c.Routes[i]
-			}
-		} else if _, _, err := net.SplitHostPort(domain); err == nil {
-			// Port-qualified domain: match against full host:port
-			if hostLower == domain {
-				return &c.Routes[i]
-			}
-		} else {
-			// Bare domain: match hostname only
-			if hostname == domain {
-				return &c.Routes[i]
-			}
+		if domainMatches(domain, hostLower, hostname) && c.Routes[i].NeedsMITM() {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
 // MatchRouteByPath finds the first gateway route whose PathPrefix matches the request path.

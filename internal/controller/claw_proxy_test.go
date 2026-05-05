@@ -530,6 +530,73 @@ func TestGenerateProxyConfig(t *testing.T) {
 		assert.Equal(t, "https://api.myservice.com", route.Upstream)
 		assert.Equal(t, "oauth2", route.Injector)
 	})
+
+	t.Run("should generate Slack dual-credential routes with correct ordering", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name: "slack-app",
+				Type: clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "slack-secret",
+					Key:  "app-token",
+				},
+				Domain:       "slack.com",
+				AllowedPaths: []string{"/api/apps.connections.open"},
+			},
+			{
+				Name: "slack-bot",
+				Type: clawv1alpha1.CredentialTypeBearer,
+				SecretRef: &clawv1alpha1.SecretRef{
+					Name: "slack-secret",
+					Key:  "bot-token",
+				},
+				Domain: "slack.com",
+			},
+			{
+				Name:   "slack-ws",
+				Type:   clawv1alpha1.CredentialTypeNone,
+				Domain: ".slack.com",
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials))
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		var slackRoutes []proxyRoute
+		for _, r := range cfg.Routes {
+			if r.Domain == "slack.com" {
+				slackRoutes = append(slackRoutes, r)
+			}
+		}
+		require.Len(t, slackRoutes, 2, "should emit both slack.com routes")
+
+		assert.Equal(t, []string{"/api/apps.connections.open"}, slackRoutes[0].AllowedPaths,
+			"allowedPaths route should come first")
+		assert.Equal(t, "CRED_SLACK_APP", slackRoutes[0].EnvVar)
+
+		assert.Empty(t, slackRoutes[1].AllowedPaths, "catch-all route should have no allowedPaths")
+		assert.Equal(t, "CRED_SLACK_BOT", slackRoutes[1].EnvVar)
+
+		suffixRoute := findRouteByDomain(t, cfg.Routes, ".slack.com")
+		assert.Equal(t, "none", suffixRoute.Injector)
+
+		// Verify overall ordering: all exact routes before suffix routes
+		lastExact := -1
+		firstSuffix := len(cfg.Routes)
+		for i, r := range cfg.Routes {
+			if strings.HasPrefix(r.Domain, ".") {
+				if i < firstSuffix {
+					firstSuffix = i
+				}
+			} else {
+				lastExact = i
+			}
+		}
+		assert.Less(t, lastExact, firstSuffix, "all exact routes should precede suffix routes")
+	})
 }
 
 func TestBuiltinPassthroughDomains(t *testing.T) {

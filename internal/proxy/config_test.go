@@ -17,6 +17,8 @@ limitations under the License.
 package proxy
 
 import (
+	"encoding/json"
+	"net/http"
 	"os"
 	"testing"
 
@@ -103,13 +105,136 @@ func TestMatchRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			route := cfg.MatchRoute(tt.host)
+			route := cfg.MatchRoute(tt.host, "/any")
 			if tt.wantNil {
 				assert.Nil(t, route)
 			} else {
 				require.NotNil(t, route)
 				assert.Equal(t, tt.wantDom, route.Domain)
 			}
+		})
+	}
+}
+
+func TestMatchRouteMultiDomain(t *testing.T) {
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "slack.com", Injector: "bearer", EnvVar: "CRED_SLACK_APP", AllowedPaths: []string{"/api/apps.connections.open"}},
+			{Domain: "slack.com", Injector: "bearer", EnvVar: "CRED_SLACK_BOT"},
+			{Domain: ".slack.com", Injector: "none"},
+		},
+	}
+
+	t.Run("selects specific route when path matches allowedPaths", func(t *testing.T) {
+		route := cfg.MatchRoute("slack.com", "/api/apps.connections.open")
+		require.NotNil(t, route)
+		assert.Equal(t, "CRED_SLACK_APP", route.EnvVar)
+	})
+
+	t.Run("falls back to catch-all for non-matching path", func(t *testing.T) {
+		route := cfg.MatchRoute("slack.com", "/api/chat.postMessage")
+		require.NotNil(t, route)
+		assert.Equal(t, "CRED_SLACK_BOT", route.EnvVar)
+	})
+
+	t.Run("empty path returns first match", func(t *testing.T) {
+		route := cfg.MatchRoute("slack.com", "")
+		require.NotNil(t, route)
+		assert.Equal(t, "slack.com", route.Domain)
+	})
+
+	t.Run("suffix match still works", func(t *testing.T) {
+		route := cfg.MatchRoute("wss-primary.slack.com", "/any")
+		require.NotNil(t, route)
+		assert.Equal(t, ".slack.com", route.Domain)
+	})
+
+	t.Run("no match for unknown host", func(t *testing.T) {
+		route := cfg.MatchRoute("unknown.com", "/any")
+		assert.Nil(t, route)
+	})
+
+	t.Run("returns nil when all routes have allowedPaths and none match", func(t *testing.T) {
+		noCatchAll := &Config{
+			Routes: []Route{
+				{Domain: "api.example.com", Injector: "bearer", EnvVar: "CRED_A", AllowedPaths: []string{"/v1/"}},
+				{Domain: "api.example.com", Injector: "bearer", EnvVar: "CRED_B", AllowedPaths: []string{"/v2/"}},
+			},
+		}
+		route := noCatchAll.MatchRoute("api.example.com", "/v3/data")
+		assert.Nil(t, route)
+	})
+
+	t.Run("selects among multiple allowedPaths routes", func(t *testing.T) {
+		multi := &Config{
+			Routes: []Route{
+				{Domain: "api.example.com", Injector: "bearer", EnvVar: "CRED_V1", AllowedPaths: []string{"/v1/"}},
+				{Domain: "api.example.com", Injector: "bearer", EnvVar: "CRED_V2", AllowedPaths: []string{"/v2/"}},
+			},
+		}
+		route := multi.MatchRoute("api.example.com", "/v2/data")
+		require.NotNil(t, route)
+		assert.Equal(t, "CRED_V2", route.EnvVar)
+	})
+}
+
+func TestNeedsMITMForHost(t *testing.T) {
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "slack.com", Injector: "bearer", EnvVar: "CRED_APP", AllowedPaths: []string{"/api/apps.connections.open"}},
+			{Domain: "slack.com", Injector: "bearer", EnvVar: "CRED_BOT"},
+			{Domain: ".slack.com", Injector: "none"},
+			{Domain: "passthrough.example.com", Injector: "none"},
+		},
+	}
+
+	t.Run("true when any route needs MITM", func(t *testing.T) {
+		assert.True(t, cfg.NeedsMITMForHost("slack.com"))
+	})
+
+	t.Run("false for suffix-only none route", func(t *testing.T) {
+		assert.False(t, cfg.NeedsMITMForHost("wss-primary.slack.com"))
+	})
+
+	t.Run("false for pure passthrough", func(t *testing.T) {
+		assert.False(t, cfg.NeedsMITMForHost("passthrough.example.com"))
+	})
+
+	t.Run("false for unknown host", func(t *testing.T) {
+		assert.False(t, cfg.NeedsMITMForHost("unknown.com"))
+	})
+
+	t.Run("true when mixed none and bearer share a domain", func(t *testing.T) {
+		mixed := &Config{
+			Routes: []Route{
+				{Domain: "api.example.com", Injector: "none"},
+				{Domain: "api.example.com", Injector: "bearer", EnvVar: "CRED_X", AllowedPaths: []string{"/secure/"}},
+			},
+		}
+		assert.True(t, mixed.NeedsMITMForHost("api.example.com"))
+	})
+}
+
+func TestDomainMatches(t *testing.T) {
+	tests := []struct {
+		name      string
+		domain    string
+		hostLower string
+		hostname  string
+		want      bool
+	}{
+		{name: "exact bare match", domain: "api.example.com", hostLower: "api.example.com", hostname: "api.example.com", want: true},
+		{name: "exact bare no match", domain: "api.example.com", hostLower: "other.com", hostname: "other.com", want: false},
+		{name: "suffix match subdomain", domain: ".example.com", hostLower: "api.example.com", hostname: "api.example.com", want: true},
+		{name: "suffix match apex", domain: ".example.com", hostLower: "example.com", hostname: "example.com", want: true},
+		{name: "suffix no match", domain: ".example.com", hostLower: "notexample.com", hostname: "notexample.com", want: false},
+		{name: "port-qualified match", domain: "api.example.com:6443", hostLower: "api.example.com:6443", hostname: "api.example.com", want: true},
+		{name: "port-qualified mismatch", domain: "api.example.com:6443", hostLower: "api.example.com:8443", hostname: "api.example.com", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, domainMatches(tt.domain, tt.hostLower, tt.hostname))
 		})
 	}
 }
@@ -192,7 +317,7 @@ func TestMatchRoutePortAware(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			route := cfg.MatchRoute(tt.host)
+			route := cfg.MatchRoute(tt.host, "/any")
 			if tt.wantNil {
 				assert.Nil(t, route)
 			} else {
@@ -202,3 +327,27 @@ func TestMatchRoutePortAware(t *testing.T) {
 		})
 	}
 }
+
+func TestRouteInjectorFieldNotSerialized(t *testing.T) {
+	route := Route{
+		Domain:   "example.com",
+		Injector: "none",
+		injector: injectorFunc(func(_ *http.Request) error { return nil }),
+	}
+
+	data, err := json.Marshal(route)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(data, &raw))
+	_, hasInjectorField := raw["injector"]
+	assert.True(t, hasInjectorField, "JSON 'injector' key should be the string type field")
+
+	var decoded Route
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Nil(t, decoded.injector, "unexported injector field must not survive JSON round-trip")
+}
+
+type injectorFunc func(*http.Request) error
+
+func (f injectorFunc) Inject(req *http.Request) error { return f(req) }
