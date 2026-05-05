@@ -15,7 +15,7 @@ This design extends the proxy to intercept and replace placeholder credentials w
 1. **No upstream changes** — OpenClaw is treated as a black box. We cannot modify its source code, add configuration hooks, or require specific OpenClaw versions.
 2. **Defense in depth** — Real secrets never reach the gateway pod. The proxy strips client-supplied credentials and injects real ones.
 3. **Fail closed** — If credential injection fails, the request is rejected (502), not forwarded with a placeholder.
-4. **Backward compatible** — Existing `type: none` passthrough for Telegram (token in `openclaw.json`) continues to work. Credential injection is opt-in via the new credential type configuration.
+4. **Backward compatible (free)** — Existing `type: none` passthrough continues to work. Credential injection is opt-in via credential type configuration. Not a design constraint at this stage, just a side effect of the approach.
 5. **Minimal proxy complexity** — Prefer targeted, well-tested changes to the existing proxy over architectural overhauls.
 
 ## Background: How Each Channel Authenticates
@@ -203,13 +203,13 @@ OpenClaw config: `channels.slack.botToken: "xoxb-placeholder"`, `channels.slack.
 
 Bolt-shaped placeholders (`xoxb-placeholder`, `xapp-placeholder`) pass Bolt's startup regex validation. The `slack-app` credential has `allowedPaths` restricting it to the Socket Mode handshake endpoint; the `slack-bot` credential is the catch-all for all other `slack.com` traffic. The `slack-ws` entry (suffix match `.slack.com`) passes through WebSocket connections to `wss-primary.slack.com` without credential injection. If end-to-end testing reveals additional validation blockers beyond the startup regex, we'll revisit.
 
-**Proxy change required:** The current proxy maps one injector per domain (`map[string]Injector`), so two routes for `slack.com` silently overwrite each other. Phase 3 extends route matching to support **path-based discrimination** when multiple routes share a domain. See [Multi-route per domain](#multi-route-per-domain) above and the Phase 3 implementation plan.
+**Proxy change required:** The current proxy maps one injector per domain (`map[string]Injector`), so two routes for `slack.com` silently overwrite each other. PR 2 extends route matching to support **path-based discrimination** when multiple routes share a domain. See [Multi-route per domain](#multi-route-per-domain) above and the PR 2 implementation plan.
 
 ## Implementation Plan
 
-### Phase 1: Telegram Path Token Replacement
+### PR1: Telegram + Discord
 
-**Scope:** Change the proxy's `path_token` injector to replacement semantics.
+Telegram requires a proxy change (pathToken replacement). Discord uses existing injectors unchanged. Grouped into one PR — small proxy diff, shared documentation scope.
 
 1. **Proxy change** (`internal/proxy/injector_pathtoken.go`):
    - Change `PathTokenInjector.Inject` from prepend to prefix-strip-and-replace
@@ -220,22 +220,16 @@ Bolt-shaped placeholders (`xoxb-placeholder`, `xapp-placeholder`) pass Bolt's st
    - Add test cases: path with prefix match, path without prefix (error), edge case bare token without method
 3. **Controller tests** (`internal/controller/claw_proxy_test.go`):
    - Existing `pathToken` test cases should continue to pass (config generation unchanged)
+   - Add test case for Discord-style `apiKey` credential with `Authorization` header and `Bot ` prefix
 4. **Documentation:**
-   - Add Telegram section to `PROXY_SETUP.md` skill in `internal/assets/manifests/claw/configmap.yaml`
-   - Add Telegram section to `docs/provider-setup.md`
-   - Update skill frontmatter description to mention Telegram
+   - Add Telegram and Discord sections to `PROXY_SETUP.md` skill in `internal/assets/manifests/claw/configmap.yaml`
+   - Add Telegram and Discord sections to `docs/provider-setup.md`
+   - Update skill frontmatter description to mention messaging channels
+5. **End-to-end testing:** Verify both channels work with placeholder tokens
 
-### Phase 2: Discord Header Injection (Testing + Docs)
+### PR2: Slack
 
-**Scope:** No proxy changes — testing and documentation only.
-
-1. **End-to-end testing:** Verify OpenClaw with `botToken: "placeholder"` + proxy `apiKey` injection works for Discord
-2. **Documentation:** Add Discord section to `PROXY_SETUP.md` skill and `docs/provider-setup.md`
-3. **Controller tests:** Add test case for Discord-style `apiKey` credential with `Authorization` header and `Bot ` prefix
-
-### Phase 3: Slack Header Injection (Proxy Multi-route + Testing + Docs)
-
-**Scope:** Extend proxy to support multiple routes per domain with path-based discrimination, then test and document Slack integration.
+Extends the proxy's routing model to support multiple routes per domain with path-based discrimination. Architecturally distinct from PR1 — modifies how route matching and injector storage work.
 
 1. **Proxy change — injector storage** (`internal/proxy/server.go`):
    - Replace `injectors map[string]Injector` with injectors attached to routes (e.g., unexported field on `Route` set during `NewServer`, or a `[]routeInjector` indexed by route position)
