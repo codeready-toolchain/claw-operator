@@ -74,6 +74,8 @@ func runMergeJS(t *testing.T, setup mergeTestSetup) mergeTestResult {
 
 	mergeScript := cmData["merge.js"]
 	require.NotEmpty(t, mergeScript, "merge.js must exist in configmap")
+	require.Contains(t, mergeScript, `const configDir = "/config"`, "merge.js configDir anchor changed")
+	require.Contains(t, mergeScript, `const pvcDir = "/home/node/.openclaw"`, "merge.js pvcDir anchor changed")
 
 	mergeScript = strings.Replace(mergeScript, `const configDir = "/config"`, fmt.Sprintf(`const configDir = %q`, configDir), 1)
 	mergeScript = strings.Replace(mergeScript, `const pvcDir = "/home/node/.openclaw"`, fmt.Sprintf(`const pvcDir = %q`, pvcDir), 1)
