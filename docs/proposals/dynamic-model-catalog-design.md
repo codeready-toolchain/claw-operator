@@ -263,7 +263,7 @@ E2e tests would require waiting for pods to start, exec-ing in to read PVC files
 
 Each phase = one PR. Phases are ordered so each PR is independently shippable and reviewable.
 
-### Phase 1: `merge.js` test coverage (safety net)
+### Phase 1: `merge.js` test coverage (safety net) - DONE
 
 Adds Layer 2 tests (`claw_merge_test.go`) for existing `merge.js` behavior — zero code changes, pure test addition. This establishes a regression safety net before any merge logic changes land.
 
