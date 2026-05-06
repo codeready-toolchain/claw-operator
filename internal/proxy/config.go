@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	pathpkg "path"
 	"strings"
 )
 
@@ -43,6 +44,8 @@ type Route struct {
 	KubeconfigPath string            `json:"kubeconfigPath,omitempty"`
 	CACert         string            `json:"caCert,omitempty"`
 	AllowedPaths   []string          `json:"allowedPaths,omitempty"`
+
+	injector Injector `json:"-"`
 }
 
 // NeedsMITM reports whether the route requires TLS interception (MITM).
@@ -58,15 +61,28 @@ func (r *Route) NeedsMITM() bool {
 	return len(r.AllowedPaths) > 0 || len(r.DefaultHeaders) > 0
 }
 
+// pathEntryMatches reports whether reqPath matches an AllowedPaths entry.
+// Both values are canonicalized (dot-segments and duplicate slashes removed)
+// before comparison to prevent traversal bypasses. Entries that originally
+// end with "/" use prefix semantics; all others require exact match.
+func pathEntryMatches(reqPath, entry string) bool {
+	clean := pathpkg.Clean(reqPath)
+	entryClean := pathpkg.Clean(entry)
+	if strings.HasSuffix(entry, "/") {
+		return strings.HasPrefix(clean, entryClean+"/") || clean == entryClean
+	}
+	return clean == entryClean
+}
+
 // PathAllowed reports whether the request path is permitted by this route.
 // If AllowedPaths is empty the route is unrestricted. Otherwise the path
-// must start with at least one of the listed prefixes.
-func (r *Route) PathAllowed(path string) bool {
+// must match at least one entry (exact for bare paths, prefix for "/" entries).
+func (r *Route) PathAllowed(reqPath string) bool {
 	if len(r.AllowedPaths) == 0 {
 		return true
 	}
-	for _, prefix := range r.AllowedPaths {
-		if strings.HasPrefix(path, prefix) {
+	for _, entry := range r.AllowedPaths {
+		if pathEntryMatches(reqPath, entry) {
 			return true
 		}
 	}
@@ -91,40 +107,104 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// MatchRoute finds the first route matching the given host.
-// Exact matches are checked first (they appear first in the config by convention),
-// then suffix matches (domains starting with ".").
-// Port-qualified domains (e.g., "api.example.com:6443") match against the full
-// hostname:port from the request. Bare domains use hostname-only matching.
-func (c *Config) MatchRoute(host string) *Route {
-	hostLower := strings.ToLower(host)
+// domainMatches reports whether the route's domain matches the given host.
+func domainMatches(domain, hostLower, hostname string) bool {
+	if strings.HasPrefix(domain, ".") {
+		return strings.HasSuffix(hostname, domain) || hostname == domain[1:]
+	}
+	if _, _, err := net.SplitHostPort(domain); err == nil {
+		return hostLower == domain
+	}
+	return hostname == domain
+}
 
-	// Extract hostname without port (IPv6-safe)
-	hostname := hostLower
+// matchingRoutes returns the highest-precedence routes for the given host.
+// Precedence: host:port exact > bare-host exact > suffix/wildcard.
+func (c *Config) matchingRoutes(hostLower, hostname string) []*Route {
+	var portExact, exact, suffix []*Route
+	for i := range c.Routes {
+		domain := strings.ToLower(c.Routes[i].Domain)
+		if !domainMatches(domain, hostLower, hostname) {
+			continue
+		}
+		if strings.HasPrefix(domain, ".") {
+			suffix = append(suffix, &c.Routes[i])
+		} else if _, _, err := net.SplitHostPort(domain); err == nil {
+			portExact = append(portExact, &c.Routes[i])
+		} else {
+			exact = append(exact, &c.Routes[i])
+		}
+	}
+	if len(portExact) > 0 {
+		return portExact
+	}
+	if len(exact) > 0 {
+		return exact
+	}
+	return suffix
+}
+
+// parseHost lowercases the host and splits off the hostname (without port).
+func parseHost(host string) (hostLower, hostname string) {
+	hostLower = strings.ToLower(host)
+	hostname = hostLower
 	if h, _, err := net.SplitHostPort(hostLower); err == nil {
 		hostname = h
 	}
+	return hostLower, hostname
+}
 
-	for i := range c.Routes {
-		domain := strings.ToLower(c.Routes[i].Domain)
-		if strings.HasPrefix(domain, ".") {
-			// Suffix match always uses hostname only
-			if strings.HasSuffix(hostname, domain) || hostname == domain[1:] {
-				return &c.Routes[i]
+// MatchRoute finds the best route matching the given host and request path.
+// When only one route matches the host, it is returned directly. When multiple
+// routes share the same domain, the path is used to discriminate: a route whose
+// AllowedPaths matches the request path is preferred over a catch-all route
+// (one with no AllowedPaths). If path is empty, the first matching route is
+// returned (used by CONNECT before the request path is known).
+func (c *Config) MatchRoute(host, path string) *Route {
+	matches := c.matchingRoutes(parseHost(host))
+	if len(matches) == 0 {
+		return nil
+	}
+	if len(matches) == 1 || path == "" {
+		return matches[0]
+	}
+
+	// Multiple routes for the same host: pick the route whose AllowedPaths
+	// entry is the longest match for the request path. This prevents broad
+	// entries (e.g. "/api/") from shadowing more specific ones
+	// (e.g. "/api/admin/"). Fall back to the catch-all (no AllowedPaths).
+	var catchAll, best *Route
+	var bestLen int
+	for _, r := range matches {
+		if len(r.AllowedPaths) == 0 {
+			if catchAll == nil {
+				catchAll = r
 			}
-		} else if _, _, err := net.SplitHostPort(domain); err == nil {
-			// Port-qualified domain: match against full host:port
-			if hostLower == domain {
-				return &c.Routes[i]
-			}
-		} else {
-			// Bare domain: match hostname only
-			if hostname == domain {
-				return &c.Routes[i]
+			continue
+		}
+		for _, entry := range r.AllowedPaths {
+			if pathEntryMatches(path, entry) && len(entry) > bestLen {
+				best = r
+				bestLen = len(entry)
 			}
 		}
 	}
-	return nil
+	if best != nil {
+		return best
+	}
+	return catchAll
+}
+
+// NeedsMITMForHost reports whether a matching route requires MITM for the host.
+// Uses the same three-tier precedence as MatchRoute (host:port > bare-host >
+// suffix). Used at CONNECT time when the request path is not yet known.
+func (c *Config) NeedsMITMForHost(host string) bool {
+	for _, r := range c.matchingRoutes(parseHost(host)) {
+		if r.NeedsMITM() {
+			return true
+		}
+	}
+	return false
 }
 
 // MatchRouteByPath finds the first gateway route whose PathPrefix matches the request path.

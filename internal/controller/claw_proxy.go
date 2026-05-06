@@ -197,9 +197,17 @@ func generateProxyConfig(credentials []resolvedCredential) ([]byte, error) {
 		}
 	}
 
-	// Stable ordering: exact before suffix, alphabetical within each group
-	sort.Slice(exact, func(i, j int) bool { return exact[i].Domain < exact[j].Domain })
-	sort.Slice(suffix, func(i, j int) bool { return suffix[i].Domain < suffix[j].Domain })
+	// Stable ordering: exact before suffix, alphabetical within each group.
+	// Within the same domain, routes with AllowedPaths sort before catch-all routes
+	// so the proxy's MatchRoute picks the specific route first.
+	routeLess := func(a, b proxyRoute) bool {
+		if a.Domain != b.Domain {
+			return a.Domain < b.Domain
+		}
+		return len(a.AllowedPaths) > 0 && len(b.AllowedPaths) == 0
+	}
+	sort.Slice(exact, func(i, j int) bool { return routeLess(exact[i], exact[j]) })
+	sort.Slice(suffix, func(i, j int) bool { return routeLess(suffix[i], suffix[j]) })
 
 	cfg := proxyConfig{Routes: append(exact, suffix...)}
 	return json.Marshal(cfg)

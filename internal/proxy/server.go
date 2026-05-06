@@ -37,11 +37,10 @@ import (
 //   - Gateway mode: path-based routing for SDKs using baseUrl (e.g., /gemini/v1beta/...)
 //   - Forward proxy mode: MITM CONNECT proxy for general egress via HTTP_PROXY/HTTPS_PROXY
 type Server struct {
-	proxy     *goproxy.ProxyHttpServer
-	cfg       *Config
-	injectors map[string]Injector
-	gateways  map[string]*httputil.ReverseProxy
-	logger    *slog.Logger
+	proxy    *goproxy.ProxyHttpServer
+	cfg      *Config
+	gateways map[string]*httputil.ReverseProxy
+	logger   *slog.Logger
 }
 
 // NewServer creates a proxy server from the given config and CA materials.
@@ -51,13 +50,12 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 		return nil, fmt.Errorf("parse CA: %w", err)
 	}
 
-	injectors := make(map[string]Injector, len(cfg.Routes))
 	for i := range cfg.Routes {
 		inj, err := NewInjector(&cfg.Routes[i])
 		if err != nil {
 			return nil, fmt.Errorf("create injector for domain %s: %w", cfg.Routes[i].Domain, err)
 		}
-		injectors[cfg.Routes[i].Domain] = inj
+		cfg.Routes[i].injector = inj
 	}
 
 	proxy := goproxy.NewProxyHttpServer()
@@ -91,7 +89,7 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 
 	proxy.OnRequest().HandleConnectFunc(
 		func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-			route := cfg.MatchRoute(host)
+			route := cfg.MatchRoute(host, "")
 			if route == nil {
 				logger.Warn("blocked CONNECT to unknown domain", "host", host)
 				ctx.Resp = goproxy.NewResponse(
@@ -100,7 +98,7 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 				)
 				return rejectConnect, host
 			}
-			if !route.NeedsMITM() {
+			if !cfg.NeedsMITMForHost(host) {
 				logger.Debug("CONNECT tunnel (direct)", "host", host)
 				return directConnect, host
 			}
@@ -111,7 +109,7 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 
 	proxy.OnRequest().DoFunc(
 		func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-			route := cfg.MatchRoute(req.URL.Host)
+			route := cfg.MatchRoute(req.URL.Host, req.URL.Path)
 			if route == nil {
 				logger.Warn("blocked request to unknown domain", "host", req.URL.Host)
 				return req, goproxy.NewResponse(
@@ -143,16 +141,7 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 				)
 			}
 
-			inj := injectors[route.Domain]
-			if inj == nil {
-				logger.Error("no injector for matched route", "domain", route.Domain)
-				return req, goproxy.NewResponse(
-					req, goproxy.ContentTypeText, http.StatusBadGateway,
-					`{"error":"credential injection failed"}`,
-				)
-			}
-
-			if err := inj.Inject(req); err != nil {
+			if err := route.injector.Inject(req); err != nil {
 				logger.Error("credential injection failed", "domain", route.Domain, "error", "[REDACTED]")
 				return req, goproxy.NewResponse(
 					req, goproxy.ContentTypeText, http.StatusBadGateway,
@@ -196,7 +185,7 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 		logger.Info("registered gateway route", "pathPrefix", route.PathPrefix, "upstream", route.Upstream)
 	}
 
-	return &Server{proxy: proxy, cfg: cfg, injectors: injectors, gateways: gws, logger: logger}, nil
+	return &Server{proxy: proxy, cfg: cfg, gateways: gws, logger: logger}, nil
 }
 
 // Close is a no-op retained for API compatibility.
@@ -241,14 +230,7 @@ func (s *Server) serveGateway(w http.ResponseWriter, r *http.Request, route *Rou
 		return
 	}
 
-	inj := s.injectors[route.Domain]
-	if inj == nil {
-		s.logger.Error("no injector for gateway route", "domain", route.Domain)
-		http.Error(w, `{"error":"credential injection failed"}`, http.StatusBadGateway)
-		return
-	}
-
-	if err := inj.Inject(r); err != nil {
+	if err := route.injector.Inject(r); err != nil {
 		s.logger.Error("credential injection failed", "domain", route.Domain, "error", "[REDACTED]")
 		http.Error(w, `{"error":"credential injection failed"}`, http.StatusBadGateway)
 		return

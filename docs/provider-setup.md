@@ -408,11 +408,7 @@ spec:
 EOF
 ```
 
-**4. Configure OpenClaw** with a placeholder token:
-
-```sh
-openclaw channels add --channel telegram --token placeholder
-```
+**4.** Once the CR is applied, the OpenClaw assistant should configure the channel with a placeholder token automatically when the user asks to set up Telegram.
 
 The proxy intercepts requests like `/botplaceholder/sendMessage` and forwards them as `/bot<REAL_TOKEN>/sendMessage`. The real token never reaches the gateway pod.
 
@@ -458,13 +454,57 @@ spec:
 EOF
 ```
 
-**4. Configure OpenClaw** with a placeholder token:
-
-```sh
-openclaw channels add --channel discord --token placeholder
-```
+**4.** Once the CR is applied, the OpenClaw assistant should configure the channel with a placeholder token automatically when the user asks to set up Discord.
 
 The `discord-gateway` and `discord-cdn` entries allow Discord's WebSocket connection and media/avatar downloads without credential injection.
+
+### Slack
+
+Slack requires two tokens on the same domain (`slack.com`): an app-level token (`xapp-...`) for Socket Mode and a bot token (`xoxb-...`) for the REST API. The proxy uses `bearer` credential injection with `allowedPaths` to route each request to the correct token based on the URL path.
+
+**1. Create a Slack app** at [api.slack.com/apps](https://api.slack.com/apps). Enable Socket Mode, add the required OAuth scopes, and install the app to your workspace. Copy the bot token (`xoxb-...`) and app-level token (`xapp-...`).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic slack-secret \
+  --from-literal=app-token=YOUR_APP_TOKEN \
+  --from-literal=bot-token=YOUR_BOT_TOKEN \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: slack-app
+      type: bearer
+      secretRef:
+        name: slack-secret
+        key: app-token
+      domain: "slack.com"
+      allowedPaths: ["/api/apps.connections.open"]
+    - name: slack-bot
+      type: bearer
+      secretRef:
+        name: slack-secret
+        key: bot-token
+      domain: "slack.com"
+    - name: slack-ws
+      type: none
+      domain: ".slack.com"
+EOF
+```
+
+**4.** Once the CR is applied, the OpenClaw assistant should configure the channel with Bolt-shaped placeholder tokens (`xoxb-placeholder`, `xapp-placeholder`) automatically when the user asks to set up Slack.
+
+The `slack-app` credential handles only the Socket Mode handshake endpoint (`/api/apps.connections.open`). The `slack-bot` credential is the catch-all for all other `slack.com` API calls. The `slack-ws` entry (suffix match `.slack.com`) passes through WebSocket connections to `wss-primary.slack.com` without credential injection.
 
 ### WhatsApp
 
@@ -499,9 +539,10 @@ The leading dot makes these suffix matches — `.whatsapp.com` covers `web.whats
 
 No Secret is needed. WhatsApp Web uses phone-based QR pairing, not API keys — the session state is managed by OpenClaw on the gateway pod's persistent storage. The `none` type tells the proxy to allow traffic to these domains without injecting any credentials.
 
-After deploying, enable WhatsApp inside OpenClaw:
+After deploying, the OpenClaw assistant should handle plugin installation and channel configuration when the user asks to set up WhatsApp. However, WhatsApp requires an npm plugin (`@openclaw/whatsapp`) that only loads on a full pod restart. The assistant should ask the user to restart the pod:
 
-1. Open the OpenClaw Control UI
-2. Enable the WhatsApp plugin (`openclaw plugins install @openclaw/whatsapp`)
-3. Run `openclaw channels login --channel whatsapp` to get a QR code
-4. Scan the QR code with your phone (WhatsApp → Linked Devices)
+```sh
+oc delete pod -n $NS -l app=claw
+```
+
+Once the new pod is ready, the assistant can complete the pairing flow. The user will need to scan the QR code with their phone (WhatsApp → Linked Devices) when prompted.
