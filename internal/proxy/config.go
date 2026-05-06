@@ -113,6 +113,42 @@ func domainMatches(domain, hostLower, hostname string) bool {
 	return hostname == domain
 }
 
+// matchingRoutes returns the highest-precedence routes for the given host.
+// Precedence: host:port exact > bare-host exact > suffix/wildcard.
+func (c *Config) matchingRoutes(hostLower, hostname string) []*Route {
+	var portExact, exact, suffix []*Route
+	for i := range c.Routes {
+		domain := strings.ToLower(c.Routes[i].Domain)
+		if !domainMatches(domain, hostLower, hostname) {
+			continue
+		}
+		if strings.HasPrefix(domain, ".") {
+			suffix = append(suffix, &c.Routes[i])
+		} else if _, _, err := net.SplitHostPort(domain); err == nil {
+			portExact = append(portExact, &c.Routes[i])
+		} else {
+			exact = append(exact, &c.Routes[i])
+		}
+	}
+	if len(portExact) > 0 {
+		return portExact
+	}
+	if len(exact) > 0 {
+		return exact
+	}
+	return suffix
+}
+
+// parseHost lowercases the host and splits off the hostname (without port).
+func parseHost(host string) (hostLower, hostname string) {
+	hostLower = strings.ToLower(host)
+	hostname = hostLower
+	if h, _, err := net.SplitHostPort(hostLower); err == nil {
+		hostname = h
+	}
+	return hostLower, hostname
+}
+
 // MatchRoute finds the best route matching the given host and request path.
 // When only one route matches the host, it is returned directly. When multiple
 // routes share the same domain, the path is used to discriminate: a route whose
@@ -120,35 +156,7 @@ func domainMatches(domain, hostLower, hostname string) bool {
 // (one with no AllowedPaths). If path is empty, the first matching route is
 // returned (used by CONNECT before the request path is known).
 func (c *Config) MatchRoute(host, path string) *Route {
-	hostLower := strings.ToLower(host)
-
-	hostname := hostLower
-	if h, _, err := net.SplitHostPort(hostLower); err == nil {
-		hostname = h
-	}
-
-	var portExactMatches, exactMatches, suffixMatches []*Route
-	for i := range c.Routes {
-		domain := strings.ToLower(c.Routes[i].Domain)
-		if !domainMatches(domain, hostLower, hostname) {
-			continue
-		}
-		if strings.HasPrefix(domain, ".") {
-			suffixMatches = append(suffixMatches, &c.Routes[i])
-		} else if _, _, err := net.SplitHostPort(domain); err == nil {
-			portExactMatches = append(portExactMatches, &c.Routes[i])
-		} else {
-			exactMatches = append(exactMatches, &c.Routes[i])
-		}
-	}
-
-	matches := portExactMatches
-	if len(matches) == 0 {
-		matches = exactMatches
-	}
-	if len(matches) == 0 {
-		matches = suffixMatches
-	}
+	matches := c.matchingRoutes(parseHost(host))
 	if len(matches) == 0 {
 		return nil
 	}
@@ -183,47 +191,15 @@ func (c *Config) MatchRoute(host, path string) *Route {
 }
 
 // NeedsMITMForHost reports whether a matching route requires MITM for the host.
-// Exact hostname matches take priority: if any exact match exists, only those
-// routes are considered. Suffix/wildcard matches are evaluated only when no
-// exact match is found. Used at CONNECT time when the request path is unknown.
+// Uses the same three-tier precedence as MatchRoute (host:port > bare-host >
+// suffix). Used at CONNECT time when the request path is not yet known.
 func (c *Config) NeedsMITMForHost(host string) bool {
-	hostLower := strings.ToLower(host)
-
-	hostname := hostLower
-	if h, _, err := net.SplitHostPort(hostLower); err == nil {
-		hostname = h
-	}
-
-	var hasPortExact, portExactNeedsMITM bool
-	var hasExact, exactNeedsMITM, suffixNeedsMITM bool
-	for i := range c.Routes {
-		domain := strings.ToLower(c.Routes[i].Domain)
-		if !domainMatches(domain, hostLower, hostname) {
-			continue
-		}
-		if strings.HasPrefix(domain, ".") {
-			if c.Routes[i].NeedsMITM() {
-				suffixNeedsMITM = true
-			}
-		} else if _, _, err := net.SplitHostPort(domain); err == nil {
-			hasPortExact = true
-			if c.Routes[i].NeedsMITM() {
-				portExactNeedsMITM = true
-			}
-		} else {
-			hasExact = true
-			if c.Routes[i].NeedsMITM() {
-				exactNeedsMITM = true
-			}
+	for _, r := range c.matchingRoutes(parseHost(host)) {
+		if r.NeedsMITM() {
+			return true
 		}
 	}
-	if hasPortExact {
-		return portExactNeedsMITM
-	}
-	if hasExact {
-		return exactNeedsMITM
-	}
-	return suffixNeedsMITM
+	return false
 }
 
 // MatchRouteByPath finds the first gateway route whose PathPrefix matches the request path.
