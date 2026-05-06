@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	pathpkg "path"
 	"strings"
 )
 
@@ -60,24 +61,28 @@ func (r *Route) NeedsMITM() bool {
 	return len(r.AllowedPaths) > 0 || len(r.DefaultHeaders) > 0
 }
 
-// pathEntryMatches reports whether path matches an AllowedPaths entry.
-// Entries ending with "/" use prefix semantics; all others require exact match.
-func pathEntryMatches(path, entry string) bool {
+// pathEntryMatches reports whether reqPath matches an AllowedPaths entry.
+// Both values are canonicalized (dot-segments and duplicate slashes removed)
+// before comparison to prevent traversal bypasses. Entries that originally
+// end with "/" use prefix semantics; all others require exact match.
+func pathEntryMatches(reqPath, entry string) bool {
+	clean := pathpkg.Clean(reqPath)
+	entryClean := pathpkg.Clean(entry)
 	if strings.HasSuffix(entry, "/") {
-		return strings.HasPrefix(path, entry)
+		return strings.HasPrefix(clean, entryClean+"/") || clean == entryClean
 	}
-	return path == entry
+	return clean == entryClean
 }
 
 // PathAllowed reports whether the request path is permitted by this route.
 // If AllowedPaths is empty the route is unrestricted. Otherwise the path
 // must match at least one entry (exact for bare paths, prefix for "/" entries).
-func (r *Route) PathAllowed(path string) bool {
+func (r *Route) PathAllowed(reqPath string) bool {
 	if len(r.AllowedPaths) == 0 {
 		return true
 	}
 	for _, entry := range r.AllowedPaths {
-		if pathEntryMatches(path, entry) {
+		if pathEntryMatches(reqPath, entry) {
 			return true
 		}
 	}

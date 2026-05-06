@@ -315,6 +315,11 @@ func TestPathAllowed(t *testing.T) {
 		{name: "exact entry matches exact path", allowedPaths: []string{"/api/apps.connections.open"}, path: "/api/apps.connections.open", want: true},
 		{name: "exact entry rejects longer path", allowedPaths: []string{"/api/apps.connections.open"}, path: "/api/apps.connections.openfoo", want: false},
 		{name: "exact entry rejects subpath", allowedPaths: []string{"/api/apps.connections.open"}, path: "/api/apps.connections.open/extra", want: false},
+		{name: "traversal bypass blocked", allowedPaths: []string{"/api/"}, path: "/api/../etc/passwd", want: false},
+		{name: "double-slash normalized for exact", allowedPaths: []string{"/api/apps.connections.open"}, path: "/api//apps.connections.open", want: true},
+		{name: "double-slash normalized for prefix", allowedPaths: []string{"/BerriAI/litellm/"}, path: "/BerriAI//litellm/main/file", want: true},
+		{name: "dot-segment normalized for prefix", allowedPaths: []string{"/BerriAI/litellm/"}, path: "/BerriAI/./litellm/main/file", want: true},
+		{name: "prefix entry matches directory without trailing slash", allowedPaths: []string{"/api/"}, path: "/api", want: true},
 	}
 
 	for _, tt := range tests {
