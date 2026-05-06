@@ -10,7 +10,7 @@ export NS=my-claw-namespace
 
 ## LLM Providers
 
-For known providers (`google`, `anthropic`), the operator automatically infers the correct `domain` and `apiKey` header — you only need `name`, `type`, `secretRef`, and `provider`. You can still override any inferred field explicitly if needed (e.g., routing through a custom proxy).
+For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers defaults where possible — you only need `name`, `type`, `secretRef`, and `provider`. For `google` and `anthropic`, the `domain` and `apiKey` header are fully inferred. For `openai` and `xai`, you must provide a `domain` explicitly since they use `type: bearer`. You can still override any inferred field if needed (e.g., routing through a custom proxy).
 
 > **Adding credentials incrementally:** Each `oc apply` of the Claw CR **replaces** the entire `credentials` list. When adding a new provider, include all existing credentials in the YAML — otherwise they will be removed. You can retrieve your current configuration with `oc get claw instance -n $NS -o yaml` and add the new entry to the list.
 
@@ -77,6 +77,74 @@ spec:
         name: anthropic-api-key
         key: api-key
       provider: anthropic
+EOF
+```
+
+### OpenAI
+
+Uses the OpenAI API with a bearer token.
+
+**1. Get an API key** from the [OpenAI Platform](https://platform.openai.com/api-keys).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic openai-api-key \
+  --from-literal=api-key=YOUR_OPENAI_API_KEY \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: openai
+      type: bearer
+      secretRef:
+        name: openai-api-key
+        key: api-key
+      provider: openai
+      domain: "api.openai.com"
+EOF
+```
+
+### xAI (Grok)
+
+Uses the xAI API with a bearer token.
+
+**1. Get an API key** from the [xAI Console](https://console.x.ai/).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic xai-api-key \
+  --from-literal=api-key=YOUR_XAI_API_KEY \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: xai
+      type: bearer
+      secretRef:
+        name: xai-api-key
+        key: api-key
+      provider: xai
+      domain: "api.x.ai"
 EOF
 ```
 

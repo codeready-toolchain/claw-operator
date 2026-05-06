@@ -120,8 +120,8 @@ data:
 
     // Always copy operator-managed skill files
     copyAlways(
-      path.join(configDir, "PROXY_SETUP.md"),
-      path.join(workspaceDir, "skills", "proxy", "SKILL.md")
+      path.join(configDir, "PLATFORM.md"),
+      path.join(workspaceDir, "skills", "platform", "SKILL.md")
     );
 
     // Copy Kubernetes skill if present in ConfigMap
@@ -133,17 +133,37 @@ data:
     # OpenClaw Assistant
 
     You are a helpful AI assistant running in OpenShift.
-  PROXY_SETUP.md: |
+  PLATFORM.md: |
     ---
-    name: proxy-setup
-    description: "Network proxy architecture and how to configure access to external services like WhatsApp, Telegram, Discord, and Slack."
+    name: platform
+    description: "Platform overview, proxy architecture, LLM provider model management, and messaging channel integration."
     ---
+
+    # Platform Overview
+
+    You are running on an OpenShift cluster managed by the Claw operator. Key constraints:
+
+    - **Non-root execution:** All containers run as a random non-root UID assigned by
+      OpenShift's Security Context Constraints (restricted seccomp, all capabilities
+      dropped). You cannot bind privileged ports or write outside designated paths.
+    - **Claw CR manages infrastructure:** LLM provider credentials, proxy domain
+      allowlisting, and Kubernetes API access. The operator reconciles the CR into
+      Deployments, ConfigMaps, Secrets, NetworkPolicies, and Routes. Application-level
+      config (plugins, channels, agent settings) is managed separately via
+      `openclaw config patch` on the PVC.
+    - **Important:** Each `oc apply` of the Claw CR **replaces** the entire `credentials`
+      list. The user must include all existing credentials when applying — otherwise they
+      will be removed. Retrieve the current state first:
+
+    ```sh
+    oc get claw <name> -n <namespace> -o yaml
+    ```
 
     # Proxy Architecture
 
-    You are running in an OpenShift cluster behind a credential-injecting MITM proxy.
-    All outbound traffic from this pod goes through the proxy via `HTTP_PROXY`/`HTTPS_PROXY`
-    environment variables. The proxy blocks any domain that is not explicitly configured.
+    All outbound traffic from this pod goes through a credential-injecting MITM proxy
+    via `HTTP_PROXY`/`HTTPS_PROXY` environment variables. The proxy blocks any domain
+    that is not explicitly configured.
 
     LLM provider credentials (API keys, OAuth tokens, GCP service account tokens) are
     injected by the proxy — you never see real secrets. For non-LLM services that need
@@ -161,43 +181,22 @@ data:
     You do NOT need to ask the user to allowlist these. If a plugin install or skill
     download from ClawHub fails, the issue is likely something else (network, auth token).
 
-    ## When the user wants to integrate with an external service
+    ## Adding a new external service
 
     If a service is not working or the user asks to enable a new integration, the most
     likely cause is that the proxy is blocking the required domains. Tell the user they
     need to update their Claw custom resource to add the appropriate credential entries.
-
-    **Important:** Each `oc apply` of the Claw CR **replaces** the entire `credentials`
-    list. The user must include all existing credentials when applying — otherwise they
-    will be removed.
 
     Walk the user through these steps:
 
     1. Retrieve the current Claw instance:
 
     ```sh
-    oc get claw CLAW_INSTANCE_NAME -n <namespace> -o yaml
+    oc get claw <name> -n <namespace> -o yaml
     ```
 
-    The output will look something like this (the `credentials` list varies):
-
-    ```yaml
-    apiVersion: claw.sandbox.redhat.com/v1alpha1
-    kind: Claw
-    metadata:
-      name: CLAW_INSTANCE_NAME
-    spec:
-      credentials:
-        - name: gemini
-          type: apiKey
-          secretRef:
-            name: gemini-api-key
-            key: api-key
-          provider: google
-    ```
-
-    2. Add the new credential entries to the existing `credentials` list (see known
-    integrations below for the exact entries needed).
+    2. Add the new credential entries to the existing `credentials` list (see
+    Messaging Channels or Custom Domains sections below for the exact entries needed).
 
     3. Apply the updated CR:
 
@@ -205,9 +204,51 @@ data:
     oc apply -n <namespace> -f updated-claw.yaml
     ```
 
-    ## Known integrations
+    # LLM Providers & Models
 
-    ### WhatsApp
+    ## How providers map to models
+
+    The model picker list is dynamically generated from the providers configured in the
+    Claw CR `spec.credentials`. Each credential with a `provider` field contributes its
+    known models to the picker. Models appear as `{provider}/{model-name}` (e.g.,
+    `google/gemini-3-flash-preview`, `anthropic/claude-sonnet-4-6`).
+
+    Supported providers with automatic model catalogs: `google`, `anthropic`, `openai`, `xai`.
+    Meta-providers like `openrouter` do not have a hardcoded catalog — users can add
+    specific models manually.
+
+    ## Models are operator-managed
+
+    The operator writes the model catalog into `operator.json` on every reconcile. This
+    means models stay in sync with the configured credentials automatically:
+    - Add a provider credential → its models appear in the picker
+    - Remove a provider credential → its models disappear from the picker
+
+    You do NOT need to manually edit the model list when providers change. The operator
+    handles it.
+
+    ## User customization
+
+    Users can add custom models (e.g., specific OpenRouter models) without conflicting
+    with operator-managed entries:
+
+    ```sh
+    openclaw config patch '{"agents":{"defaults":{"models":{"openrouter/anthropic/claude-sonnet-4-6":{"alias":"Claude via OR"}}}}}'
+    ```
+
+    User-added model entries persist across pod restarts because deep-merge preserves
+    keys that don't collide with operator-managed ones.
+
+    ## Primary model
+
+    The primary (default) model is set by the operator on first run based on the first
+    configured provider. After the user changes their primary model (via the UI or
+    `openclaw config patch`), their choice persists across restarts — the operator does
+    not overwrite it.
+
+    # Messaging Channels
+
+    ## WhatsApp
 
     WhatsApp Web uses phone-based QR pairing (not API keys). Setup has TWO parts:
     proxy domain allowlisting (Claw CR — needs the user) and plugin/channel
@@ -221,7 +262,7 @@ data:
     Do not tell the user that config patches are blocked or protected — that is
     incorrect.
 
-    #### Part 1: Proxy domains (user must do this)
+    ### Part 1: Proxy domains (user must do this)
 
     The user needs to add these entries to the Claw CR `credentials` list.
     Beyond `*.whatsapp.*`, WhatsApp Web also relies on Meta's auth and CDN
@@ -245,7 +286,7 @@ data:
           domain: ".fbcdn.net"
     ```
 
-    #### Part 2: Plugin and channel setup (you do this yourself)
+    ### Part 2: Plugin and channel setup (you do this yourself)
 
     Once the proxy domains are configured, run these commands yourself — do not
     ask the user to do them.
@@ -284,7 +325,7 @@ data:
     **Step 5.** Tell the user to scan the QR code with their phone
     (WhatsApp → Linked Devices).
 
-    ### Telegram
+    ## Telegram
 
     Telegram Bot API embeds the bot token in the URL path (`/bot<TOKEN>/method`).
     The proxy uses `pathToken` credential injection: OpenClaw is configured with a
@@ -314,7 +355,7 @@ data:
     gateway pod. The proxy intercepts `/botplaceholder/sendMessage` and forwards
     it as `/bot<REAL_TOKEN>/sendMessage`.
 
-    ### Discord
+    ## Discord
 
     Discord Bot API uses `Authorization: Bot <TOKEN>` header authentication. The
     proxy uses `apiKey` credential injection with `valuePrefix: "Bot "` to inject
@@ -350,7 +391,7 @@ data:
     Discord's WebSocket gateway and CDN (media/avatars). They don't need credential
     injection.
 
-    ### Slack
+    ## Slack
 
     Slack requires two tokens on the same domain (`slack.com`): an app-level token
     (`xapp-...`) for Socket Mode and a bot token (`xoxb-...`) for the REST API. The
@@ -391,7 +432,7 @@ data:
     `slack-ws` entry (suffix match `.slack.com`) passes through WebSocket connections to
     `wss-primary.slack.com` without credential injection.
 
-    ## Custom domains
+    # Custom Domains
 
     For any other external service, the user can add a `type: none` entry with the
     appropriate `domain`. A leading dot (e.g., `.example.com`) matches all subdomains.

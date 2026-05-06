@@ -96,7 +96,7 @@ func runMergeJS(t *testing.T, setup mergeTestSetup) mergeTestResult {
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(seedJSON), 0o644))
 
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "AGENTS.md"), []byte(cmData["AGENTS.md"]), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "PROXY_SETUP.md"), []byte(cmData["PROXY_SETUP.md"]), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "PLATFORM.md"), []byte(cmData["PLATFORM.md"]), 0o644))
 
 	if setup.withK8sSkill != "" {
 		require.NoError(t, os.WriteFile(filepath.Join(configDir, "KUBERNETES.md"), []byte(setup.withK8sSkill), 0o644))
@@ -291,9 +291,9 @@ func TestMergeJS(t *testing.T) {
 		require.NoError(t, err, "AGENTS.md should be seeded to workspace")
 		assert.Equal(t, cmData["AGENTS.md"], string(agentsContent))
 
-		skillContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "proxy", "SKILL.md"))
-		require.NoError(t, err, "PROXY_SETUP.md should be copied to skills/proxy/SKILL.md")
-		assert.Equal(t, cmData["PROXY_SETUP.md"], string(skillContent))
+		skillContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "platform", "SKILL.md"))
+		require.NoError(t, err, "PLATFORM.md should be copied to skills/platform/SKILL.md")
+		assert.Equal(t, cmData["PLATFORM.md"], string(skillContent))
 	})
 
 	t.Run("seed files not overwritten vs always copied", func(t *testing.T) {
@@ -303,8 +303,8 @@ func TestMergeJS(t *testing.T) {
 
 		result := runMergeJS(t, mergeTestSetup{
 			pvcFiles: map[string]string{
-				"workspace/AGENTS.md":             customAgents,
-				"workspace/skills/proxy/SKILL.md": oldSkill,
+				"workspace/AGENTS.md":                customAgents,
+				"workspace/skills/platform/SKILL.md": oldSkill,
 			},
 		})
 
@@ -312,9 +312,9 @@ func TestMergeJS(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, customAgents, string(agentsContent), "AGENTS.md should NOT be overwritten (seedIfMissing)")
 
-		skillContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "proxy", "SKILL.md"))
+		skillContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "platform", "SKILL.md"))
 		require.NoError(t, err)
-		assert.Equal(t, cmData["PROXY_SETUP.md"], string(skillContent), "SKILL.md should be overwritten (copyAlways)")
+		assert.Equal(t, cmData["PLATFORM.md"], string(skillContent), "SKILL.md should be overwritten (copyAlways)")
 		assert.NotEqual(t, oldSkill, string(skillContent))
 	})
 
