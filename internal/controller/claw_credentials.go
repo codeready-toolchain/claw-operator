@@ -152,6 +152,7 @@ var knownProviders = map[string]bool{
 	"anthropic":  true,
 	"openai":     true,
 	"openrouter": true,
+	"xai":        true,
 }
 
 // resolveCredentials validates all credential entries and returns resolved credentials
@@ -199,7 +200,7 @@ func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instanc
 		// Validate provider field
 		if cred.Provider != "" {
 			if !knownProviders[cred.Provider] {
-				errs = append(errs, fmt.Errorf("credential %q: unknown provider %q (known: google, anthropic, openai, openrouter)", cred.Name, cred.Provider))
+				errs = append(errs, fmt.Errorf("credential %q: unknown provider %q (known: google, anthropic, openai, openrouter, xai)", cred.Name, cred.Provider))
 			}
 			if existing, seen := seenProviders[cred.Provider]; seen {
 				errs = append(errs, fmt.Errorf("credential %q: duplicate provider %q (already used by credential %q)", cred.Name, cred.Provider, existing))

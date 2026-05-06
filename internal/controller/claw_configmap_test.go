@@ -314,6 +314,194 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 	})
 }
 
+// --- Model catalog injection tests ---
+
+func TestInjectModelCatalogIntoConfigMap(t *testing.T) {
+	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
+		cm := &unstructured.Unstructured{}
+		cm.SetKind(ConfigMapKind)
+		cm.SetName(getConfigMapName(testInstanceName))
+		cm.Object["data"] = map[string]any{
+			"operator.json": jsonContent,
+		}
+		return []*unstructured.Unstructured{cm}
+	}
+
+	baseJSON := `{"models":{"providers":{}},"gateway":{"port":18789}}`
+
+	getConfig := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
+		t.Helper()
+		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
+		require.NoError(t, err)
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(raw), &config))
+		return config
+	}
+
+	t.Run("single provider google emits correct model entries", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+		}
+
+		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		agents := config["agents"].(map[string]any)
+		defaults := agents["defaults"].(map[string]any)
+		models := defaults["models"].(map[string]any)
+
+		assert.Len(t, models, len(modelCatalog["google"]))
+		assert.Contains(t, models, "google/gemini-3-flash-preview")
+		entry := models["google/gemini-3-flash-preview"].(map[string]any)
+		assert.Equal(t, "Gemini 3 Flash", entry["alias"])
+	})
+
+	t.Run("multiple providers emit models for each", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
+		}
+
+		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+
+		expectedCount := len(modelCatalog["google"]) + len(modelCatalog["anthropic"])
+		assert.Len(t, models, expectedCount)
+		assert.Contains(t, models, "google/gemini-3-flash-preview")
+		assert.Contains(t, models, "anthropic/claude-sonnet-4-6")
+	})
+
+	t.Run("vertex credential emits provider-vertex prefix", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name: "anthropic-vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
+				Domain: ".googleapis.com", GCP: &clawv1alpha1.GCPConfig{Project: "my-project", Location: "us-east5"},
+			},
+		}
+
+		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+
+		assert.Contains(t, models, "anthropic-vertex/claude-sonnet-4-6")
+		assert.NotContains(t, models, "anthropic/claude-sonnet-4-6")
+	})
+
+	t.Run("both direct and vertex anthropic coexist", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "claude-direct", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
+			{
+				Name: "claude-vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
+				Domain: ".googleapis.com", GCP: &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"},
+			},
+		}
+
+		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+
+		assert.Contains(t, models, "anthropic/claude-sonnet-4-6")
+		assert.Contains(t, models, "anthropic-vertex/claude-sonnet-4-6")
+		expectedCount := len(modelCatalog["anthropic"]) * 2
+		assert.Len(t, models, expectedCount)
+	})
+
+	t.Run("primary set from first providers first model", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
+		}
+
+		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		assert.Equal(t, "google/gemini-3-flash-preview", model["primary"])
+	})
+
+	t.Run("primary set from first provider with catalog", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "openrouter", Type: clawv1alpha1.CredentialTypeBearer, Provider: "openrouter", Domain: "openrouter.ai"},
+			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
+		}
+
+		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		assert.Equal(t, "anthropic/claude-sonnet-4-6", model["primary"])
+	})
+
+	t.Run("no providers means no models or primary", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "passthrough", Type: clawv1alpha1.CredentialTypeNone, Domain: "example.com"},
+		}
+
+		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		_, hasAgents := config["agents"]
+		assert.False(t, hasAgents, "agents section should not exist when no models are emitted")
+	})
+
+	t.Run("pathToken credentials skipped", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name: "telegram", Type: clawv1alpha1.CredentialTypePathToken, Provider: "telegram",
+				Domain: "api.telegram.org", PathToken: &clawv1alpha1.PathTokenConfig{Prefix: "/bot"},
+			},
+		}
+
+		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		_, hasAgents := config["agents"]
+		assert.False(t, hasAgents, "pathToken credentials should not generate model entries")
+	})
+
+	t.Run("provider not in catalog silently skipped", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "openrouter", Type: clawv1alpha1.CredentialTypeBearer, Provider: "openrouter", Domain: "openrouter.ai"},
+		}
+
+		err := injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials))
+		require.NoError(t, err)
+
+		config := getConfig(t, objects)
+		_, hasAgents := config["agents"]
+		assert.False(t, hasAgents, "unknown provider should not generate model entries")
+	})
+
+	t.Run("preserves existing operator.json sections", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+		}
+
+		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+
+		config := getConfig(t, objects)
+		gateway := config["gateway"].(map[string]any)
+		assert.Equal(t, float64(18789), gateway["port"], "gateway config should be preserved")
+
+		_, hasModels := config["models"]
+		assert.True(t, hasModels, "models.providers section should be preserved")
+	})
+}
+
 // --- Dynamic provider injection integration tests ---
 
 func TestOpenClawDynamicProviders(t *testing.T) {
@@ -405,5 +593,34 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		models := config["models"].(map[string]any)
 		providers := models["providers"].(map[string]any)
 		assert.Empty(t, providers, "providers should be empty for MITM-only credentials")
+	})
+
+	t.Run("should inject model catalog into operator.json after reconciliation", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstance(t, ctx, testInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getConfigMapName(testInstanceName),
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+
+		agents, ok := config["agents"].(map[string]any)
+		require.True(t, ok, "operator.json should contain agents section")
+		defaults := agents["defaults"].(map[string]any)
+
+		catalogModels, hasModels := defaults["models"].(map[string]any)
+		require.True(t, hasModels, "operator.json should contain agents.defaults.models")
+		assert.Contains(t, catalogModels, "google/gemini-3-flash-preview", "should have google model from catalog")
+
+		model := defaults["model"].(map[string]any)
+		assert.Equal(t, "google/gemini-3-flash-preview", model["primary"], "primary should be first google model")
 	})
 }

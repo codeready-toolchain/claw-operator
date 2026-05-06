@@ -270,7 +270,7 @@ Adds Layer 2 tests (`claw_merge_test.go`) for existing `merge.js` behavior — z
 1. **Add `claw_merge_test.go`** — extract `merge.js` from the embedded ConfigMap and run it via `node` in temp directories. Cover the 9 existing-behavior test cases from Layer 2: first run, restart with existing PVC, operator keys win, user keys preserved, arrays replaced, overwrite mode, invalid JSON fallback, seed file behavior (both `seedIfMissing` and `copyAlways`)
 2. **CI verification** — confirm `node` is available on `ubuntu-latest` runners (pre-installed; skip condition is a local-dev safety net only)
 
-### Phase 2: Dynamic model catalog (core feature)
+### Phase 2: Dynamic model catalog (core feature) - DONE
 
 The main feature PR. Depends on Phase 1's safety net being merged first.
 

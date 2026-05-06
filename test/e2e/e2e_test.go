@@ -488,8 +488,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"operator.json should contain gateway config")
 			assert.Contains(t, operatorJSON, `"providers"`,
 				"operator.json should contain providers section")
-			assert.NotContains(t, operatorJSON, `"agents"`,
-				"operator.json must not contain agents section (user-owned)")
+			assert.Contains(t, operatorJSON, `"agents"`,
+				"operator.json should contain agents section (model catalog)")
 
 			var operatorConfig map[string]any
 			require.NoError(t, json.Unmarshal([]byte(operatorJSON), &operatorConfig),
@@ -498,7 +498,18 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			providers := models["providers"].(map[string]any)
 			assert.NotEmpty(t, providers, "should have injected provider from credential")
 
-			t.Log("verifying openclaw.json seed is user-owned (no $include)")
+			agents, okAgents := operatorConfig["agents"].(map[string]any)
+			require.True(t, okAgents, "operator.json should contain agents section")
+			defaults, okDefaults := agents["defaults"].(map[string]any)
+			require.True(t, okDefaults, "agents should contain defaults section")
+			catalogModels, hasModels := defaults["models"].(map[string]any)
+			require.True(t, hasModels, "operator.json should contain agents.defaults.models")
+			assert.NotEmpty(t, catalogModels, "model catalog should not be empty")
+			model, okModel := defaults["model"].(map[string]any)
+			require.True(t, okModel, "defaults should contain model section")
+			assert.NotEmpty(t, model["primary"], "operator.json should have primary model")
+
+			t.Log("verifying openclaw.json seed is user-owned (no $include, no hardcoded models)")
 			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
 				"-o", "jsonpath={.data.openclaw\\.json}",
 				"-n", userNamespace)
@@ -508,6 +519,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"openclaw.json should not contain $include (replaced by deep-merge)")
 			assert.Contains(t, openclawJSON, `"agents"`,
 				"openclaw.json seed should contain agents section")
+			assert.NotContains(t, openclawJSON, `"models"`,
+				"openclaw.json seed must not contain models (now operator-managed)")
 
 			t.Log("verifying merge.js script is present in ConfigMap")
 			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
