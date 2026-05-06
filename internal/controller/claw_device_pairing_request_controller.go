@@ -75,8 +75,9 @@ func (r *ClawDevicePairingRequestReconciler) Reconcile(ctx context.Context, req 
 		setDevicePairingCondition(instance, "Ready", metav1.ConditionFalse, "InvalidSelector", fmt.Sprintf("Invalid selector: %v", err))
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after selector validation failure")
+			return ctrl.Result{}, statusErr
 		}
-		return ctrl.Result{}, fmt.Errorf("invalid selector: %w", err)
+		return ctrl.Result{}, nil
 	}
 
 	// Query for pods using the selector
@@ -99,6 +100,7 @@ func (r *ClawDevicePairingRequestReconciler) Reconcile(ctx context.Context, req 
 		setDevicePairingCondition(instance, "Ready", metav1.ConditionFalse, "NoMatchingPod", fmt.Sprintf("No pods match selector: %s", selector.String()))
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status for no matching pods")
+			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{}, nil
 
@@ -108,6 +110,7 @@ func (r *ClawDevicePairingRequestReconciler) Reconcile(ctx context.Context, req 
 		setDevicePairingCondition(instance, "Ready", metav1.ConditionFalse, "MultipleMatchingPods", fmt.Sprintf("%d pods match selector: %s", podCount, selector.String()))
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status for multiple matching pods")
+			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{}, nil
 
@@ -123,6 +126,7 @@ func (r *ClawDevicePairingRequestReconciler) Reconcile(ctx context.Context, req 
 		setDevicePairingCondition(instance, "Ready", metav1.ConditionTrue, "Ready", fmt.Sprintf("Found target pod: %s", pod.Name))
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status for ready state")
+			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{}, nil
 	}

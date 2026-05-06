@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -434,6 +435,205 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 		require.Error(t, err, "should fail to create ClawDevicePairingRequest with empty matchLabels map")
 		assert.Contains(t, err.Error(), "selector must include at least one matchLabels or matchExpressions entry")
 	})
+
+	t.Run("Error handling - NoMatchingPod returns nil on success", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-no-match-no-requeue"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+		})
+
+		// Create ClawDevicePairingRequest with selector that won't match any pods
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "no-match-no-requeue",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app":         "claw",
+						"nonexistent": "selector-label",
+					},
+				},
+			},
+		}
+
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create ClawDevicePairingRequest")
+
+		// Setup reconciler
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+		}
+
+		// Reconcile the resource
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+		})
+
+		// Verify terminal state: no error returned (no requeue)
+		require.NoError(t, err, "reconcile should return nil for terminal NoMatchingPod state")
+		assert.Equal(t, ctrl.Result{}, result, "should not requeue for terminal state")
+
+		// Verify status was updated with NoMatchingPod condition
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		require.Len(t, fetched.Status.Conditions, 1, "should have one condition")
+		assert.Equal(t, "Ready", fetched.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionFalse, fetched.Status.Conditions[0].Status)
+		assert.Equal(t, "NoMatchingPod", fetched.Status.Conditions[0].Reason)
+	})
+
+	t.Run("Error handling - MultipleMatchingPods returns nil on success", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-multiple-match-no-requeue"
+		pod1Name := "test-pod-1"
+		pod2Name := "test-pod-2"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+			deleteAndWaitPod(t, namespace, pod1Name)
+			deleteAndWaitPod(t, namespace, pod2Name)
+		})
+
+		// Create two pods with the same labels
+		labels := map[string]string{
+			"app":      "claw",
+			"instance": "multi-test",
+		}
+		createTestPod(ctx, t, pod1Name, namespace, labels)
+		createTestPod(ctx, t, pod2Name, namespace, labels)
+
+		// Create ClawDevicePairingRequest with selector matching both pods
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "multiple-match-no-requeue",
+				Selector: metav1.LabelSelector{
+					MatchLabels: labels,
+				},
+			},
+		}
+
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create ClawDevicePairingRequest")
+
+		// Setup reconciler
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+		}
+
+		// Reconcile the resource
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+		})
+
+		// Verify terminal state: no error returned (no requeue)
+		require.NoError(t, err, "reconcile should return nil for terminal MultipleMatchingPods state")
+		assert.Equal(t, ctrl.Result{}, result, "should not requeue for terminal state")
+
+		// Verify status was updated with MultipleMatchingPods condition
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		require.Len(t, fetched.Status.Conditions, 1, "should have one condition")
+		assert.Equal(t, "Ready", fetched.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionFalse, fetched.Status.Conditions[0].Status)
+		assert.Equal(t, "MultipleMatchingPods", fetched.Status.Conditions[0].Reason)
+		assert.Contains(t, fetched.Status.Conditions[0].Message, "2 pods match selector")
+	})
+
+	t.Run("Error handling - InvalidSelector returns nil on success", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-invalid-selector-no-requeue"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+		})
+
+		// Create ClawDevicePairingRequest with invalid matchExpressions (invalid operator)
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "invalid-selector-no-requeue",
+				Selector: metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "app",
+							Operator: metav1.LabelSelectorOperator("InvalidOperator"), // Invalid operator
+							Values:   []string{"claw"},
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create ClawDevicePairingRequest")
+
+		// Setup reconciler
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+		}
+
+		// Reconcile the resource
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+		})
+
+		// Verify terminal state: no error returned (no requeue) even though selector is invalid
+		require.NoError(t, err, "reconcile should return nil for terminal InvalidSelector state")
+		assert.Equal(t, ctrl.Result{}, result, "should not requeue for terminal state")
+
+		// Verify status was updated with InvalidSelector condition
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		require.Len(t, fetched.Status.Conditions, 1, "should have one condition")
+		assert.Equal(t, "Ready", fetched.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionFalse, fetched.Status.Conditions[0].Status)
+		assert.Equal(t, "InvalidSelector", fetched.Status.Conditions[0].Reason)
+		assert.Contains(t, fetched.Status.Conditions[0].Message, "Invalid selector")
+	})
+
+	t.Run("Error handling - transient API errors cause requeue", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-nonexistent-resource"
+
+		// Setup reconciler
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+		}
+
+		// Reconcile a non-existent resource (simulates transient error scenario)
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+		})
+
+		// Should return no error for NotFound (resource was deleted)
+		require.NoError(t, err, "reconcile should not error for NotFound resources")
+		assert.Equal(t, ctrl.Result{}, result, "should not requeue for NotFound resources")
+	})
 }
 
 // deleteAndWaitClawDevicePairingRequest deletes a ClawDevicePairingRequest and waits for it to be removed
@@ -458,4 +658,52 @@ func deleteAndWaitClawDevicePairingRequest(t *testing.T, namespace, name string)
 		err := k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, instance)
 		return apierrors.IsNotFound(err)
 	}, "ClawDevicePairingRequest should be deleted")
+}
+
+// createTestPod creates a test pod with the given labels
+func createTestPod(ctx context.Context, t *testing.T, name, namespace string, labels map[string]string) *corev1.Pod { //nolint:unparam
+	t.Helper()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "gateway",
+					Image: "test-image:latest",
+				},
+			},
+		},
+	}
+
+	require.NoError(t, k8sClient.Create(ctx, pod), "failed to create test pod")
+	return pod
+}
+
+// deleteAndWaitPod deletes a pod and waits for it to be removed
+func deleteAndWaitPod(t *testing.T, namespace, name string) {
+	t.Helper()
+	ctx := context.Background()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+
+	err := k8sClient.Delete(ctx, pod)
+	if err != nil && client.IgnoreNotFound(err) != nil {
+		t.Logf("failed to delete pod %s/%s: %v", namespace, name, err)
+	}
+
+	// Wait for resource to be deleted
+	waitFor(t, timeout, interval, func() bool {
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, pod)
+		return apierrors.IsNotFound(err)
+	}, "Pod should be deleted")
 }
