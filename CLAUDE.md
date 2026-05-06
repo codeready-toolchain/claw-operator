@@ -24,7 +24,7 @@ Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instanc
   - `gcp` (GCPConfig, optional): Required when type is `gcp`. Fields: `project` (GCP project ID, minLength=1), `location` (GCP region, minLength=1)
   - `pathToken` (PathTokenConfig, optional): Required when type is `pathToken`. Fields: `prefix` (URL path prefix, minLength=1)
   - `oauth2` (OAuth2Config, optional): Required when type is `oauth2`. Fields: `clientID` (minLength=1), `tokenURL` (minLength=1), `scopes` ([]string, optional)
-  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter"). When set, the controller configures gateway routing and dynamically generates the provider entry in `operator.json` (deep-merged into the user's `openclaw.json` by the init container). When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
+  - `provider` (string, optional): Maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter", "xai"). When set, the controller configures gateway routing, dynamically generates the provider entry in `operator.json`, and populates the model catalog (`agents.defaults.models`) from known models for that provider. When omitted, the credential is used for MITM forward proxy only. For `provider: "google"` with `type: apiKey`, the controller uses the Gemini REST API upstream (`generativelanguage.googleapis.com/v1beta`). For `provider: "google"` with `type: gcp`, it uses Vertex AI upstream (`{location}-aiplatform.googleapis.com`).
   - `allowedPaths` ([]string, optional): Restricts which URL paths the proxy permits for this domain. Each entry is a path prefix (e.g., "/v1/api/"). If empty, all paths are allowed. Used by builtin passthrough domains (e.g., `raw.githubusercontent.com` is restricted to `/BerriAI/litellm/` and `/WhiskeySockets/Baileys/`) and available for user-defined credentials.
 
 **Status Fields:**
@@ -203,12 +203,12 @@ The `claw-config` ConfigMap uses a **deep-merge** approach to preserve user and 
 Uses the gateway image (`ghcr.io/openclaw/openclaw`) for Node.js. Runs `node /config/merge.js` on every pod start. Kustomize's `images` transformer pins both `init-config` and the main gateway container to the same image tag. The `CLAW_CONFIG_MODE` env var (from `spec.configMode`) controls merge behavior.
 
 **Config merge modes** (controlled by `spec.configMode`):
-- **`merge`** (default): Deep-merges `operator.json` into the existing PVC `openclaw.json`. Objects merge recursively (operator keys win), arrays and primitives from operator replace user values. User-owned keys (plugins, channels, agents, cron) survive restarts.
-- **`overwrite`**: Deep-merges `operator.json` into the ConfigMap `openclaw.json` seed (ignoring PVC). User edits are wiped on every restart.
+- **`merge`** (default): Deep-merges `operator.json` into the existing PVC `openclaw.json`. Objects merge recursively (operator keys win), arrays and primitives from operator replace user values. User-owned keys (plugins, channels, agents, cron) survive restarts. **Primary model preservation:** before merging, saves the PVC's existing `agents.defaults.model.primary` and restores it after merge, so the user's model choice persists across restarts.
+- **`overwrite`**: Deep-merges `operator.json` into the ConfigMap `openclaw.json` seed (ignoring PVC). User edits are wiped on every restart. Primary model is NOT preserved in overwrite mode.
 
 **ConfigMap keys:**
-- `operator.json` — Operator-managed: gateway settings, CORS origins, providers. Rewritten every reconcile. Read from ConfigMap mount at `/config/`, not written to PVC.
-- `openclaw.json` — User-owned seed: agent defaults (model aliases, primary model, agent list). No `$include`, no `gateway` section. Seeded to PVC on first run only (merge mode) or used as base every restart (overwrite mode).
+- `operator.json` — Operator-managed: gateway settings, CORS origins, providers, model catalog (`agents.defaults.models`), primary model (`agents.defaults.model.primary`). Rewritten every reconcile. Read from ConfigMap mount at `/config/`, not written to PVC.
+- `openclaw.json` — User-owned seed: agent list, workspace path. No `$include`, no `gateway` section, no hardcoded models (models are dynamically generated in `operator.json`). Seeded to PVC on first run only (merge mode) or used as base every restart (overwrite mode).
 - `merge.js` — The init container merge script. Stored in ConfigMap, executed via `node /config/merge.js`. Updated automatically with operator upgrades.
 - `AGENTS.md` — System prompt seed. Copied to PVC if missing.
 - `PROXY_SETUP.md` — Proxy architecture skill. Always copied to `skills/proxy/SKILL.md`.
@@ -219,7 +219,9 @@ Uses the gateway image (`ghcr.io/openclaw/openclaw`) for Node.js. Runs `node /co
 |---|---|---|
 | `gateway.*` | Operator | Overwritten — CORS origins, auth mode, bind, port |
 | `models.providers` | Operator | Overwritten — tracks credentials in Claw CR |
-| `agents.*` | User | Preserved — model aliases, primary model, agent list |
+| `agents.defaults.models` | Operator | Overwritten — dynamic model catalog from configured providers |
+| `agents.defaults.model.primary` | Operator (first run) / User (after) | Set by operator on first run; preserved by `merge.js` on restarts |
+| `agents.list` | User | Preserved — agent configurations |
 | `plugins.*` | User | Preserved — plugin installs, allow/deny lists |
 | `channels.*` | User | Preserved — WhatsApp, Telegram, etc. |
 | `tools.*` | User | Preserved |
@@ -327,8 +329,17 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ Filter credentials with Provider set
    ├─ For gateway-routed providers: resolveProviderInfo(cred) → upstream + basePath as baseUrl (MITM proxy injects credentials transparently)
    ├─ For Vertex SDK providers (GCP + non-Google, e.g., anthropic): map to "{provider}-vertex" key with real Vertex AI URL, api mapping, and "gcp-vertex-credentials" apiKey
-   ├─ Write providers into data["operator.json"] (agent defaults are user-owned in openclaw.json seed)
+   ├─ Write providers into data["operator.json"]
    └─ Credentials without Provider are MITM-only (no provider entry)
+  ↓
+7b2. injectModelCatalogIntoConfigMap(objects, instance)
+   ├─ Iterate credentials with Provider set (same filters as injectProvidersIntoConfigMap)
+   ├─ Derive provider key: usesVertexSDK → "{provider}-vertex", else "{provider}"
+   ├─ Strip "-vertex" suffix for logical provider name, look up modelCatalog map
+   ├─ Emit model entries as "{providerKey}/{modelName}" with aliases into agents.defaults.models
+   ├─ Set agents.defaults.model.primary from first provider's first model (first provider with catalog entry)
+   ├─ Write into data["operator.json"] (agents.defaults section)
+   └─ No-op when no credentials have a catalog entry (e.g., openrouter-only)
   ↓
 7c. injectKubernetesSkill(objects, resolvedCreds)
    ├─ Collect contexts from all kubernetes credentials
@@ -384,7 +395,8 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `getRouteURL()` — fetches Route and extracts `.status.ingress[0].host`, returns empty string if status not populated
 - `buildKustomizedObjects()` — builds Kustomize manifests, configures proxy deployment, stamps Secret version, returns parsed objects
 - `injectRouteHostIntoConfigMap()` — replaces `OPENCLAW_ROUTE_HOST` placeholder in `operator.json` with Route host (or localhost fallback)
-- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `operator.json`. Provider baseUrl points to real upstream URLs (e.g., `https://generativelanguage.googleapis.com/v1beta`); the MITM proxy injects credentials transparently via HTTP_PROXY. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL. Does not touch agent defaults (user-owned in openclaw.json seed)
+- `injectProvidersIntoConfigMap()` — dynamically builds `models.providers` in `operator.json`. Provider baseUrl points to real upstream URLs (e.g., `https://generativelanguage.googleapis.com/v1beta`); the MITM proxy injects credentials transparently via HTTP_PROXY. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL
+- `injectModelCatalogIntoConfigMap()` — dynamically builds `agents.defaults.models` and `agents.defaults.model.primary` in `operator.json` from credentials with Provider set. Uses `modelCatalog` map (in `claw_models.go`) to look up known models per logical provider. Provider key derives from `usesVertexSDK`. First provider with a catalog entry determines the primary model. Providers not in the catalog (e.g., openrouter) are silently skipped
 - `resolveAndApplyCredentials()` — orchestrates credential resolution: resolves provider defaults, validates credentials (returning `[]resolvedCredential`), applies sanitized kubeconfig ConfigMap for kubernetes credentials, and applies proxy CA
 - `resolveCredentials()` — validates all credentials and referenced Secrets. For `kubernetes` type, parses kubeconfig with `client-go/tools/clientcmd`, validates token-only auth, extracts cluster/context metadata. Returns `[]resolvedCredential` (replaces former `validateCredentials`)
 - `parseAndValidateKubeconfig()` — parses kubeconfig bytes, validates all users use token-based auth (rejects client certs, exec, auth provider), validates unique token per server `hostname:port`, returns `kubeconfigData`
@@ -430,6 +442,13 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `ClawProxyEgressNetworkPolicyName = "claw-proxy-egress"` — proxy egress NetworkPolicy (dynamically patched for non-443 kubernetes ports)
 - `DefaultKubectlImage = "quay.io/openshift/origin-cli:4.21"` — default image for the init-kubectl init container; copies `oc` and `kubectl` to shared volume (overridable via `KUBECTL_IMAGE` env var)
 
+**Model catalog** (`internal/controller/claw_models.go`):
+- `modelEntry` struct: `Name` (API model name), `Alias` (human-readable display name)
+- `modelCatalog` variable: `map[string][]modelEntry` keyed by logical provider name (google, anthropic, openai, xai). Order within each slice matters — first entry becomes the default primary model. Providers not in the catalog (e.g., openrouter) are silently skipped by `injectModelCatalogIntoConfigMap`
+
+**Known providers** (`internal/controller/claw_credentials.go`):
+- `knownProviders` map: google, anthropic, openai, openrouter, xai — validated during `resolveCredentials`
+
 **ClawDevicePairingRequestReconciler** (`internal/controller/clawdevicepairingrequest_controller.go`):
 - Reconciles `ClawDevicePairingRequest` CRs
 - Currently a minimal implementation that logs reconciliation events
@@ -472,7 +491,7 @@ The `internal/assets/manifests/` directory contains:
   - `claw_types.go` — Claw CRD (ClawSpec, ClawStatus, CredentialSpec, credential types and configs)
   - `clawdevicepairingrequest_types.go` — ClawDevicePairingRequest CRD
   - `groupversion_info.go` — API group registration (`claw.sandbox.redhat.com/v1alpha1`)
-- `internal/controller/` — ClawResourceReconciler and ClawDevicePairingRequestReconciler implementations and tests (separate test files per resource type for readability)
+- `internal/controller/` — ClawResourceReconciler and ClawDevicePairingRequestReconciler implementations and tests (separate test files per resource type for readability). Key files: `claw_models.go` (model catalog map per provider), `claw_providers.go` (provider defaults and routing), `claw_credentials.go` (credential validation), `claw_proxy.go` (proxy config generation)
 - `internal/proxy/` — MITM proxy binary (`cmd/proxy/`). Credential-injecting forward proxy with two CONNECT modes:
   - **MITM** (`ConnectMitm`): TLS interception for credential injection, path filtering, and header injection. Used for all injector types except pure `none` passthrough
   - **Direct tunnel** (`ConnectAccept`): Plain CONNECT passthrough without TLS interception. Used for `none` routes with no `allowedPaths` or `defaultHeaders`. Required for protocols that fail under MITM (e.g., WhatsApp Noise handshake, WebSocket tunnels)

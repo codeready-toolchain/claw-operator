@@ -121,11 +121,16 @@ func TestClawConfigMapController(t *testing.T) {
 			_, hasModels := config["models"]
 			assert.True(t, hasModels, "operator.json should contain models section")
 
-			_, hasAgents := config["agents"]
-			assert.False(t, hasAgents, "operator.json must not contain agents section (user-owned)")
+			agents, hasAgents := config["agents"].(map[string]any)
+			assert.True(t, hasAgents, "operator.json should contain agents section (model catalog)")
+			defaults := agents["defaults"].(map[string]any)
+			_, hasModelCatalog := defaults["models"]
+			assert.True(t, hasModelCatalog, "operator.json should contain agents.defaults.models (model catalog)")
+			model := defaults["model"].(map[string]any)
+			assert.NotEmpty(t, model["primary"], "operator.json should have primary model set")
 		})
 
-		t.Run("should have openclaw.json seed with $include directive", func(t *testing.T) {
+		t.Run("should have openclaw.json seed without hardcoded models", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -160,9 +165,11 @@ func TestClawConfigMapController(t *testing.T) {
 			defaults, hasDefaults := agents["defaults"].(map[string]any)
 			require.True(t, hasDefaults, "agents should have defaults")
 
-			model, hasModel := defaults["model"].(map[string]any)
-			require.True(t, hasModel, "defaults should have model config")
-			assert.NotEmpty(t, model["primary"], "should have a primary model set")
+			_, hasModel := defaults["model"]
+			assert.False(t, hasModel, "openclaw.json seed must not contain model (now operator-managed)")
+
+			_, hasModels := defaults["models"]
+			assert.False(t, hasModels, "openclaw.json seed must not contain models (now operator-managed)")
 
 			mergeJS, hasMergeJS := configMap.Data["merge.js"]
 			assert.True(t, hasMergeJS, "merge.js key must exist in ConfigMap")
