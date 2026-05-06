@@ -122,11 +122,13 @@ func TestClawConfigMapController(t *testing.T) {
 			assert.True(t, hasModels, "operator.json should contain models section")
 
 			agents, hasAgents := config["agents"].(map[string]any)
-			assert.True(t, hasAgents, "operator.json should contain agents section (model catalog)")
-			defaults := agents["defaults"].(map[string]any)
+			require.True(t, hasAgents, "operator.json should contain agents section (model catalog)")
+			defaults, hasDefaults := agents["defaults"].(map[string]any)
+			require.True(t, hasDefaults, "agents should contain defaults section")
 			_, hasModelCatalog := defaults["models"]
 			assert.True(t, hasModelCatalog, "operator.json should contain agents.defaults.models (model catalog)")
-			model := defaults["model"].(map[string]any)
+			model, hasModel := defaults["model"].(map[string]any)
+			require.True(t, hasModel, "defaults should contain model section")
 			assert.NotEmpty(t, model["primary"], "operator.json should have primary model set")
 		})
 

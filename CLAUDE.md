@@ -89,11 +89,12 @@ The CRD was renamed from `NodePairingRequestApproval` to `ClawDevicePairingReque
 5. Reapply edited CRs: `kubectl apply -f backup.yaml`
 
 **Adding selector field to existing ClawDevicePairingRequest resources (Breaking Change):**
-The `selector` field was added as a required field in the ClawDevicePairingRequest CRD. **IMPORTANT**: Before upgrading the CRD, you must update all existing ClawDevicePairingRequest resources to include a `selector` field, or they will fail validation after the CRD is upgraded.
+The `selector` field was added as a required field in the ClawDevicePairingRequest CRD.
 
 **Migration steps for adding selector field:**
-1. List existing ClawDevicePairingRequest resources: `kubectl get clawdevicepairingrequests --all-namespaces`
-2. For each resource, add a `selector` field to `spec` before upgrading the CRD:
+1. Export existing ClawDevicePairingRequest resources as a backup: `kubectl get clawdevicepairingrequests --all-namespaces -o yaml > backup.yaml`
+2. Upgrade the CRD: `make install` (or `kubectl apply -f config/crd/bases/`). Existing resources remain in the cluster but will fail validation on update until patched.
+3. For each resource, add a `selector` field to `spec` and apply:
    ```yaml
    apiVersion: claw.sandbox.redhat.com/v1alpha1
    kind: ClawDevicePairingRequest
@@ -102,13 +103,12 @@ The `selector` field was added as a required field in the ClawDevicePairingReque
      namespace: default
    spec:
      requestID: "existing-request-id"
-     selector:  # Add this field
+     selector:
        matchLabels:
          app: claw
          claw.sandbox.redhat.com/instance: instance  # Or your instance name
    ```
-3. Apply the updated resources: `kubectl apply -f <updated-resource>.yaml`
-4. Upgrade the CRD: `make install` (or `kubectl apply -f config/crd/bases/`)
+   Apply each updated resource: `kubectl apply -f <updated-resource>.yaml`
 
 **Selector usage example:**
 To create a device pairing request targeting a specific Claw instance pod:
@@ -203,12 +203,12 @@ The `claw-config` ConfigMap uses a **deep-merge** approach to preserve user and 
 Uses the gateway image (`ghcr.io/openclaw/openclaw`) for Node.js. Runs `node /config/merge.js` on every pod start. Kustomize's `images` transformer pins both `init-config` and the main gateway container to the same image tag. The `CLAW_CONFIG_MODE` env var (from `spec.configMode`) controls merge behavior.
 
 **Config merge modes** (controlled by `spec.configMode`):
-- **`merge`** (default): Deep-merges `operator.json` into the existing PVC `openclaw.json`. Objects merge recursively (operator keys win), arrays and primitives from operator replace user values. User-owned keys (plugins, channels, agents, cron) survive restarts. **Primary model preservation:** before merging, saves the PVC's existing `agents.defaults.model.primary` and restores it after merge, so the user's model choice persists across restarts.
+- **`merge`** (default): Deep-merges `operator.json` into the existing PVC `openclaw.json`. Objects merge recursively (operator keys win), arrays and primitives from operator replace user values. User-owned keys (plugins, channels, `agents.list`, cron) survive restarts. Operator-managed keys (`agents.defaults.models`, `agents.defaults.model.primary`) are overwritten, except primary is preserved by `merge.js` after the first run so the user's model choice persists across restarts.
 - **`overwrite`**: Deep-merges `operator.json` into the ConfigMap `openclaw.json` seed (ignoring PVC). User edits are wiped on every restart. Primary model is NOT preserved in overwrite mode.
 
 **ConfigMap keys:**
 - `operator.json` — Operator-managed: gateway settings, CORS origins, providers, model catalog (`agents.defaults.models`), primary model (`agents.defaults.model.primary`). Rewritten every reconcile. Read from ConfigMap mount at `/config/`, not written to PVC.
-- `openclaw.json` — User-owned seed: agent list, workspace path. No `$include`, no `gateway` section, no hardcoded models (models are dynamically generated in `operator.json`). Seeded to PVC on first run only (merge mode) or used as base every restart (overwrite mode).
+- `openclaw.json` — User-owned seed: `agents.list`, workspace path. No `$include`, no `gateway` section, no hardcoded models (models are dynamically generated in `operator.json`). Seeded to PVC on first run only (merge mode) or used as base every restart (overwrite mode).
 - `merge.js` — The init container merge script. Stored in ConfigMap, executed via `node /config/merge.js`. Updated automatically with operator upgrades.
 - `AGENTS.md` — System prompt seed. Copied to PVC if missing.
 - `PROXY_SETUP.md` — Proxy architecture skill. Always copied to `skills/proxy/SKILL.md`.
