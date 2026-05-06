@@ -29,6 +29,7 @@ type ClawDevicePairingRequestSpec struct {
 
 	// Selector specifies which pod should process this device pairing request
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:XValidation:rule="(has(self.matchLabels) && size(self.matchLabels) > 0) || (has(self.matchExpressions) && size(self.matchExpressions) > 0)",message="selector must include at least one matchLabels or matchExpressions entry"
 	Selector metav1.LabelSelector `json:"selector"`
 }
 

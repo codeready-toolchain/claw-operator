@@ -99,6 +99,11 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
+                x-kubernetes-validations:
+                - message: selector must include at least one matchLabels or matchExpressions
+                    entry
+                  rule: (has(self.matchLabels) && size(self.matchLabels) > 0) || (has(self.matchExpressions)
+                    && size(self.matchExpressions) > 0)
             required:
             - requestID
             - selector

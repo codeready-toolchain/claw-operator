@@ -129,7 +129,7 @@ func (r *ClawDevicePairingRequestReconciler) Reconcile(ctx context.Context, req 
 }
 
 // setDevicePairingCondition sets a condition on the ClawDevicePairingRequest instance.
-func setDevicePairingCondition(instance *clawv1alpha1.ClawDevicePairingRequest, condType string, status metav1.ConditionStatus, reason, message string) {
+func setDevicePairingCondition(instance *clawv1alpha1.ClawDevicePairingRequest, condType string, status metav1.ConditionStatus, reason, message string) { //nolint:unparam
 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 		Type:               condType,
 		Status:             status,

@@ -48,6 +48,11 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 			},
 			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "test-request-123",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "claw",
+					},
+				},
 			},
 		}
 
@@ -75,6 +80,11 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 			},
 			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "create-test-456",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "claw",
+					},
+				},
 			},
 		}
 
@@ -114,6 +124,11 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 			},
 			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "update-test-789",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "claw",
+					},
+				},
 			},
 		}
 
@@ -164,6 +179,11 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 			},
 			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "status-test-111",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "claw",
+					},
+				},
 			},
 		}
 
@@ -209,6 +229,11 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 			},
 			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
 				RequestID: "conditions-test-222",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "claw",
+					},
+				},
 			},
 		}
 
@@ -255,6 +280,159 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 		assert.NotNil(t, fetched.Spec.Selector.MatchLabels)
 		assert.Equal(t, "claw", fetched.Spec.Selector.MatchLabels["app"])
 		assert.Equal(t, "my-claw", fetched.Spec.Selector.MatchLabels["instance"])
+	})
+
+	t.Run("Selector validation - empty selector rejected", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-empty-selector"
+
+		// Attempt to create ClawDevicePairingRequest with empty selector (no matchLabels, no matchExpressions)
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "empty-selector-test",
+				Selector:  metav1.LabelSelector{}, // Empty selector
+			},
+		}
+
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "should fail to create ClawDevicePairingRequest with empty selector")
+		assert.Contains(t, err.Error(), "selector must include at least one matchLabels or matchExpressions entry")
+	})
+
+	t.Run("Selector validation - matchLabels only accepted", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-matchlabels-only"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+		})
+
+		// Create ClawDevicePairingRequest with only matchLabels
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "matchlabels-only-test",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "claw",
+					},
+				},
+			},
+		}
+
+		require.NoError(t, k8sClient.Create(ctx, instance), "should succeed with matchLabels only")
+
+		// Verify resource was created
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		assert.Equal(t, "claw", fetched.Spec.Selector.MatchLabels["app"])
+	})
+
+	t.Run("Selector validation - matchExpressions only accepted", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-matchexpressions-only"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+		})
+
+		// Create ClawDevicePairingRequest with only matchExpressions
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "matchexpressions-only-test",
+				Selector: metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "app",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"claw"},
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, k8sClient.Create(ctx, instance), "should succeed with matchExpressions only")
+
+		// Verify resource was created
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		assert.Len(t, fetched.Spec.Selector.MatchExpressions, 1)
+		assert.Equal(t, "app", fetched.Spec.Selector.MatchExpressions[0].Key)
+	})
+
+	t.Run("Selector validation - both matchLabels and matchExpressions accepted", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-both-match-types"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+		})
+
+		// Create ClawDevicePairingRequest with both matchLabels and matchExpressions
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "both-match-types-test",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "claw",
+					},
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      "instance",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"test-instance"},
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, k8sClient.Create(ctx, instance), "should succeed with both matchLabels and matchExpressions")
+
+		// Verify resource was created
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		assert.Equal(t, "claw", fetched.Spec.Selector.MatchLabels["app"])
+		assert.Len(t, fetched.Spec.Selector.MatchExpressions, 1)
+	})
+
+	t.Run("Selector validation - empty matchLabels map rejected", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-empty-matchlabels"
+
+		// Attempt to create ClawDevicePairingRequest with empty matchLabels map
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "empty-matchlabels-test",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{}, // Empty map
+				},
+			},
+		}
+
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "should fail to create ClawDevicePairingRequest with empty matchLabels map")
+		assert.Contains(t, err.Error(), "selector must include at least one matchLabels or matchExpressions entry")
 	})
 }
 
