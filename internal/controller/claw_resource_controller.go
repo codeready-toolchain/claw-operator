@@ -464,6 +464,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
 	}
 
+	// Inject model catalog into ConfigMap based on credentials with Provider set
+	if err := injectModelCatalogIntoConfigMap(objects, instance); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to inject model catalog into ConfigMap: %w", err)
+	}
+
 	// Inject Kubernetes skill into ConfigMap for OpenClaw skill auto-discovery
 	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes skill: %w", err)
@@ -796,8 +801,7 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 // from credentials that have Provider set. Gateway-routed providers get a baseUrl pointing to
 // the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since traffic
 // flows through the MITM proxy which injects GCP credentials transparently.
-// Agent defaults (model aliases, primary model) are in the user-owned openclaw.json seed
-// and are not modified here — users control their own model preferences.
+// Model catalog (agents.defaults.models) is handled separately by injectModelCatalogIntoConfigMap.
 func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
 	credentials := instance.Spec.Credentials
 	providers := map[string]any{}
@@ -863,6 +867,96 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance
 			config["models"] = models
 		}
 		models["providers"] = providers
+
+		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal operator.json: %w", err)
+		}
+
+		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
+			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+}
+
+// injectModelCatalogIntoConfigMap dynamically builds agents.defaults.models and
+// agents.defaults.model.primary in operator.json from credentials that have Provider set.
+// Uses the same credential filters as injectProvidersIntoConfigMap (skips no-provider and pathToken).
+// The provider key derives from usesVertexSDK; the logical provider name (stripped of -vertex
+// suffix) is used to look up modelCatalog. Providers not in the catalog are silently skipped.
+func injectModelCatalogIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	models := map[string]any{}
+	var primary string
+
+	for _, cred := range instance.Spec.Credentials {
+		if cred.Provider == "" {
+			continue
+		}
+		if cred.Type == clawv1alpha1.CredentialTypePathToken {
+			continue
+		}
+
+		var providerKey string
+		if usesVertexSDK(cred) {
+			providerKey = cred.Provider + "-vertex"
+		} else {
+			providerKey = cred.Provider
+		}
+
+		logicalProvider := strings.TrimSuffix(providerKey, "-vertex")
+		catalog, ok := modelCatalog[logicalProvider]
+		if !ok || len(catalog) == 0 {
+			continue
+		}
+
+		for _, m := range catalog {
+			key := providerKey + "/" + m.Name
+			models[key] = map[string]any{"alias": m.Alias}
+		}
+
+		if primary == "" {
+			primary = providerKey + "/" + catalog[0].Name
+		}
+	}
+
+	if len(models) == 0 {
+		return nil
+	}
+
+	configMapName := getConfigMapName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
+			continue
+		}
+
+		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
+		if err != nil {
+			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("operator.json not found in ConfigMap data")
+		}
+
+		var config map[string]any
+		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
+			return fmt.Errorf("failed to parse operator.json: %w", err)
+		}
+
+		agents, _ := config["agents"].(map[string]any)
+		if agents == nil {
+			agents = map[string]any{}
+			config["agents"] = agents
+		}
+		defaults, _ := agents["defaults"].(map[string]any)
+		if defaults == nil {
+			defaults = map[string]any{}
+			agents["defaults"] = defaults
+		}
+		defaults["models"] = models
+		defaults["model"] = map[string]any{"primary": primary}
 
 		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 		if err != nil {

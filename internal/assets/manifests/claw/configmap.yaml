@@ -29,13 +29,6 @@ data:
     {
       "agents": {
         "defaults": {
-          "model": { "primary": "google/gemini-3-flash-preview" },
-          "models": {
-            "google/gemini-3.1-pro-preview": { "alias": "Gemini Pro" },
-            "google/gemini-3-flash-preview": { "alias": "Gemini Flash" },
-            "anthropic-vertex/claude-sonnet-4-6": { "alias": "Claude Sonnet" },
-            "anthropic-vertex/claude-haiku-4-5": { "alias": "Claude Haiku" }
-          },
           "workspace": "~/.openclaw/workspace"
         },
         "list": [
@@ -107,7 +100,15 @@ data:
       } catch (err) {
         console.warn("[init-config] existing openclaw.json is invalid JSON; falling back to seed");
       }
-      fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(base, ops), null, 2));
+      const savedPrimary = base?.agents?.defaults?.model?.primary;
+      const merged = deepMerge(base, ops);
+      if (savedPrimary) {
+        merged.agents = merged.agents || {};
+        merged.agents.defaults = merged.agents.defaults || {};
+        merged.agents.defaults.model = merged.agents.defaults.model || {};
+        merged.agents.defaults.model.primary = savedPrimary;
+      }
+      fs.writeFileSync(pvcPath, JSON.stringify(merged, null, 2));
       console.log("[init-config] merged operator.json into existing openclaw.json");
     } else {
       fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2));

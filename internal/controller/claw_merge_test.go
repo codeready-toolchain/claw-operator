@@ -172,9 +172,8 @@ func TestMergeJS(t *testing.T) {
 		list, ok := agentsList.([]any)
 		assert.True(t, ok && len(list) > 0, "agents.list should be a non-empty array")
 
-		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
-		assert.True(t, hasPrimary, "result should have primary model from seed")
-		assert.NotEmpty(t, primary, "primary model should not be empty")
+		_, hasModels := nestedValue(result.config, "agents.defaults.models")
+		assert.False(t, hasModels, "embedded seed should not have hardcoded models (dynamically injected at reconcile time)")
 
 		assert.Contains(t, result.stdout, "[init-config]")
 	})
@@ -317,5 +316,77 @@ func TestMergeJS(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, cmData["PROXY_SETUP.md"], string(skillContent), "SKILL.md should be overwritten (copyAlways)")
 		assert.NotEqual(t, oldSkill, string(skillContent))
+	})
+
+	t.Run("primary preserved on restart", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3-flash-preview"}, "models": {"google/gemini-3-flash-preview": {"alias": "Gemini 3 Flash"}}}}
+		}`
+		pvcJSON := `{
+			"agents": {"defaults": {"model": {"primary": "anthropic/claude-opus-4-7"}, "workspace": "~/.openclaw/workspace"}}
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON, pvcJSON: pvcJSON})
+
+		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
+		assert.True(t, hasPrimary, "should have primary model")
+		assert.Equal(t, "anthropic/claude-opus-4-7", primary, "user's primary should be preserved on restart")
+	})
+
+	t.Run("primary set on first run", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3-flash-preview"}, "models": {"google/gemini-3-flash-preview": {"alias": "Gemini 3 Flash"}}}}
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON})
+
+		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
+		assert.True(t, hasPrimary, "should have primary model on first run")
+		assert.Equal(t, "google/gemini-3-flash-preview", primary, "operator's primary should be used on first run")
+	})
+
+	t.Run("primary preserved even when models change", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3-flash-preview"}, "models": {
+				"google/gemini-3-flash-preview": {"alias": "Gemini 3 Flash"},
+				"google/gemini-3.1-pro-preview": {"alias": "Gemini 3.1 Pro"}
+			}}}
+		}`
+		pvcJSON := `{
+			"agents": {"defaults": {"model": {"primary": "anthropic/claude-opus-4-7"}, "models": {
+				"anthropic/claude-opus-4-7": {"alias": "Claude Opus"}
+			}}}
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON, pvcJSON: pvcJSON})
+
+		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
+		assert.True(t, hasPrimary)
+		assert.Equal(t, "anthropic/claude-opus-4-7", primary, "user's primary should survive model catalog changes")
+
+		models, hasModels := nestedValue(result.config, "agents.defaults.models")
+		assert.True(t, hasModels)
+		modelsMap := models.(map[string]any)
+		assert.Contains(t, modelsMap, "google/gemini-3-flash-preview", "new operator models should be merged in")
+		assert.Contains(t, modelsMap, "google/gemini-3.1-pro-preview", "new operator models should be merged in")
+	})
+
+	t.Run("primary not preserved in overwrite mode", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3-flash-preview"}}}
+		}`
+		pvcJSON := `{
+			"agents": {"defaults": {"model": {"primary": "anthropic/claude-opus-4-7"}}}
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON, pvcJSON: pvcJSON, configMode: "overwrite"})
+
+		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
+		assert.True(t, hasPrimary)
+		assert.Equal(t, "google/gemini-3-flash-preview", primary, "overwrite mode should reset to operator's primary")
 	})
 }
