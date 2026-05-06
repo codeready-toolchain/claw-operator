@@ -28,37 +28,37 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
-// NodePairingRequestApprovalReconciler reconciles a NodePairingRequestApproval object
-type NodePairingRequestApprovalReconciler struct {
+// ClawDevicePairingRequestReconciler reconciles a ClawDevicePairingRequest object
+type ClawDevicePairingRequestReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=nodepairingrequestapprovals,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=nodepairingrequestapprovals/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=nodepairingrequestapprovals/finalizers,verbs=update
+// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=clawdevicepairingrequests,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=clawdevicepairingrequests/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=clawdevicepairingrequests/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-func (r *NodePairingRequestApprovalReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ClawDevicePairingRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Reconciling NodePairingRequestApproval", "name", req.Name, "namespace", req.Namespace)
+	logger.Info("Reconciling ClawDevicePairingRequest", "name", req.Name, "namespace", req.Namespace)
 
-	// Fetch the NodePairingRequestApproval instance
-	instance := &clawv1alpha1.NodePairingRequestApproval{}
+	// Fetch the ClawDevicePairingRequest instance
+	instance := &clawv1alpha1.ClawDevicePairingRequest{}
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// Request object not found, could have been deleted after reconcile request
-			logger.Info("NodePairingRequestApproval resource not found. Ignoring since object must be deleted")
+			logger.Info("ClawDevicePairingRequest resource not found. Ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue the request
-		logger.Error(err, "Failed to get NodePairingRequestApproval")
+		logger.Error(err, "Failed to get ClawDevicePairingRequest")
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("NodePairingRequestApproval reconciled successfully",
+	logger.Info("ClawDevicePairingRequest reconciled successfully",
 		"name", instance.Name,
 		"namespace", instance.Namespace,
 		"requestID", instance.Spec.RequestID)
@@ -67,8 +67,8 @@ func (r *NodePairingRequestApprovalReconciler) Reconcile(ctx context.Context, re
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *NodePairingRequestApprovalReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *ClawDevicePairingRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&clawv1alpha1.NodePairingRequestApproval{}).
+		For(&clawv1alpha1.ClawDevicePairingRequest{}).
 		Complete(r)
 }

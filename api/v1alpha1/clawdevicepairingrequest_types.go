@@ -20,17 +20,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// NodePairingRequestApprovalSpec defines the desired state of NodePairingRequestApproval
-type NodePairingRequestApprovalSpec struct {
+// ClawDevicePairingRequestSpec defines the desired state of ClawDevicePairingRequest
+type ClawDevicePairingRequestSpec struct {
 	// RequestID is the unique identifier for this pairing request
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	RequestID string `json:"requestID"`
 }
 
-// NodePairingRequestApprovalStatus defines the observed state of NodePairingRequestApproval
-type NodePairingRequestApprovalStatus struct {
-	// Conditions represent the latest available observations of the NodePairingRequestApproval's state
+// ClawDevicePairingRequestStatus defines the observed state of ClawDevicePairingRequest
+type ClawDevicePairingRequestStatus struct {
+	// Conditions represent the latest available observations of the ClawDevicePairingRequest's state
 	// +optional
 	// +listType=map
 	// +listMapKey=type
@@ -39,29 +39,29 @@ type NodePairingRequestApprovalStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:path=nodepairingrequestapprovals,scope=Namespaced
+// +kubebuilder:resource:path=clawdevicepairingrequests,scope=Namespaced
 // +kubebuilder:printcolumn:name="RequestID",type="string",JSONPath=".spec.requestID"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// NodePairingRequestApproval is the Schema for the nodepairingrequestapprovals API
-type NodePairingRequestApproval struct {
+// ClawDevicePairingRequest is the Schema for the clawdevicepairingrequests API
+type ClawDevicePairingRequest struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// +kubebuilder:validation:Required
-	Spec   NodePairingRequestApprovalSpec   `json:"spec"`
-	Status NodePairingRequestApprovalStatus `json:"status,omitempty"`
+	Spec   ClawDevicePairingRequestSpec   `json:"spec"`
+	Status ClawDevicePairingRequestStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// NodePairingRequestApprovalList contains a list of NodePairingRequestApproval
-type NodePairingRequestApprovalList struct {
+// ClawDevicePairingRequestList contains a list of ClawDevicePairingRequest
+type ClawDevicePairingRequestList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []NodePairingRequestApproval `json:"items"`
+	Items           []ClawDevicePairingRequest `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&NodePairingRequestApproval{}, &NodePairingRequestApprovalList{})
+	SchemeBuilder.Register(&ClawDevicePairingRequest{}, &ClawDevicePairingRequestList{})
 }

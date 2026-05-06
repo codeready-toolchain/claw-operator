@@ -43,37 +43,37 @@ rules:
 - apiGroups:
   - claw.sandbox.redhat.com
   resources:
-  - claws
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - claw.sandbox.redhat.com
-  resources:
-  - claws/finalizers
-  - nodepairingrequestapprovals/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - claw.sandbox.redhat.com
-  resources:
-  - claws/status
-  - nodepairingrequestapprovals/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - claw.sandbox.redhat.com
-  resources:
-  - nodepairingrequestapprovals
+  - clawdevicepairingrequests
   verbs:
   - create
   - get
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - claw.sandbox.redhat.com
+  resources:
+  - clawdevicepairingrequests/finalizers
+  - claws/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - claw.sandbox.redhat.com
+  resources:
+  - clawdevicepairingrequests/status
+  - claws/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - claw.sandbox.redhat.com
+  resources:
+  - claws
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - networking.k8s.io

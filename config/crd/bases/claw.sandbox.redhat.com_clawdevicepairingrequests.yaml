@@ -4,14 +4,14 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: nodepairingrequestapprovals.claw.sandbox.redhat.com
+  name: clawdevicepairingrequests.claw.sandbox.redhat.com
 spec:
   group: claw.sandbox.redhat.com
   names:
-    kind: NodePairingRequestApproval
-    listKind: NodePairingRequestApprovalList
-    plural: nodepairingrequestapprovals
-    singular: nodepairingrequestapproval
+    kind: ClawDevicePairingRequest
+    listKind: ClawDevicePairingRequestList
+    plural: clawdevicepairingrequests
+    singular: clawdevicepairingrequest
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -24,7 +24,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: NodePairingRequestApproval is the Schema for the nodepairingrequestapprovals
+        description: ClawDevicePairingRequest is the Schema for the clawdevicepairingrequests
           API
         properties:
           apiVersion:
@@ -45,8 +45,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: NodePairingRequestApprovalSpec defines the desired state
-              of NodePairingRequestApproval
+            description: ClawDevicePairingRequestSpec defines the desired state of
+              ClawDevicePairingRequest
             properties:
               requestID:
                 description: RequestID is the unique identifier for this pairing request
@@ -56,12 +56,12 @@ spec:
             - requestID
             type: object
           status:
-            description: NodePairingRequestApprovalStatus defines the observed state
-              of NodePairingRequestApproval
+            description: ClawDevicePairingRequestStatus defines the observed state
+              of ClawDevicePairingRequest
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of the NodePairingRequestApproval's state
+                  of the ClawDevicePairingRequest's state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
