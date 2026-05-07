@@ -482,6 +482,10 @@ func TestGenerateProxyConfigWithChannelCompanions(t *testing.T) {
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
 
+		for _, route := range cfg.Routes {
+			assert.NotEmpty(t, route.Domain, "no route should have an empty domain")
+		}
+
 		whatsappCom := findRouteByDomain(t, cfg.Routes, ".whatsapp.com")
 		assert.Equal(t, "none", whatsappCom.Injector)
 
@@ -575,6 +579,46 @@ func TestChannelSecretRefHelpers(t *testing.T) {
 	t.Run("referencesSecret returns false for empty slice", func(t *testing.T) {
 		cred := clawv1alpha1.CredentialSpec{}
 		assert.False(t, referencesSecret(cred, "any-secret"))
+	})
+
+	t.Run("proxySecretForCredential picks botToken for slack channel", func(t *testing.T) {
+		cred := clawv1alpha1.CredentialSpec{
+			Name:    "slack",
+			Channel: "slack",
+			SecretRef: []clawv1alpha1.SecretRefEntry{
+				{Name: "slack-secret", Key: "app-token", Role: "appToken"},
+				{Name: "slack-secret", Key: "bot-token", Role: "botToken"},
+			},
+		}
+		ref := proxySecretForCredential(cred)
+		require.NotNil(t, ref)
+		assert.Equal(t, "bot-token", ref.Key)
+		assert.Equal(t, "botToken", ref.Role)
+	})
+
+	t.Run("proxySecretForCredential falls back to first entry for single-secret channel", func(t *testing.T) {
+		cred := clawv1alpha1.CredentialSpec{
+			Name:    "tg",
+			Channel: "telegram",
+			SecretRef: []clawv1alpha1.SecretRefEntry{
+				{Name: "tg-secret", Key: "token"},
+			},
+		}
+		ref := proxySecretForCredential(cred)
+		require.NotNil(t, ref)
+		assert.Equal(t, "token", ref.Key)
+	})
+
+	t.Run("proxySecretForCredential falls back to first entry for non-channel credential", func(t *testing.T) {
+		cred := clawv1alpha1.CredentialSpec{
+			Name: "gemini",
+			SecretRef: []clawv1alpha1.SecretRefEntry{
+				{Name: "gemini-secret", Key: "api-key"},
+			},
+		}
+		ref := proxySecretForCredential(cred)
+		require.NotNil(t, ref)
+		assert.Equal(t, "api-key", ref.Key)
 	})
 }
 

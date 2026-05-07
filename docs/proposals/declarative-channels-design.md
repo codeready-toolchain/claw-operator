@@ -184,7 +184,7 @@ The AI skill document is updated to explain:
 
 ## Implementation Plan
 
-### PR 1: Declarative channel injection
+### PR 1: Declarative channel injection - DONE
 
 1. Update `api/v1alpha1/claw_types.go`:
    - Add `Channel` and `ChannelConfig` fields to `CredentialSpec`

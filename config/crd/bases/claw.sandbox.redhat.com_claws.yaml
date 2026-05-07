@@ -198,11 +198,13 @@ spec:
                             description: |-
                               Role distinguishes multiple secrets for the same credential.
                               Required when multiple secretRef entries are present (e.g., Slack botToken/appToken).
+                            maxLength: 63
                             type: string
                         required:
                         - key
                         - name
                         type: object
+                      maxItems: 5
                       type: array
                     type:
                       description: |-
@@ -225,6 +227,14 @@ spec:
                     rule: has(self.type) || has(self.channel)
                   - message: provider and channel are mutually exclusive
                     rule: '!has(self.provider) || !has(self.channel)'
+                  - message: role is required when multiple secretRef entries are
+                      present
+                    rule: '!has(self.secretRef) || size(self.secretRef) <= 1 || self.secretRef.all(e,
+                      has(e.role))'
+                  - message: secretRef roles must be unique
+                    rule: '!has(self.secretRef) || size(self.secretRef) <= 1 || self.secretRef.all(x,
+                      self.secretRef.exists_one(y, x.role == y.role))'
+                maxItems: 20
                 type: array
             type: object
           status:

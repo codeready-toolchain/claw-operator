@@ -230,6 +230,48 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		require.NoError(t, err, "admission should accept credential with channel but no type")
 	})
 
+	t.Run("should reject creation via CEL when multi-entry secretRef has missing role", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:    "slack",
+				Channel: "slack",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "s", Key: "k", Role: "botToken"},
+					{Name: "s", Key: "k2"},
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "CEL should reject multi-entry secretRef without role on all entries")
+		assert.Contains(t, err.Error(), "role is required")
+	})
+
+	t.Run("should reject creation via CEL when secretRef has duplicate roles", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:    "slack",
+				Channel: "slack",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "s", Key: "k", Role: "botToken"},
+					{Name: "s2", Key: "k2", Role: "botToken"},
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "CEL should reject duplicate roles in secretRef")
+		assert.Contains(t, err.Error(), "roles must be unique")
+	})
+
 	t.Run("should set CredentialsResolved=False when validation fails", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 

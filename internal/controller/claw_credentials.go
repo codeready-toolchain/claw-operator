@@ -85,6 +85,22 @@ func secretForRole(cred clawv1alpha1.CredentialSpec, role string) *clawv1alpha1.
 	return nil
 }
 
+// proxySecretForCredential returns the SecretRefEntry that the MITM proxy uses
+// for credential injection. For multi-secret channels (e.g., Slack botToken/appToken),
+// it matches the channel's primary SecretRole rather than blindly picking SecretRef[0].
+func proxySecretForCredential(cred clawv1alpha1.CredentialSpec) *clawv1alpha1.SecretRefEntry {
+	if cred.Channel != "" && len(cred.SecretRef) > 1 {
+		if defaults, ok := knownChannels[cred.Channel]; ok && len(defaults.SecretRoles) > 0 {
+			if role := defaults.SecretRoles[0].Role; role != "" {
+				if ref := secretForRole(cred, role); ref != nil {
+					return ref
+				}
+			}
+		}
+	}
+	return primarySecret(cred)
+}
+
 // referencesSecret returns true if any SecretRefEntry in the credential references the given secret name.
 func referencesSecret(cred clawv1alpha1.CredentialSpec, secretName string) bool {
 	for _, ref := range cred.SecretRef {
