@@ -210,7 +210,7 @@ The AI skill document is updated to explain:
    - Unit: `internal/controller/claw_channels_test.go` — table-driven tests for each channel type, inference with/without overrides, companion route generation, channelConfig passthrough
    - E2E: channel credential → verify operator.json contains channel config, pod starts with channel active
 
-### PR 2: Documentation
+### PR 2: Documentation - DONE
 
 1. Update `docs/provider-setup.md` — simplify channel examples to use `channel:` field
 2. Update PLATFORM.md template in `configmap.yaml` — new AI instructions for operator-managed channels

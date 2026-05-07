@@ -582,7 +582,7 @@ spec:
 EOF
 ```
 
-The operator infers `type: none` and creates companion routes for `.whatsapp.com` and `.whatsapp.net`. It also enables the WhatsApp plugin entry in `operator.json`.
+The operator infers `type: none` and creates companion routes for `.whatsapp.com`, `.whatsapp.net`, `.facebook.com`, `.facebook.net`, and `.fbcdn.net` (WhatsApp Web relies on Meta's auth and CDN infrastructure). It also enables the WhatsApp plugin entry in `operator.json`.
 
 After applying, the OpenClaw assistant handles plugin installation (`@openclaw/whatsapp`) and QR pairing. A pod restart is required after plugin install since npm plugins load at boot:
 

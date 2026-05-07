@@ -22,9 +22,9 @@ The operator needs to manage certain config keys (gateway settings, CORS, provid
 2. `openclaw.json` on the PVC holds the live config — modified by users and by OpenClaw itself
 3. On pod start, `init-config` runs `merge.js` which deep-merges operator keys into the PVC config
 
-Objects merge recursively (operator keys win), arrays and primitives from operator replace user values. This means operator-managed sections like `gateway.*` and `models.providers` are always current, while user-owned sections like `plugins.*` and `agents.list` survive restarts.
+Objects merge recursively (operator keys win), arrays and primitives from operator replace user values. This means operator-managed sections like `gateway.*` and `models.providers` are always current, while user-owned sections like `agents.list` and `tools.*` survive restarts. `plugins.*` and `channels.*` have split ownership — declared entries (from `channel:` credentials) are operator-managed, while everything else is user-owned.
 
-`channels.*` has split ownership: channels declared with the `channel:` field in the Claw CR are operator-managed (injected into `operator.json` with enabled state and placeholder tokens), while channels configured manually via CLI remain user-owned on the PVC. Because deep-merge is key-level, operator-managed channel entries (e.g., `channels.telegram`) overwrite user values for those keys, but user-managed channels (e.g., `channels.mycustom`) are preserved.
+Because deep-merge operates at the key level, operator-managed entries (e.g., `channels.telegram`, `plugins.entries.telegram`) overwrite user values for those specific keys, while user-managed entries (e.g., `channels.mycustom`) are preserved across restarts.
 
 **Config ownership summary (merge mode):**
 
