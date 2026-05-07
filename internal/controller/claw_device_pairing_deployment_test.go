@@ -87,7 +87,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 		path, found, err := unstructured.NestedString(dpRoute.Object, "spec", "path")
 		require.NoError(t, err)
 		assert.True(t, found, ".spec.path should be set")
-		assert.Equal(t, "/integration/device-pairing", path)
+		assert.Equal(t, "/integration/device-pairing/", path)
 	})
 
 	t.Run("device-pairing Route host injection sets spec.host", func(t *testing.T) {
@@ -99,7 +99,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{dpRoute}
-		injectRouteHostIntoDevicePairingRoute(objects, "https://claw.example.com", testInstanceName)
+		require.NoError(t, injectRouteHostIntoDevicePairingRoute(objects, "https://claw.example.com", testInstanceName))
 
 		host, found, err := unstructured.NestedString(dpRoute.Object, "spec", "host")
 		require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 		assert.Equal(t, "claw.example.com", host, "should strip https:// prefix and set bare hostname")
 	})
 
-	t.Run("device-pairing Route host injection is no-op when route not found", func(t *testing.T) {
+	t.Run("device-pairing Route host injection errors when route not found", func(t *testing.T) {
 		otherRoute := &unstructured.Unstructured{}
 		otherRoute.SetKind(RouteKind)
 		otherRoute.SetName("other-route")
@@ -116,7 +116,9 @@ func TestDevicePairingDeployment(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{otherRoute}
-		injectRouteHostIntoDevicePairingRoute(objects, "https://claw.example.com", testInstanceName)
+		err := injectRouteHostIntoDevicePairingRoute(objects, "https://claw.example.com", testInstanceName)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found in rendered manifests")
 
 		_, found, _ := unstructured.NestedString(otherRoute.Object, "spec", "host")
 		assert.False(t, found, "should not set host on other routes")
@@ -142,13 +144,17 @@ func TestDevicePairingDeployment(t *testing.T) {
 		require.True(t, found, "containers not found")
 		require.NotEmpty(t, containers)
 
-		container := containers[0].(map[string]any)
-		secCtx := container["securityContext"].(map[string]any)
+		container, ok := containers[0].(map[string]any)
+		require.True(t, ok, "container should be a map")
+		secCtx, ok := container["securityContext"].(map[string]any)
+		require.True(t, ok, "securityContext should be a map")
 		assert.Equal(t, false, secCtx["allowPrivilegeEscalation"])
 		assert.Equal(t, true, secCtx["readOnlyRootFilesystem"])
 
-		caps := secCtx["capabilities"].(map[string]any)
-		drop := caps["drop"].([]any)
+		caps, ok := secCtx["capabilities"].(map[string]any)
+		require.True(t, ok, "capabilities should be a map")
+		drop, ok := caps["drop"].([]any)
+		require.True(t, ok, "drop should be a slice")
 		assert.Contains(t, drop, "ALL")
 	})
 
@@ -192,26 +198,35 @@ func TestDevicePairingDeployment(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, containers)
 
-		container := containers[0].(map[string]any)
-		envVars, _ := container["env"].([]any)
+		container, ok := containers[0].(map[string]any)
+		require.True(t, ok, "container should be a map")
+		envVars, ok := container["env"].([]any)
+		require.True(t, ok, "env should be a slice")
 		require.NotEmpty(t, envVars, "container should have env vars")
 
 		envMap := map[string]any{}
 		for _, e := range envVars {
-			env := e.(map[string]any)
-			envMap[env["name"].(string)] = env
+			env, ok := e.(map[string]any)
+			require.True(t, ok, "env entry should be a map")
+			name, ok := env["name"].(string)
+			require.True(t, ok, "env name should be a string")
+			envMap[name] = env
 		}
 
 		nsEnv, ok := envMap["NAMESPACE"]
 		require.True(t, ok, "NAMESPACE env var should exist")
-		nsEnvMap := nsEnv.(map[string]any)
-		valueFrom := nsEnvMap["valueFrom"].(map[string]any)
-		fieldRef := valueFrom["fieldRef"].(map[string]any)
+		nsEnvMap, ok := nsEnv.(map[string]any)
+		require.True(t, ok, "NAMESPACE env should be a map")
+		valueFrom, ok := nsEnvMap["valueFrom"].(map[string]any)
+		require.True(t, ok, "valueFrom should be a map")
+		fieldRef, ok := valueFrom["fieldRef"].(map[string]any)
+		require.True(t, ok, "fieldRef should be a map")
 		assert.Equal(t, "metadata.namespace", fieldRef["fieldPath"])
 
 		clawEnv, ok := envMap["CLAW_INSTANCE"]
 		require.True(t, ok, "CLAW_INSTANCE env var should exist")
-		clawEnvMap := clawEnv.(map[string]any)
+		clawEnvMap, ok := clawEnv.(map[string]any)
+		require.True(t, ok, "CLAW_INSTANCE env should be a map")
 		assert.Equal(t, testInstanceName, clawEnvMap["value"], "CLAW_INSTANCE should be the instance name after template replacement")
 	})
 

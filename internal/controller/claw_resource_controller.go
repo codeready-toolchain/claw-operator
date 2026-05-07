@@ -467,7 +467,9 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 
 		// Inject Claw Route host into device-pairing Route and apply it
-		injectRouteHostIntoDevicePairingRoute(objects, routeHost, instance.Name)
+		if err := injectRouteHostIntoDevicePairingRoute(objects, routeHost, instance.Name); err != nil {
+			return ctrl.Result{}, err
+		}
 		if _, err := r.applyRouteByName(ctx, objects, instance, getDevicePairingRouteName(instance.Name)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to apply device-pairing Route: %w", err)
 		}
@@ -477,30 +479,8 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
-
-	// Inject Route host into ConfigMap
-	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
-	}
-
-	// Inject LLM providers into ConfigMap based on credentials with Provider set
-	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
-	}
-
-	// Inject Kubernetes skill into ConfigMap for OpenClaw skill auto-discovery
-	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes skill: %w", err)
-	}
-
-	// Inject non-443 ports from kubernetes credentials into proxy egress NetworkPolicy
-	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
-	}
-
-	// Stamp gateway config hash to trigger rollout when ConfigMap content changes
-	if err := stampGatewayConfigHash(objects, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to stamp gateway config hash: %w", err)
+	if err := r.enrichConfigAndNetworkPolicy(objects, routeHost, instance, resolvedCreds); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Filter out Route (applied in phase above) and proxy ConfigMap (controller-managed)
@@ -545,6 +525,22 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 	logger := log.FromContext(ctx)
 
 	for i := range instance.Spec.Credentials {
+		if instance.Spec.Credentials[i].Channel != "" {
+			if err := resolveChannelDefaults(&instance.Spec.Credentials[i]); err != nil {
+				logger.Error(err, "Failed to resolve channel defaults")
+				setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse,
+					clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+				setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
+					clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+				if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+					logger.Error(statusErr, "Failed to update status after channel defaults failure")
+				}
+				return nil, err
+			}
+		}
+		if instance.Spec.Credentials[i].Channel != "" {
+			continue
+		}
 		if err := resolveProviderDefaults(&instance.Spec.Credentials[i]); err != nil {
 			logger.Error(err, "Failed to resolve provider defaults")
 			setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
@@ -579,6 +575,38 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 	}
 
 	return resolvedCreds, nil
+}
+
+// enrichConfigAndNetworkPolicy injects route host, providers, models, channels, and
+// Kubernetes skill into the gateway ConfigMap and updates the egress NetworkPolicy.
+func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
+	objects []*unstructured.Unstructured,
+	routeHost string,
+	instance *clawv1alpha1.Claw,
+	resolvedCreds []resolvedCredential,
+) error {
+	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
+		return fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
+	}
+	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
+	}
+	if err := injectModelCatalogIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject model catalog into ConfigMap: %w", err)
+	}
+	if err := injectChannelsIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject channels into ConfigMap: %w", err)
+	}
+	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
+		return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
+	}
+	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
+		return fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
+	}
+	if err := stampGatewayConfigHash(objects, instance.Name); err != nil {
+		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
+	}
+	return nil
 }
 
 // configureDeployments applies deployment overrides (proxy image, pull policy, credentials)
@@ -779,7 +807,8 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 }
 
 // applyRouteByName applies only the Route with the given name from provided objects.
-// Returns number of routes applied (0 if CRD not registered or route not found).
+// Returns number of routes applied (0 if CRD not registered).
+// Returns an error if objects is non-empty but the named Route is not found.
 func (r *ClawResourceReconciler) applyRouteByName(ctx context.Context, objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, routeName string) (int, error) {
 	if len(objects) == 0 {
 		return 0, nil
@@ -790,6 +819,10 @@ func (r *ClawResourceReconciler) applyRouteByName(ctx context.Context, objects [
 		if obj.GetKind() == RouteKind && obj.GetName() == routeName {
 			routeObjects = append(routeObjects, obj)
 		}
+	}
+
+	if len(routeObjects) == 0 {
+		return 0, fmt.Errorf("expected Route %q missing in rendered manifests", routeName)
 	}
 
 	for _, obj := range routeObjects {
@@ -812,15 +845,19 @@ func isClusterScoped(obj *unstructured.Unstructured) bool {
 
 // injectRouteHostIntoDevicePairingRoute replaces the OPENCLAW_ROUTE_HOST placeholder
 // in the device-pairing Route's .spec.host with the resolved Claw Route host.
-func injectRouteHostIntoDevicePairingRoute(objects []*unstructured.Unstructured, routeHost, instanceName string) {
+// Returns an error if the device-pairing Route is not found in the objects.
+func injectRouteHostIntoDevicePairingRoute(objects []*unstructured.Unstructured, routeHost, instanceName string) error {
 	routeName := getDevicePairingRouteName(instanceName)
 	host := strings.TrimPrefix(routeHost, "https://")
 	for _, obj := range objects {
 		if obj.GetKind() == RouteKind && obj.GetName() == routeName {
-			_ = unstructured.SetNestedField(obj.Object, host, "spec", "host")
-			return
+			if err := unstructured.SetNestedField(obj.Object, host, "spec", "host"); err != nil {
+				return fmt.Errorf("failed to set host on device-pairing Route %q: %w", routeName, err)
+			}
+			return nil
 		}
 	}
+	return fmt.Errorf("device-pairing Route %q not found in rendered manifests", routeName)
 }
 
 // injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator.json with actual Route host.
@@ -859,8 +896,7 @@ func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstruc
 // from credentials that have Provider set. Gateway-routed providers get a baseUrl pointing to
 // the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since traffic
 // flows through the MITM proxy which injects GCP credentials transparently.
-// Agent defaults (model aliases, primary model) are in the user-owned openclaw.json seed
-// and are not modified here — users control their own model preferences.
+// Model catalog (agents.defaults.models) is handled separately by injectModelCatalogIntoConfigMap.
 func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
 	credentials := instance.Spec.Credentials
 	providers := map[string]any{}
@@ -926,6 +962,96 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance
 			config["models"] = models
 		}
 		models["providers"] = providers
+
+		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal operator.json: %w", err)
+		}
+
+		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
+			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+}
+
+// injectModelCatalogIntoConfigMap dynamically builds agents.defaults.models and
+// agents.defaults.model.primary in operator.json from credentials that have Provider set.
+// Uses the same credential filters as injectProvidersIntoConfigMap (skips no-provider and pathToken).
+// The provider key derives from usesVertexSDK; the logical provider name (stripped of -vertex
+// suffix) is used to look up modelCatalog. Providers not in the catalog are silently skipped.
+func injectModelCatalogIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	models := map[string]any{}
+	var primary string
+
+	for _, cred := range instance.Spec.Credentials {
+		if cred.Provider == "" {
+			continue
+		}
+		if cred.Type == clawv1alpha1.CredentialTypePathToken {
+			continue
+		}
+
+		var providerKey string
+		if usesVertexSDK(cred) {
+			providerKey = cred.Provider + "-vertex"
+		} else {
+			providerKey = cred.Provider
+		}
+
+		logicalProvider := strings.TrimSuffix(providerKey, "-vertex")
+		catalog, ok := modelCatalog[logicalProvider]
+		if !ok || len(catalog) == 0 {
+			continue
+		}
+
+		for _, m := range catalog {
+			key := providerKey + "/" + m.Name
+			models[key] = map[string]any{"alias": m.Alias}
+		}
+
+		if primary == "" {
+			primary = providerKey + "/" + catalog[0].Name
+		}
+	}
+
+	if len(models) == 0 {
+		return nil
+	}
+
+	configMapName := getConfigMapName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
+			continue
+		}
+
+		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
+		if err != nil {
+			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("operator.json not found in ConfigMap data")
+		}
+
+		var config map[string]any
+		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
+			return fmt.Errorf("failed to parse operator.json: %w", err)
+		}
+
+		agents, _ := config["agents"].(map[string]any)
+		if agents == nil {
+			agents = map[string]any{}
+			config["agents"] = agents
+		}
+		defaults, _ := agents["defaults"].(map[string]any)
+		if defaults == nil {
+			defaults = map[string]any{}
+			agents["defaults"] = defaults
+		}
+		defaults["models"] = models
+		defaults["model"] = map[string]any{"primary": primary}
 
 		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 		if err != nil {
@@ -1146,7 +1272,7 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 	var requests []reconcile.Request
 	for _, instance := range openClawList.Items {
 		for _, cred := range instance.Spec.Credentials {
-			if cred.SecretRef != nil && cred.SecretRef.Name == secret.Name {
+			if referencesSecret(cred, secret.Name) {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: types.NamespacedName{
 						Name:      instance.Name,

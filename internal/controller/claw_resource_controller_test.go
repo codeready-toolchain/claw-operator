@@ -121,11 +121,18 @@ func TestClawConfigMapController(t *testing.T) {
 			_, hasModels := config["models"]
 			assert.True(t, hasModels, "operator.json should contain models section")
 
-			_, hasAgents := config["agents"]
-			assert.False(t, hasAgents, "operator.json must not contain agents section (user-owned)")
+			agents, hasAgents := config["agents"].(map[string]any)
+			require.True(t, hasAgents, "operator.json should contain agents section (model catalog)")
+			defaults, hasDefaults := agents["defaults"].(map[string]any)
+			require.True(t, hasDefaults, "agents should contain defaults section")
+			_, hasModelCatalog := defaults["models"]
+			assert.True(t, hasModelCatalog, "operator.json should contain agents.defaults.models (model catalog)")
+			model, hasModel := defaults["model"].(map[string]any)
+			require.True(t, hasModel, "defaults should contain model section")
+			assert.NotEmpty(t, model["primary"], "operator.json should have primary model set")
 		})
 
-		t.Run("should have openclaw.json seed with $include directive", func(t *testing.T) {
+		t.Run("should have openclaw.json seed without hardcoded models", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -160,9 +167,11 @@ func TestClawConfigMapController(t *testing.T) {
 			defaults, hasDefaults := agents["defaults"].(map[string]any)
 			require.True(t, hasDefaults, "agents should have defaults")
 
-			model, hasModel := defaults["model"].(map[string]any)
-			require.True(t, hasModel, "defaults should have model config")
-			assert.NotEmpty(t, model["primary"], "should have a primary model set")
+			_, hasModel := defaults["model"]
+			assert.False(t, hasModel, "openclaw.json seed must not contain model (now operator-managed)")
+
+			_, hasModels := defaults["models"]
+			assert.False(t, hasModels, "openclaw.json seed must not contain models (now operator-managed)")
 
 			mergeJS, hasMergeJS := configMap.Data["merge.js"]
 			assert.True(t, hasMergeJS, "merge.js key must exist in ConfigMap")
@@ -191,7 +200,7 @@ func TestClawConfigMapController(t *testing.T) {
 			assert.Contains(t, agentsMd, "OpenClaw Assistant")
 		})
 
-		t.Run("should have PROXY_SETUP.md skill content", func(t *testing.T) {
+		t.Run("should have PLATFORM.md skill content", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -208,12 +217,13 @@ func TestClawConfigMapController(t *testing.T) {
 				}, configMap) == nil
 			}, "ConfigMap should be created")
 
-			proxyMd, ok := configMap.Data["PROXY_SETUP.md"]
-			assert.True(t, ok, "PROXY_SETUP.md key must exist")
-			assert.Contains(t, proxyMd, "Proxy Architecture")
-			assert.Contains(t, proxyMd, "type: none")
-			assert.Contains(t, proxyMd, ".whatsapp.com")
-			assert.Contains(t, proxyMd, ".whatsapp.net")
+			platformMd, ok := configMap.Data["PLATFORM.md"]
+			assert.True(t, ok, "PLATFORM.md key must exist")
+			assert.Contains(t, platformMd, "Platform Overview")
+			assert.Contains(t, platformMd, "Proxy Architecture")
+			assert.Contains(t, platformMd, "type: none")
+			assert.Contains(t, platformMd, ".whatsapp.com")
+			assert.Contains(t, platformMd, ".whatsapp.net")
 		})
 
 		t.Run("should not have KUBERNETES.md when no kubernetes credentials", func(t *testing.T) {
@@ -808,10 +818,10 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 					Name:     "gemini",
 					Type:     clawv1alpha1.CredentialTypeAPIKey,
 					Provider: "google",
-					SecretRef: &clawv1alpha1.SecretRef{
+					SecretRef: []clawv1alpha1.SecretRefEntry{{
 						Name: apiKeySecret,
 						Key:  apiKeySecretKey,
-					},
+					}},
 					Domain: ".googleapis.com",
 					APIKey: &clawv1alpha1.APIKeyConfig{
 						Header: "x-goog-api-key",

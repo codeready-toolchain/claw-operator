@@ -10,7 +10,7 @@ export NS=my-claw-namespace
 
 ## LLM Providers
 
-For known providers (`google`, `anthropic`), the operator automatically infers the correct `domain` and `apiKey` header — you only need `name`, `type`, `secretRef`, and `provider`. You can still override any inferred field explicitly if needed (e.g., routing through a custom proxy).
+For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers defaults where possible — you only need `name`, `type`, `secretRef`, and `provider`. For `google` and `anthropic`, the `domain` and `apiKey` header are fully inferred. For `openai` and `xai`, you must provide a `domain` explicitly since they use `type: bearer`. You can still override any inferred field if needed (e.g., routing through a custom proxy).
 
 > **Adding credentials incrementally:** Each `oc apply` of the Claw CR **replaces** the entire `credentials` list. When adding a new provider, include all existing credentials in the YAML — otherwise they will be removed. You can retrieve your current configuration with `oc get claw instance -n $NS -o yaml` and add the new entry to the list.
 
@@ -41,8 +41,8 @@ spec:
     - name: gemini
       type: apiKey
       secretRef:
-        name: gemini-api-key
-        key: api-key
+        - name: gemini-api-key
+          key: api-key
       provider: google
 EOF
 ```
@@ -74,9 +74,77 @@ spec:
     - name: anthropic
       type: apiKey
       secretRef:
-        name: anthropic-api-key
-        key: api-key
+        - name: anthropic-api-key
+          key: api-key
       provider: anthropic
+EOF
+```
+
+### OpenAI
+
+Uses the OpenAI API with a bearer token.
+
+**1. Get an API key** from the [OpenAI Platform](https://platform.openai.com/api-keys).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic openai-api-key \
+  --from-literal=api-key=YOUR_OPENAI_API_KEY \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: openai
+      type: bearer
+      secretRef:
+        - name: openai-api-key
+          key: api-key
+      provider: openai
+      domain: "api.openai.com"
+EOF
+```
+
+### xAI (Grok)
+
+Uses the xAI API with a bearer token.
+
+**1. Get an API key** from the [xAI Console](https://console.x.ai/).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic xai-api-key \
+  --from-literal=api-key=YOUR_XAI_API_KEY \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: xai
+      type: bearer
+      secretRef:
+        - name: xai-api-key
+          key: api-key
+      provider: xai
+      domain: "api.x.ai"
 EOF
 ```
 
@@ -139,8 +207,8 @@ spec:
     - name: anthropic-vertex
       type: gcp
       secretRef:
-        name: vertex-sa-key
-        key: sa-key.json
+        - name: vertex-sa-key
+          key: sa-key.json
       gcp:
         project: "YOUR_PROJECT_ID"
         location: "us-east5"
@@ -163,8 +231,8 @@ spec:
     - name: gemini
       type: gcp
       secretRef:
-        name: vertex-sa-key
-        key: sa-key.json
+        - name: vertex-sa-key
+          key: sa-key.json
       gcp:
         project: "YOUR_PROJECT_ID"
         location: "us-central1"
@@ -187,8 +255,8 @@ spec:
     - name: anthropic-vertex
       type: gcp
       secretRef:
-        name: vertex-sa-key
-        key: sa-key.json
+        - name: vertex-sa-key
+          key: sa-key.json
       gcp:
         project: "YOUR_PROJECT_ID"
         location: "us-east5"
@@ -196,8 +264,8 @@ spec:
     - name: gemini
       type: gcp
       secretRef:
-        name: vertex-sa-key
-        key: sa-key.json
+        - name: vertex-sa-key
+          key: sa-key.json
       gcp:
         project: "YOUR_PROJECT_ID"
         location: "us-central1"
@@ -300,8 +368,8 @@ spec:
     - name: k8s-workspace
       type: kubernetes
       secretRef:
-        name: my-kubeconfig
-        key: kubeconfig
+        - name: my-kubeconfig
+          key: kubeconfig
 EOF
 ```
 
@@ -320,8 +388,8 @@ spec:
     - name: k8s-multi
       type: kubernetes
       secretRef:
-        name: multi-cluster-kubeconfig
-        key: kubeconfig
+        - name: multi-cluster-kubeconfig
+          key: kubeconfig
 EOF
 ```
 
@@ -346,14 +414,14 @@ spec:
     - name: gemini
       type: apiKey
       secretRef:
-        name: gemini-api-key
-        key: api-key
+        - name: gemini-api-key
+          key: api-key
       provider: google
     - name: k8s-workspace
       type: kubernetes
       secretRef:
-        name: my-kubeconfig
-        key: kubeconfig
+        - name: my-kubeconfig
+          key: kubeconfig
 EOF
 ```
 
@@ -371,11 +439,13 @@ The gateway pod **cannot** reach any API server directly — egress is restricte
 
 ## Messaging Channels
 
-Messaging channels (Telegram, Discord, WhatsApp) use different authentication mechanisms. Unlike LLM providers, messaging channel credentials are injected transparently by the proxy — OpenClaw is configured with placeholder tokens and never sees the real secrets.
+For known channels (`telegram`, `discord`, `slack`, `whatsapp`), the operator automatically infers all proxy configuration — domain, credential type, companion routes, and placeholder tokens. You only need `name`, `channel`, and `secretRef`. The operator also injects the channel's config into `operator.json` so OpenClaw starts with the channel pre-configured. No manual `openclaw channels add` is needed.
+
+> **Adding credentials incrementally:** Each `oc apply` of the Claw CR **replaces** the entire `credentials` list. When adding a new channel, include all existing credentials in the YAML — otherwise they will be removed. You can retrieve your current configuration with `oc get claw instance -n $NS -o yaml` and add the new entry to the list.
 
 ### Telegram
 
-The Telegram Bot API embeds the bot token in the URL path (`/bot<TOKEN>/method`). The proxy uses `pathToken` credential injection to replace the placeholder with the real token on every request.
+Uses the Telegram Bot API with path-based token injection (`/bot<TOKEN>/method`).
 
 **1. Create a bot** via [@BotFather](https://t.me/BotFather) and copy the bot token.
 
@@ -398,23 +468,31 @@ metadata:
 spec:
   credentials:
     - name: telegram
-      type: pathToken
+      channel: telegram
       secretRef:
-        name: telegram-bot-secret
-        key: token
-      domain: "api.telegram.org"
-      pathToken:
-        prefix: "/bot"
+        - name: telegram-bot-secret
+          key: token
 EOF
 ```
 
-**4.** Once the CR is applied, the OpenClaw assistant should configure the channel with a placeholder token automatically when the user asks to set up Telegram.
+The operator infers `type: pathToken`, `domain: api.telegram.org`, and `pathToken.prefix: /bot`. The proxy intercepts requests like `/botplaceholder/sendMessage` and forwards them as `/bot<REAL_TOKEN>/sendMessage`. The real token never reaches the gateway pod.
 
-The proxy intercepts requests like `/botplaceholder/sendMessage` and forwards them as `/bot<REAL_TOKEN>/sendMessage`. The real token never reaches the gateway pod.
+To customize channel behavior (e.g., restrict who can DM the bot), use `channelConfig`:
+
+```yaml
+    - name: telegram
+      channel: telegram
+      secretRef:
+        - name: telegram-bot-secret
+          key: token
+      channelConfig:
+        dmPolicy: allowlist
+        allowFrom: [12345]
+```
 
 ### Discord
 
-Discord Bot API uses `Authorization: Bot <TOKEN>` header authentication. The proxy uses `apiKey` credential injection with a `Bot ` value prefix. Discord also requires passthrough domains for its WebSocket gateway and CDN.
+Uses the Discord Bot API with `Authorization: Bot <TOKEN>` header injection. The operator automatically creates companion routes for Discord's WebSocket gateway (`gateway.discord.gg`) and CDN (`cdn.discordapp.com`).
 
 **1. Create a bot** in the [Discord Developer Portal](https://discord.com/developers/applications) and copy the bot token.
 
@@ -437,30 +515,18 @@ metadata:
 spec:
   credentials:
     - name: discord
-      type: apiKey
+      channel: discord
       secretRef:
-        name: discord-bot-secret
-        key: token
-      domain: "discord.com"
-      apiKey:
-        header: Authorization
-        valuePrefix: "Bot "
-    - name: discord-gateway
-      type: none
-      domain: "gateway.discord.gg"
-    - name: discord-cdn
-      type: none
-      domain: "cdn.discordapp.com"
+        - name: discord-bot-secret
+          key: token
 EOF
 ```
 
-**4.** Once the CR is applied, the OpenClaw assistant should configure the channel with a placeholder token automatically when the user asks to set up Discord.
-
-The `discord-gateway` and `discord-cdn` entries allow Discord's WebSocket connection and media/avatar downloads without credential injection.
+The operator infers `type: apiKey`, `domain: discord.com`, and the `Authorization` header with `Bot ` prefix. Companion domains for WebSocket and CDN are generated automatically.
 
 ### Slack
 
-Slack requires two tokens on the same domain (`slack.com`): an app-level token (`xapp-...`) for Socket Mode and a bot token (`xoxb-...`) for the REST API. The proxy uses `bearer` credential injection with `allowedPaths` to route each request to the correct token based on the URL path.
+Slack requires two tokens: an app-level token (`xapp-...`) for Socket Mode and a bot token (`xoxb-...`) for the REST API. Use the `role` field to distinguish them.
 
 **1. Create a Slack app** at [api.slack.com/apps](https://api.slack.com/apps). Enable Socket Mode, add the required OAuth scopes, and install the app to your workspace. Copy the bot token (`xoxb-...`) and app-level token (`xapp-...`).
 
@@ -483,34 +549,25 @@ metadata:
   name: instance
 spec:
   credentials:
-    - name: slack-app
-      type: bearer
+    - name: slack
+      channel: slack
       secretRef:
-        name: slack-secret
-        key: app-token
-      domain: "slack.com"
-      allowedPaths: ["/api/apps.connections.open"]
-    - name: slack-bot
-      type: bearer
-      secretRef:
-        name: slack-secret
-        key: bot-token
-      domain: "slack.com"
-    - name: slack-ws
-      type: none
-      domain: ".slack.com"
+        - name: slack-secret
+          key: bot-token
+          role: botToken
+        - name: slack-secret
+          key: app-token
+          role: appToken
 EOF
 ```
 
-**4.** Once the CR is applied, the OpenClaw assistant should configure the channel with Bolt-shaped placeholder tokens (`xoxb-placeholder`, `xapp-placeholder`) automatically when the user asks to set up Slack.
-
-The `slack-app` credential handles only the Socket Mode handshake endpoint (`/api/apps.connections.open`). The `slack-bot` credential is the catch-all for all other `slack.com` API calls. The `slack-ws` entry (suffix match `.slack.com`) passes through WebSocket connections to `wss-primary.slack.com` without credential injection.
+The operator infers `type: bearer`, `domain: slack.com`, path-based routing for the two tokens, and a companion route for WebSocket connections (`.slack.com`).
 
 ### WhatsApp
 
-OpenClaw supports WhatsApp as a messaging channel via WhatsApp Web (the Baileys library). The gateway maintains a linked-device session over WebSocket to WhatsApp's servers.
+WhatsApp Web uses phone-based QR pairing — no API keys or secrets needed. The operator allowlists the required WhatsApp domains and enables the channel plugin.
 
-All gateway egress goes through the credential-injecting proxy, which blocks unknown domains by default. To allow WhatsApp traffic, add two `type: none` credentials that allowlist the required domains:
+**1. Apply the Claw CR:**
 
 ```sh
 oc apply -n $NS -f - <<EOF
@@ -520,29 +577,35 @@ metadata:
   name: instance
 spec:
   credentials:
-    - name: gemini
-      type: apiKey
-      secretRef:
-        name: gemini-api-key
-        key: api-key
-      provider: google
     - name: whatsapp
-      type: none
-      domain: ".whatsapp.com"
-    - name: whatsapp-net
-      type: none
-      domain: ".whatsapp.net"
+      channel: whatsapp
 EOF
 ```
 
-The leading dot makes these suffix matches — `.whatsapp.com` covers `web.whatsapp.com` (WebSocket), `api.whatsapp.com`, and fallback hosts; `.whatsapp.net` covers `mmg.whatsapp.net` (media), `pps.whatsapp.net` (profile pictures), and CDN subdomains.
+The operator infers `type: none` and creates companion routes for `.whatsapp.com`, `.whatsapp.net`, `.facebook.com`, `.facebook.net`, and `.fbcdn.net` (WhatsApp Web relies on Meta's auth and CDN infrastructure). It also enables the WhatsApp plugin entry in `operator.json`.
 
-No Secret is needed. WhatsApp Web uses phone-based QR pairing, not API keys — the session state is managed by OpenClaw on the gateway pod's persistent storage. The `none` type tells the proxy to allow traffic to these domains without injecting any credentials.
-
-After deploying, the OpenClaw assistant should handle plugin installation and channel configuration when the user asks to set up WhatsApp. However, WhatsApp requires an npm plugin (`@openclaw/whatsapp`) that only loads on a full pod restart. The assistant should ask the user to restart the pod:
+After applying, the OpenClaw assistant handles plugin installation (`@openclaw/whatsapp`) and QR pairing. A pod restart is required after plugin install since npm plugins load at boot:
 
 ```sh
 oc delete pod -n $NS -l app=claw
 ```
 
-Once the new pod is ready, the assistant can complete the pairing flow. The user will need to scan the QR code with their phone (WhatsApp → Linked Devices) when prompted.
+Once the new pod is ready, the assistant completes the pairing flow. The user scans the QR code with their phone (WhatsApp → Linked Devices).
+
+### Explicit Override
+
+You can override any inferred field if needed (e.g., routing through a corporate proxy or using a custom domain):
+
+```yaml
+    - name: telegram
+      channel: telegram
+      type: pathToken
+      domain: "telegram.internal.corp.com"
+      pathToken:
+        prefix: "/bot"
+      secretRef:
+        - name: telegram-bot-secret
+          key: token
+```
+
+The `channel` field still enables declarative channel config injection into `operator.json` — only the proxy routing is overridden. You can override `type`, `domain`, and type-specific config (`apiKey`, `pathToken`) independently.

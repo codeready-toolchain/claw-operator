@@ -29,13 +29,6 @@ data:
     {
       "agents": {
         "defaults": {
-          "model": { "primary": "google/gemini-3-flash-preview" },
-          "models": {
-            "google/gemini-3.1-pro-preview": { "alias": "Gemini Pro" },
-            "google/gemini-3-flash-preview": { "alias": "Gemini Flash" },
-            "anthropic-vertex/claude-sonnet-4-6": { "alias": "Claude Sonnet" },
-            "anthropic-vertex/claude-haiku-4-5": { "alias": "Claude Haiku" }
-          },
           "workspace": "~/.openclaw/workspace"
         },
         "list": [
@@ -107,7 +100,15 @@ data:
       } catch (err) {
         console.warn("[init-config] existing openclaw.json is invalid JSON; falling back to seed");
       }
-      fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(base, ops), null, 2));
+      const savedPrimary = base?.agents?.defaults?.model?.primary;
+      const merged = deepMerge(base, ops);
+      if (savedPrimary) {
+        merged.agents = merged.agents || {};
+        merged.agents.defaults = merged.agents.defaults || {};
+        merged.agents.defaults.model = merged.agents.defaults.model || {};
+        merged.agents.defaults.model.primary = savedPrimary;
+      }
+      fs.writeFileSync(pvcPath, JSON.stringify(merged, null, 2));
       console.log("[init-config] merged operator.json into existing openclaw.json");
     } else {
       fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2));
@@ -119,8 +120,8 @@ data:
 
     // Always copy operator-managed skill files
     copyAlways(
-      path.join(configDir, "PROXY_SETUP.md"),
-      path.join(workspaceDir, "skills", "proxy", "SKILL.md")
+      path.join(configDir, "PLATFORM.md"),
+      path.join(workspaceDir, "skills", "platform", "SKILL.md")
     );
 
     // Copy Kubernetes skill if present in ConfigMap
@@ -131,18 +132,40 @@ data:
   AGENTS.md: |
     # OpenClaw Assistant
 
-    You are a helpful AI assistant running in OpenShift.
-  PROXY_SETUP.md: |
+    You are a helpful AI assistant running in a managed OpenShift environment.
+    Your workspace skills contain reference material about the platform, proxy
+    architecture, and available integrations.
+  PLATFORM.md: |
     ---
-    name: proxy-setup
-    description: "Network proxy architecture and how to configure access to external services like WhatsApp, Telegram, Discord, and Slack."
+    name: platform
+    description: "Platform overview, proxy architecture, LLM provider model management, and messaging channel integration."
     ---
+
+    # Platform Overview
+
+    You are running on an OpenShift cluster managed by the Claw operator. Key constraints:
+
+    - **Non-root execution:** All containers run as a random non-root UID assigned by
+      OpenShift's Security Context Constraints (restricted seccomp, all capabilities
+      dropped). You cannot bind privileged ports or write outside designated paths.
+    - **Claw CR manages infrastructure:** LLM provider credentials, messaging
+      channels, proxy domain allowlisting, and Kubernetes API access. The operator
+      reconciles the CR into Deployments, ConfigMaps, Secrets, NetworkPolicies, and
+      Routes. Non-operator-managed config (custom plugins, agent settings, tools) is
+      managed separately via `openclaw config patch` on the PVC.
+    - **Important:** Each `oc apply` of the Claw CR **replaces** the entire `credentials`
+      list. The user must include all existing credentials when applying — otherwise they
+      will be removed. Retrieve the current state first:
+
+    ```sh
+    oc get claw <name> -n <namespace> -o yaml
+    ```
 
     # Proxy Architecture
 
-    You are running in an OpenShift cluster behind a credential-injecting MITM proxy.
-    All outbound traffic from this pod goes through the proxy via `HTTP_PROXY`/`HTTPS_PROXY`
-    environment variables. The proxy blocks any domain that is not explicitly configured.
+    All outbound traffic from this pod goes through a credential-injecting MITM proxy
+    via `HTTP_PROXY`/`HTTPS_PROXY` environment variables. The proxy blocks any domain
+    that is not explicitly configured.
 
     LLM provider credentials (API keys, OAuth tokens, GCP service account tokens) are
     injected by the proxy — you never see real secrets. For non-LLM services that need
@@ -154,49 +177,30 @@ data:
     The following domains are always allowed without any user configuration:
     - `clawhub.ai` — ClawHub plugin registry (plugin installs, skill downloads)
     - `openrouter.ai` — model pricing API for cost estimation
+    - `github.com` — git HTTPS clones for npm packages with git dependencies
+    - `codeload.github.com` — tarball fetches for git dependencies
     - `raw.githubusercontent.com` — LiteLLM pricing data and Baileys defaults (path-restricted)
     - `registry.npmjs.org` — npm package downloads for plugin dependencies
 
     You do NOT need to ask the user to allowlist these. If a plugin install or skill
     download from ClawHub fails, the issue is likely something else (network, auth token).
 
-    ## When the user wants to integrate with an external service
+    ## Adding a new external service
 
     If a service is not working or the user asks to enable a new integration, the most
     likely cause is that the proxy is blocking the required domains. Tell the user they
     need to update their Claw custom resource to add the appropriate credential entries.
-
-    **Important:** Each `oc apply` of the Claw CR **replaces** the entire `credentials`
-    list. The user must include all existing credentials when applying — otherwise they
-    will be removed.
 
     Walk the user through these steps:
 
     1. Retrieve the current Claw instance:
 
     ```sh
-    oc get claw CLAW_INSTANCE_NAME -n <namespace> -o yaml
+    oc get claw <name> -n <namespace> -o yaml
     ```
 
-    The output will look something like this (the `credentials` list varies):
-
-    ```yaml
-    apiVersion: claw.sandbox.redhat.com/v1alpha1
-    kind: Claw
-    metadata:
-      name: CLAW_INSTANCE_NAME
-    spec:
-      credentials:
-        - name: gemini
-          type: apiKey
-          secretRef:
-            name: gemini-api-key
-            key: api-key
-          provider: google
-    ```
-
-    2. Add the new credential entries to the existing `credentials` list (see known
-    integrations below for the exact entries needed).
+    2. Add the new credential entries to the existing `credentials` list (see
+    Messaging Channels or Custom Domains sections below for the exact entries needed).
 
     3. Apply the updated CR:
 
@@ -204,193 +208,193 @@ data:
     oc apply -n <namespace> -f updated-claw.yaml
     ```
 
-    ## Known integrations
+    # LLM Providers & Models
 
-    ### WhatsApp
+    ## How providers map to models
 
-    WhatsApp Web uses phone-based QR pairing (not API keys). Setup has TWO parts:
-    proxy domain allowlisting (Claw CR — needs the user) and plugin/channel
-    configuration (openclaw CLI — you do this yourself).
+    The model picker list is dynamically generated from the providers configured in the
+    Claw CR `spec.credentials`. Each credential with a `provider` field contributes its
+    known models to the picker. Models appear as `{provider}/{model-name}` (e.g.,
+    `google/gemini-3-flash-preview`, `anthropic/claude-sonnet-4-6`).
 
-    **Do NOT** invent Claw CR fields like `spec.channels` — the Claw CRD has no
-    such field. Channel config lives in `openclaw.json` and you configure it
-    yourself using `openclaw config patch`.
+    Supported providers with automatic model catalogs: `google`, `anthropic`, `openai`, `xai`.
+    Meta-providers like `openrouter` do not have a hardcoded catalog — users can add
+    specific models manually.
 
-    **Important:** `openclaw config patch` WORKS. Config writes are NOT blocked.
-    Do not tell the user that config patches are blocked or protected — that is
-    incorrect.
+    ## Models are operator-managed
 
-    #### Part 1: Proxy domains (user must do this)
+    The operator writes the model catalog into `operator.json` on every reconcile. This
+    means models stay in sync with the configured credentials automatically:
+    - Add a provider credential → its models appear in the picker
+    - Remove a provider credential → its models disappear from the picker
 
-    The user needs to add these entries to the Claw CR `credentials` list.
-    Beyond `*.whatsapp.*`, WhatsApp Web also relies on Meta's auth and CDN
-    infrastructure.
+    You do NOT need to manually edit the model list when providers change. The operator
+    handles it.
 
-    ```yaml
-        - name: whatsapp
-          type: none
-          domain: ".whatsapp.com"
-        - name: whatsapp-net
-          type: none
-          domain: ".whatsapp.net"
-        - name: facebook
-          type: none
-          domain: ".facebook.com"
-        - name: facebook-net
-          type: none
-          domain: ".facebook.net"
-        - name: fbcdn
-          type: none
-          domain: ".fbcdn.net"
+    ## User customization
+
+    Users can add custom models (e.g., specific OpenRouter models) without conflicting
+    with operator-managed entries:
+
+    ```sh
+    openclaw config patch '{"agents":{"defaults":{"models":{"openrouter/anthropic/claude-sonnet-4-6":{"alias":"Claude via OR"}}}}}'
     ```
 
-    #### Part 2: Plugin and channel setup (you do this yourself)
+    User-added model entries persist across pod restarts because deep-merge preserves
+    keys that don't collide with operator-managed ones.
 
-    Once the proxy domains are configured, run these commands yourself — do not
-    ask the user to do them.
+    ## Primary model
 
-    **Step 1.** Install the WhatsApp plugin:
+    The primary (default) model is set by the operator on first run based on the first
+    configured provider. After the user changes their primary model (via the UI or
+    `openclaw config patch`), their choice persists across restarts — the operator does
+    not overwrite it.
+
+    # Messaging Channels
+
+    Messaging channels can be either **operator-managed** or **user-managed**.
+
+    ## Operator-Managed Channels
+
+    When a credential in the Claw CR has a `channel:` field (e.g., `channel: telegram`),
+    the operator fully manages that channel:
+    - Proxy config (domain, credential type, companion routes) is auto-inferred
+    - Channel config is injected into `operator.json` (enabled + placeholder tokens)
+    - Plugin entries are added to `operator.json`
+    - Pod rolls out automatically when channel config changes
+
+    **Do NOT** run `openclaw channels add` or `openclaw channels remove` for
+    operator-managed channels. The operator owns these entries — manual CLI changes
+    will be overwritten on the next pod restart.
+
+    Known operator-managed channels: `telegram`, `discord`, `slack`, `whatsapp`.
+
+    ### How to tell the user to add a channel
+
+    The user adds a `channel:` credential entry to the Claw CR. The simplified
+    syntax infers all proxy details automatically:
+
+    ```yaml
+    # Telegram — single secret
+    - name: telegram
+      channel: telegram
+      secretRef:
+        - name: telegram-bot-secret
+          key: token
+
+    # Discord — single secret, companion routes auto-generated
+    - name: discord
+      channel: discord
+      secretRef:
+        - name: discord-bot-secret
+          key: token
+
+    # Slack — two secrets with roles
+    - name: slack
+      channel: slack
+      secretRef:
+        - name: slack-secret
+          key: bot-token
+          role: botToken
+        - name: slack-secret
+          key: app-token
+          role: appToken
+
+    # WhatsApp — no secret needed (QR pairing)
+    - name: whatsapp
+      channel: whatsapp
+    ```
+
+    Walk the user through retrieving their current CR first:
+    ```sh
+    oc get claw <name> -n <namespace> -o yaml
+    ```
+    Then add the new channel credential to the existing `credentials` list.
+
+    ### WhatsApp special case
+
+    The operator enables the WhatsApp plugin entry and channel config in
+    `operator.json`, and auto-generates companion routes for `.whatsapp.com`,
+    `.whatsapp.net`, `.facebook.com`, `.facebook.net`, and `.fbcdn.net`.
+    However, WhatsApp requires an npm package that must be installed inside
+    the pod. After the user applies the CR with `channel: whatsapp`:
+
+    **Step 1.** Install the WhatsApp plugin (you do this yourself):
     ```sh
     openclaw plugins install @openclaw/whatsapp
     ```
     If it says "plugin already exists", use `--force` to re-install.
 
-    **Step 2.** Enable the plugin and configure the channel by running:
-    ```sh
-    echo '{"plugins":{"entries":{"whatsapp":{"enabled":true}}},"channels":{"whatsapp":{"enabled":true,"dmPolicy":"pairing","groupPolicy":"allowlist","debounceMs":0,"mediaMaxMb":50}}}' | openclaw config patch --stdin
-    ```
-    **This step is critical.** Without the `channels.whatsapp` config,
-    `channels login` will fail with "does not support login". The fields
-    `dmPolicy`, `groupPolicy`, `debounceMs`, `mediaMaxMb` are required. The
-    values above are sensible defaults but **may change in future plugin
-    versions**. If the patch is rejected or login still fails, run
-    `openclaw config schema`, find the `channels.whatsapp` section, and use
-    the required fields from the current schema.
-
-    **Step 3.** Tell the user to restart the pod so the gateway loads the
-    new plugin. The in-process `openclaw gateway restart` is NOT enough —
-    npm plugins only load on a full pod restart:
+    **Step 2.** Tell the user to restart the pod — npm plugins only load on
+    a full pod restart. The in-process `openclaw gateway restart` is NOT enough:
     ```sh
     oc delete pod -n <namespace> -l app=claw
     ```
     Wait for the new pod to be ready before continuing.
 
-    **Step 4.** Link the device:
+    **Step 3.** Link the device:
     ```sh
     openclaw channels login --channel whatsapp
     ```
 
-    **Step 5.** Tell the user to scan the QR code with their phone
+    **Step 4.** Tell the user to scan the QR code with their phone
     (WhatsApp → Linked Devices).
 
-    ### Telegram
+    ### Channel customization (channelConfig)
 
-    Telegram Bot API embeds the bot token in the URL path (`/bot<TOKEN>/method`).
-    The proxy uses `pathToken` credential injection: OpenClaw is configured with a
-    placeholder token, and the proxy replaces it with the real token on every request.
-
-    The user needs to add this credential entry to the Claw CR:
+    Users can pass extra settings to operator-managed channels via `channelConfig`
+    on the credential entry. These are deep-merged into the channel's config block:
 
     ```yaml
-        - name: telegram
-          type: pathToken
-          secretRef:
-            name: telegram-bot-secret
-            key: token
-          domain: "api.telegram.org"
-          pathToken:
-            prefix: "/bot"
+    - name: telegram
+      channel: telegram
+      secretRef:
+        - name: telegram-bot-secret
+          key: token
+      channelConfig:
+        dmPolicy: allowlist
+        allowFrom: [12345]
     ```
 
-    Once the proxy credential is configured, configure the channel yourself — do not
-    ask the user to do this:
+    Protected keys (`enabled`, `botToken`, `token`, `appToken`) cannot be set via
+    `channelConfig` — they are operator-managed.
+
+    ## User-Managed Channels
+
+    If a channel is NOT one of the four known channels above, or the user adds
+    a credential without the `channel:` field (using explicit `type`, `domain`,
+    etc. instead), the channel is user-managed. For these, you configure the
+    channel yourself using the CLI:
+
     ```sh
-    openclaw channels add --channel telegram --token placeholder
-    ```
-    The proxy strips whatever placeholder token it finds and injects the real one.
-
-    The real bot token is stored in the Kubernetes Secret and never reaches the
-    gateway pod. The proxy intercepts `/botplaceholder/sendMessage` and forwards
-    it as `/bot<REAL_TOKEN>/sendMessage`.
-
-    ### Discord
-
-    Discord Bot API uses `Authorization: Bot <TOKEN>` header authentication. The
-    proxy uses `apiKey` credential injection with `valuePrefix: "Bot "` to inject
-    the real token into the Authorization header.
-
-    The user needs to add these credential entries to the Claw CR:
-
-    ```yaml
-        - name: discord
-          type: apiKey
-          secretRef:
-            name: discord-bot-secret
-            key: token
-          domain: "discord.com"
-          apiKey:
-            header: Authorization
-            valuePrefix: "Bot "
-        - name: discord-gateway
-          type: none
-          domain: "gateway.discord.gg"
-        - name: discord-cdn
-          type: none
-          domain: "cdn.discordapp.com"
+    openclaw channels add --channel <name> --token <placeholder>
     ```
 
-    Once the proxy credentials are configured, configure the channel yourself — do not
-    ask the user to do this:
-    ```sh
-    openclaw channels add --channel discord --token placeholder
-    ```
+    The user handles proxy domain allowlisting in the Claw CR, and you handle
+    channel config via `openclaw config patch` or `openclaw channels add`.
 
-    The `discord-gateway` and `discord-cdn` entries are passthrough domains for
-    Discord's WebSocket gateway and CDN (media/avatars). They don't need credential
-    injection.
+    **Important:** `openclaw config patch` WORKS. Config writes are NOT blocked.
+    Do not tell the user that config patches are blocked or protected.
 
-    ### Slack
+    ## Telegram (proxy details)
 
-    Slack requires two tokens on the same domain (`slack.com`): an app-level token
-    (`xapp-...`) for Socket Mode and a bot token (`xoxb-...`) for the REST API. The
-    proxy uses `bearer` credential injection with `allowedPaths` to route each request
-    to the correct token.
+    The proxy intercepts `/botplaceholder/sendMessage` and forwards it as
+    `/bot<REAL_TOKEN>/sendMessage`. The real bot token never reaches the gateway pod.
 
-    The user needs to add these credential entries to the Claw CR:
+    ## Discord (proxy details)
 
-    ```yaml
-        - name: slack-app
-          type: bearer
-          secretRef:
-            name: slack-secret
-            key: app-token
-          domain: "slack.com"
-          allowedPaths: ["/api/apps.connections.open"]
-        - name: slack-bot
-          type: bearer
-          secretRef:
-            name: slack-secret
-            key: bot-token
-          domain: "slack.com"
-        - name: slack-ws
-          type: none
-          domain: ".slack.com"
-    ```
+    The proxy injects `Authorization: Bot <REAL_TOKEN>` into every request to
+    `discord.com`. Companion domains (`gateway.discord.gg`, `cdn.discordapp.com`)
+    pass through without credential injection.
 
-    Once the proxy credentials are configured, configure the channel yourself — do not
-    ask the user to do this:
-    ```sh
-    openclaw channels add --channel slack --bot-token xoxb-placeholder --app-token xapp-placeholder
-    ```
-    The Bolt-shaped placeholders (`xoxb-placeholder`, `xapp-placeholder`) pass Slack's
-    startup regex validation. The proxy strips them and injects real tokens.
+    ## Slack (proxy details)
 
-    The `slack-app` credential handles the Socket Mode handshake (`/api/apps.connections.open`).
-    The `slack-bot` credential is the catch-all for all other `slack.com` API calls. The
-    `slack-ws` entry (suffix match `.slack.com`) passes through WebSocket connections to
-    `wss-primary.slack.com` without credential injection.
+    Two tokens on `slack.com`: the app-level token (`xapp-...`) handles only
+    `/api/apps.connections.open` (Socket Mode handshake), and the bot token
+    (`xoxb-...`) handles all other API calls. WebSocket connections to
+    `*.slack.com` pass through without injection.
 
-    ## Custom domains
+    # Custom Domains
 
     For any other external service, the user can add a `type: none` entry with the
     appropriate `domain`. A leading dot (e.g., `.example.com`) matches all subdomains.
