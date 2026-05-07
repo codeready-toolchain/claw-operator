@@ -171,7 +171,7 @@ The AI skill document is updated to explain:
 
 ## Implementation Plan
 
-### Phase 1: CRD + Channel Injection (Telegram focus)
+### PR 1: Declarative channel injection
 
 1. Update `api/v1alpha1/claw_types.go`:
    - Add `Channel` and `ChannelConfig` fields to `CredentialSpec`
@@ -193,19 +193,12 @@ The AI skill document is updated to explain:
    - Call `injectChannelsIntoConfigMap` after `injectModelCatalogIntoConfigMap`
    - Include companion routes in proxy config generation
 
-4. Tests: `internal/controller/claw_channels_test.go`
-   - Table-driven tests for each channel type
-   - Inference with and without explicit overrides
-   - Companion route generation
-   - channelConfig passthrough
+4. Tests:
+   - Unit: `internal/controller/claw_channels_test.go` — table-driven tests for each channel type, inference with/without overrides, companion route generation, channelConfig passthrough
+   - E2E: channel credential → verify operator.json contains channel config, pod starts with channel active
 
-### Phase 2: Documentation + PLATFORM.md
+### PR 2: Documentation
 
 1. Update `docs/provider-setup.md` — simplify channel examples to use `channel:` field
-2. Update PLATFORM.md template in `configmap.yaml` — new AI instructions
+2. Update PLATFORM.md template in `configmap.yaml` — new AI instructions for operator-managed channels
 3. Update `docs/architecture.md` if needed
-
-### Phase 3: Validation + Polish
-
-1. CEL validation rules for channel-specific constraints (if UX feedback warrants it)
-2. E2E test coverage
