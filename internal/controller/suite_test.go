@@ -30,7 +30,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -150,6 +153,7 @@ func deleteAndWaitAllResources(t *testing.T, namespace string, instanceNames ...
 		{&corev1.ServiceAccount{}, client.ObjectKey{Name: getDevicePairingServiceAccountName(instanceName), Namespace: namespace}},
 		{&corev1.Service{}, client.ObjectKey{Name: getDevicePairingServiceName(instanceName), Namespace: namespace}},
 		{&appsv1.Deployment{}, client.ObjectKey{Name: getDevicePairingDeploymentName(instanceName), Namespace: namespace}},
+		{newRouteUnstructured(), client.ObjectKey{Name: getDevicePairingRouteName(instanceName), Namespace: namespace}},
 	}
 
 	for _, r := range resources {
@@ -169,7 +173,7 @@ func deleteAndWait(obj client.Object, key client.ObjectKey) error {
 	for time.Now().Before(deadline) {
 		fresh := obj.DeepCopyObject().(client.Object)
 		if err := k8sClient.Get(ctx, key, fresh); err != nil {
-			if apierrors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) || apimeta.IsNoMatchError(err) {
 				return nil
 			}
 			time.Sleep(interval)
@@ -379,4 +383,14 @@ func reconcileClaw(t *testing.T, ctx context.Context, reconciler *ClawResourceRe
 		},
 	})
 	require.NoError(t, err, "reconcile failed")
+}
+
+func newRouteUnstructured() *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "route.openshift.io",
+		Version: "v1",
+		Kind:    RouteKind,
+	})
+	return u
 }
