@@ -47,9 +47,10 @@ const (
 
 // Condition types for Claw status.
 const (
-	ConditionTypeReady               = "Ready"
-	ConditionTypeCredentialsResolved = "CredentialsResolved"
-	ConditionTypeProxyConfigured     = "ProxyConfigured"
+	ConditionTypeReady                   = "Ready"
+	ConditionTypeCredentialsResolved     = "CredentialsResolved"
+	ConditionTypeProxyConfigured         = "ProxyConfigured"
+	ConditionTypeDevicePairingConfigured = "DevicePairingConfigured"
 )
 
 // Annotation keys used on pod templates to trigger rollouts on config changes.

@@ -10,6 +10,7 @@ rules:
   - configmaps
   - persistentvolumeclaims
   - secrets
+  - serviceaccounts
   verbs:
   - create
   - get
@@ -94,6 +95,18 @@ rules:
   - update
   - watch
 - apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - clusterroles
+  - rolebindings
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - route.openshift.io
   resources:
   - routes
@@ -105,3 +118,10 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes/custom-host
+  verbs:
+  - create
+  - update
