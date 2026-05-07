@@ -477,40 +477,8 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
-
-	// Inject Route host into ConfigMap
-	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
-	}
-
-	// Inject LLM providers into ConfigMap based on credentials with Provider set
-	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
-	}
-
-	// Inject model catalog into ConfigMap based on credentials with Provider set
-	if err := injectModelCatalogIntoConfigMap(objects, instance); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject model catalog into ConfigMap: %w", err)
-	}
-
-	// Inject channel config into ConfigMap for credentials with Channel set
-	if err := injectChannelsIntoConfigMap(objects, instance); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject channels into ConfigMap: %w", err)
-	}
-
-	// Inject Kubernetes skill into ConfigMap for OpenClaw skill auto-discovery
-	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes skill: %w", err)
-	}
-
-	// Inject non-443 ports from kubernetes credentials into proxy egress NetworkPolicy
-	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
-	}
-
-	// Stamp gateway config hash to trigger rollout when ConfigMap content changes
-	if err := stampGatewayConfigHash(objects, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to stamp gateway config hash: %w", err)
+	if err := r.enrichConfigAndNetworkPolicy(objects, routeHost, instance, resolvedCreds); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Filter out Route (applied in phase above) and proxy ConfigMap (controller-managed)
@@ -605,6 +573,38 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 	}
 
 	return resolvedCreds, nil
+}
+
+// enrichConfigAndNetworkPolicy injects route host, providers, models, channels, and
+// Kubernetes skill into the gateway ConfigMap and updates the egress NetworkPolicy.
+func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
+	objects []*unstructured.Unstructured,
+	routeHost string,
+	instance *clawv1alpha1.Claw,
+	resolvedCreds []resolvedCredential,
+) error {
+	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
+		return fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
+	}
+	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
+	}
+	if err := injectModelCatalogIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject model catalog into ConfigMap: %w", err)
+	}
+	if err := injectChannelsIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject channels into ConfigMap: %w", err)
+	}
+	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
+		return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
+	}
+	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
+		return fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
+	}
+	if err := stampGatewayConfigHash(objects, instance.Name); err != nil {
+		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
+	}
+	return nil
 }
 
 // configureDeployments applies deployment overrides (proxy image, pull policy, credentials)
