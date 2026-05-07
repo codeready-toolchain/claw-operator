@@ -102,6 +102,9 @@ var knownChannels = map[string]channelDefault{
 		Companions: []string{
 			".whatsapp.com",
 			".whatsapp.net",
+			".facebook.com",
+			".facebook.net",
+			".fbcdn.net",
 		},
 		ConfigBase: map[string]any{},
 	},
