@@ -132,7 +132,9 @@ data:
   AGENTS.md: |
     # OpenClaw Assistant
 
-    You are a helpful AI assistant running in OpenShift.
+    You are a helpful AI assistant running in a managed OpenShift environment.
+    Your workspace skills contain reference material about the platform, proxy
+    architecture, and available integrations.
   PLATFORM.md: |
     ---
     name: platform
@@ -175,6 +177,8 @@ data:
     The following domains are always allowed without any user configuration:
     - `clawhub.ai` — ClawHub plugin registry (plugin installs, skill downloads)
     - `openrouter.ai` — model pricing API for cost estimation
+    - `github.com` — git HTTPS clones for npm packages with git dependencies
+    - `codeload.github.com` — tarball fetches for git dependencies
     - `raw.githubusercontent.com` — LiteLLM pricing data and Baileys defaults (path-restricted)
     - `registry.npmjs.org` — npm package downloads for plugin dependencies
 
