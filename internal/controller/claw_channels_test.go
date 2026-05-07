@@ -161,10 +161,10 @@ func TestGenerateCompanionRoutes(t *testing.T) {
 			wantInjectors: []string{"none"},
 		},
 		{
-			name:          "whatsapp generates two companion routes",
+			name:          "whatsapp generates five companion routes",
 			cred:          clawv1alpha1.CredentialSpec{Channel: "whatsapp"},
-			wantDomains:   []string{".whatsapp.com", ".whatsapp.net"},
-			wantInjectors: []string{"none", "none"},
+			wantDomains:   []string{".whatsapp.com", ".whatsapp.net", ".facebook.com", ".facebook.net", ".fbcdn.net"},
+			wantInjectors: []string{"none", "none", "none", "none", "none"},
 		},
 		{
 			name: "telegram generates no companion routes",
