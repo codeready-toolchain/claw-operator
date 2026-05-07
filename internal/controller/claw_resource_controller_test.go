@@ -200,7 +200,7 @@ func TestClawConfigMapController(t *testing.T) {
 			assert.Contains(t, agentsMd, "OpenClaw Assistant")
 		})
 
-		t.Run("should have PROXY_SETUP.md skill content", func(t *testing.T) {
+		t.Run("should have PLATFORM.md skill content", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -217,12 +217,13 @@ func TestClawConfigMapController(t *testing.T) {
 				}, configMap) == nil
 			}, "ConfigMap should be created")
 
-			proxyMd, ok := configMap.Data["PROXY_SETUP.md"]
-			assert.True(t, ok, "PROXY_SETUP.md key must exist")
-			assert.Contains(t, proxyMd, "Proxy Architecture")
-			assert.Contains(t, proxyMd, "type: none")
-			assert.Contains(t, proxyMd, ".whatsapp.com")
-			assert.Contains(t, proxyMd, ".whatsapp.net")
+			platformMd, ok := configMap.Data["PLATFORM.md"]
+			assert.True(t, ok, "PLATFORM.md key must exist")
+			assert.Contains(t, platformMd, "Platform Overview")
+			assert.Contains(t, platformMd, "Proxy Architecture")
+			assert.Contains(t, platformMd, "type: none")
+			assert.Contains(t, platformMd, ".whatsapp.com")
+			assert.Contains(t, platformMd, ".whatsapp.net")
 		})
 
 		t.Run("should not have KUBERNETES.md when no kubernetes credentials", func(t *testing.T) {

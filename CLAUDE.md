@@ -174,7 +174,7 @@ make dev-cleanup                                  # Tear down
 The operator uses a **single unified controller** that manages all resources using Kustomize and server-side apply:
 
 **ClawResourceReconciler** (`internal/controller/claw_resource_controller.go`):
-- Reconciles `Claw` CRs named exactly `"instance"` (skips all others)
+- Reconciles any `Claw` CR in the watched namespace
 - Creates gateway Secret (`claw-gateway-token`) with randomly-generated authentication token
 - Validates user-provided credentials (array of CredentialSpec in CR's `credentials` field) and referenced Secrets
 - Creates all resources: PVC, ConfigMap, Deployment, Services (2), NetworkPolicies (3: egress for claw, egress for proxy, ingress for gateway), proxy Deployment/ConfigMap, and Route (OpenShift only)
@@ -211,7 +211,7 @@ Uses the gateway image (`ghcr.io/openclaw/openclaw`) for Node.js. Runs `node /co
 - `openclaw.json` — User-owned seed: `agents.list`, workspace path. No `$include`, no `gateway` section, no hardcoded models (models are dynamically generated in `operator.json`). Seeded to PVC on first run only (merge mode) or used as base every restart (overwrite mode).
 - `merge.js` — The init container merge script. Stored in ConfigMap, executed via `node /config/merge.js`. Updated automatically with operator upgrades.
 - `AGENTS.md` — System prompt seed. Copied to PVC if missing.
-- `PROXY_SETUP.md` — Proxy architecture skill. Always copied to `skills/proxy/SKILL.md`.
+- `PLATFORM.md` — Platform overview and integration skill. Always copied to `skills/platform/SKILL.md`.
 - `KUBERNETES.md` — Kubernetes skill (injected by controller when k8s credentials present). Always copied to `skills/kubernetes/SKILL.md`.
 
 **Who owns what on the PVC:**
@@ -236,10 +236,8 @@ Reconcile(ctx, req) called
   ↓
 1. Fetch Claw CR
   ↓
-2. Filter by name (only "instance")
-  ↓
 PHASE 1: Gateway Secret
-3. applyGatewaySecret(ctx, instance)
+2. applyGatewaySecret(ctx, instance)
    ├─ Check if claw-gateway-token Secret already exists
    ├─ If exists and has token, preserve existing token
    ├─ If not exists or missing token, generate new 64-char hex token using crypto/rand
@@ -247,7 +245,7 @@ PHASE 1: Gateway Secret
    ├─ Set owner reference (for garbage collection)
    └─ Server-side apply Secret (Patch with Apply)
   ↓
-3b. resolveAndApplyCredentials(ctx, instance)
+2b. resolveAndApplyCredentials(ctx, instance)
    ├─ resolveProviderDefaults for each credential
    │  ├─ Known apiKey providers (google, anthropic): fill domain and apiKey.header if not set
    │  ├─ GCP credentials: fill domain ".googleapis.com" if not set
@@ -262,7 +260,7 @@ PHASE 1: Gateway Secret
    │  └─ Set owner reference for garbage collection
    └─ applyProxyCA: generate self-signed ECDSA CA for MITM proxy
   ↓
-3c. applyProxyResources(ctx, instance, resolvedCreds)
+2c. applyProxyResources(ctx, instance, resolvedCreds)
    ├─ generateProxyConfig: build proxy config JSON (routes, injectors, gateway paths)
    │  ├─ usesVertexSDK credentials skip gateway route (no PathPrefix/Upstream)
    │  └─ Kubernetes routes include `caCert` (base64-encoded CA PEM) from kubeconfig's `certificate-authority-data`
@@ -275,13 +273,13 @@ PHASE 1: Gateway Secret
    └─ Return proxy config JSON for hash stamping
   ↓
 PHASE 2: Route Application and Host Resolution
-4. applyRouteOnly(ctx, instance)
+3. applyRouteOnly(ctx, instance)
    ├─ Build Kustomize manifests
    ├─ Filter for Route resources only
    ├─ Set namespace and owner reference
    └─ Server-side apply Route (skips with NoMatchError on vanilla Kubernetes)
   ↓
-5. getRouteURL(ctx, instance)
+4. getRouteURL(ctx, instance)
    ├─ Fetch Route resource
    ├─ Extract .status.ingress[0].host (authoritative source populated by OpenShift router)
    ├─ If status not yet populated: requeue with 5s backoff
@@ -289,50 +287,50 @@ PHASE 2: Route Application and Host Resolution
    └─ Return https://<route-host> or empty string
   ↓
 PHASE 3: ConfigMap Injection and Remaining Resources
-6. buildKustomizedObjects(ctx, instance)
+5. buildKustomizedObjects(ctx, instance)
    ├─ Build Kustomize in-memory from embedded manifests
    ├─ Parse YAML into unstructured objects
    ├─ configureProxyDeployment(objects, instance)
- │  ├─ Find claw-proxy Deployment in parsed objects
- │  ├─ Navigate to spec.template.spec.containers[].env[]
- │  ├─ Configure credential-specific environment variables based on instance.Spec.Credentials
- │  ├─ Update valueFrom.secretKeyRef to point to user's Secrets (name and key from each CredentialSpec.SecretRef)
- │  └─ Modify in-place BEFORE applying (so pod template changes trigger automatic pod restarts on Secret ref changes)
+   │  ├─ Find claw-proxy Deployment in parsed objects
+   │  ├─ Navigate to spec.template.spec.containers[].env[]
+   │  ├─ Configure credential-specific environment variables based on instance.Spec.Credentials
+   │  ├─ Update valueFrom.secretKeyRef to point to user's Secrets (name and key from each CredentialSpec.SecretRef)
+   │  └─ Modify in-place BEFORE applying (so pod template changes trigger automatic pod restarts on Secret ref changes)
    ├─ configureClawDeploymentForVertex(objects, credentials) — when Vertex SDK credentials exist:
- │  ├─ Add GOOGLE_APPLICATION_CREDENTIALS=/etc/vertex-adc/adc.json env var to gateway container
- │  ├─ Add ANTHROPIC_VERTEX_PROJECT_ID env var (from GCP config)
- │  └─ Mount claw-vertex-adc ConfigMap as read-only volume at /etc/vertex-adc/
+   │  ├─ Add GOOGLE_APPLICATION_CREDENTIALS=/etc/vertex-adc/adc.json env var to gateway container
+   │  ├─ Add ANTHROPIC_VERTEX_PROJECT_ID env var (from GCP config)
+   │  └─ Mount claw-vertex-adc ConfigMap as read-only volume at /etc/vertex-adc/
    ├─ configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage) — when kubernetes credentials exist:
- │  ├─ Add KUBECONFIG=/etc/kube/config env var to gateway container
- │  ├─ Add PATH env var prepending /opt/kube-tools to standard PATH
- │  ├─ Mount claw-kube-config ConfigMap as read-only volume at /etc/kube/
- │  ├─ Add emptyDir volume (kubectl-bin) mounted at /opt/kube-tools on gateway
- │  └─ Add init-kubectl init container that copies kubectl binary from kubectlImage to shared volume
+   │  ├─ Add KUBECONFIG=/etc/kube/config env var to gateway container
+   │  ├─ Add PATH env var prepending /opt/kube-tools to standard PATH
+   │  ├─ Mount claw-kube-config ConfigMap as read-only volume at /etc/kube/
+   │  ├─ Add emptyDir volume (kubectl-bin) mounted at /opt/kube-tools on gateway
+   │  └─ Add init-kubectl init container that copies kubectl binary from kubectlImage to shared volume
    ├─ configureClawDeploymentConfigMode(objects, instance):
- │  ├─ Find init-config init container in claw deployment
- │  └─ Set CLAW_CONFIG_MODE env var to spec.configMode value (default: "merge")
- ├─ stampSecretVersionAnnotation(ctx, objects, instance)
- │  ├─ Fetch user's Secrets to get their ResourceVersions
- │  ├─ Find claw-proxy Deployment in parsed objects
+   │  ├─ Find init-config init container in claw deployment
+   │  └─ Set CLAW_CONFIG_MODE env var to spec.configMode value (default: "merge")
+   ├─ stampSecretVersionAnnotation(ctx, objects, instance)
+   │  ├─ Fetch user's Secrets to get their ResourceVersions
+   │  ├─ Find claw-proxy Deployment in parsed objects
    │  ├─ Add annotations to pod template: claw.sandbox.redhat.com/<credential-name>-secret-version=<ResourceVersion>
    │  └─ This triggers pod restarts when Secret data changes (ResourceVersion updates), not just Secret reference changes
    └─ Return parsed objects
   ↓
-7. injectRouteHostIntoConfigMap(objects, routeHost)
+6. injectRouteHostIntoConfigMap(objects, routeHost)
    ├─ Find claw-config ConfigMap in objects
    ├─ Extract data["operator.json"] string
    ├─ Replace "OPENCLAW_ROUTE_HOST" placeholder with routeHost (https://...)
    ├─ If routeHost is empty (vanilla Kubernetes): use "http://localhost:18789" fallback
    └─ Set modified JSON back into ConfigMap
   ↓
-7b. injectProvidersIntoConfigMap(objects, instance.Spec.Credentials)
+6b. injectProvidersIntoConfigMap(objects, instance.Spec.Credentials)
    ├─ Filter credentials with Provider set
    ├─ For gateway-routed providers: resolveProviderInfo(cred) → upstream + basePath as baseUrl (MITM proxy injects credentials transparently)
    ├─ For Vertex SDK providers (GCP + non-Google, e.g., anthropic): map to "{provider}-vertex" key with real Vertex AI URL, api mapping, and "gcp-vertex-credentials" apiKey
    ├─ Write providers into data["operator.json"]
    └─ Credentials without Provider are MITM-only (no provider entry)
   ↓
-7b2. injectModelCatalogIntoConfigMap(objects, instance)
+6c. injectModelCatalogIntoConfigMap(objects, instance)
    ├─ Iterate credentials with Provider set (same filters as injectProvidersIntoConfigMap)
    ├─ Derive provider key: usesVertexSDK → "{provider}-vertex", else "{provider}"
    ├─ Strip "-vertex" suffix for logical provider name, look up modelCatalog map
@@ -341,30 +339,30 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ Write into data["operator.json"] (agents.defaults section)
    └─ No-op when no credentials have a catalog entry (e.g., openrouter-only)
   ↓
-7c. injectKubernetesSkill(objects, resolvedCreds)
+6d. injectKubernetesSkill(objects, resolvedCreds)
    ├─ Collect contexts from all kubernetes credentials
    ├─ Write data["KUBERNETES.md"] in claw-config ConfigMap with OpenClaw skill frontmatter
    ├─ Init container copies to skills/kubernetes/SKILL.md for auto-discovery
    └─ No-op when no kubernetes credentials present
   ↓
-7d. injectKubePortsIntoNetworkPolicy(objects, resolvedCreds)
+6e. injectKubePortsIntoNetworkPolicy(objects, resolvedCreds)
    ├─ Collect unique non-443 ports from kubernetes credential clusters
    ├─ Append port entries to claw-proxy-egress NetworkPolicy egress[0].ports[]
    └─ No-op when all ports are 443 or no kubernetes credentials present
   ↓
-7e. stampGatewayConfigHash(objects, instanceName)
+6f. stampGatewayConfigHash(objects, instanceName)
    ├─ Hash entire ConfigMap data (operator.json, openclaw.json, etc.)
    ├─ Stamp SHA-256 hash as annotation on gateway pod template
    └─ Triggers gateway pod rollout when ConfigMap content changes (e.g., after operator upgrade)
   ↓
-8. Filter for remaining resources (kind != "Route")
+7. Filter for remaining resources (kind != "Route")
   ↓
-9. Set namespace and owner references on remaining objects
+8. Set namespace and owner references on remaining objects
   ↓
-10. applyResources(ctx, remainingObjects)
+9. applyResources(ctx, remainingObjects)
    └─ Server-side apply each resource (ConfigMap, Deployments, Services, NetworkPolicies)
   ↓
-11. updateStatus(ctx, instance)
+10. updateStatus(ctx, instance)
    ├─ Fetch claw Deployment and check Available condition
    ├─ Fetch claw-proxy Deployment and check Available condition
    ├─ Set Claw Ready condition based on both deployment statuses
@@ -373,7 +371,7 @@ PHASE 3: ConfigMap Injection and Remaining Resources
    ├─ Update LastTransitionTime only if condition status changes
    └─ Update status via status subresource (client.Status().Update)
   ↓
-12. Return success
+11. Return success
 ```
 
 **Route Status Polling:**
@@ -427,7 +425,6 @@ PHASE 3: ConfigMap Injection and Remaining Resources
 - `findClawsReferencingSecret()` — maps Secret events to Claw reconcile requests (for Secret watching)
 
 **Shared constants** (`internal/controller/claw_resource_controller.go`):
-- `ClawInstanceName = "instance"` — only this name is reconciled
 - `ClawConfigMapName = "claw-config"`
 - `ClawPVCName = "claw-home-pvc"`
 - `ClawDeploymentName = "claw"`
@@ -466,7 +463,7 @@ var ManifestsFS embed.FS
 
 The `internal/assets/manifests/` directory contains:
 - **kustomization.yaml** — defines labels and resource list
-- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed, merge.js for init-time deep-merge, AGENTS.md seed, PROXY_SETUP.md for proxy architecture skill, KUBERNETES.md for k8s skill)
+- **configmap.yaml** — OpenClaw configuration (operator.json for operator-managed settings, openclaw.json as user-owned seed, merge.js for init-time deep-merge, AGENTS.md seed, PLATFORM.md for platform overview and integration skill, KUBERNETES.md for k8s skill)
 - **pvc.yaml** — persistent storage (10Gi ReadWriteOnce)
 - **deployment.yaml** — OpenClaw application pods (`init-config` uses the gateway image with Node.js to deep-merge operator config into `openclaw.json`; `wait-for-proxy` init container ensures proxy is ready before gateway starts; PVC subpath mounts at `~/.local`, `~/.cache`, `~/.config` for persistent tool state; `OPENCLAW_PROXY_ACTIVE=1` env var enables native managed proxy support)
 - **service.yaml** — ClusterIP service exposing OpenClaw gateway (port 18789)
