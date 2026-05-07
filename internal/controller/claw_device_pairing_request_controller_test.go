@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -633,6 +634,289 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 		// Should return no error for NotFound (resource was deleted)
 		require.NoError(t, err, "reconcile should not error for NotFound resources")
 		assert.Equal(t, ctrl.Result{}, result, "should not requeue for NotFound resources")
+	})
+
+	t.Run("already-paired CR is skipped", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-already-paired"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+		})
+
+		// Create CR
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "already-paired-001",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app": "claw"},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		// Set DevicePaired condition manually
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		setDevicePairingCondition(fetched, "Ready", metav1.ConditionTrue, "DevicePaired", "Already paired")
+		require.NoError(t, k8sClient.Status().Update(ctx, fetched))
+
+		execCalled := false
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+			ExecFn: func(_ context.Context, _, _, _ string) (string, string, error) {
+				execCalled = true
+				return "", "", nil
+			},
+		}
+
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, ctrl.Result{}, result)
+		assert.False(t, execCalled, "exec should not be called for already-paired CR")
+
+		// Verify condition unchanged
+		updated := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
+		require.Len(t, updated.Status.Conditions, 1)
+		assert.Equal(t, "DevicePaired", updated.Status.Conditions[0].Reason)
+	})
+
+	t.Run("successful exec sets DevicePaired condition", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-exec-success"
+		podName := "test-exec-success-pod"
+		labels := map[string]string{"app": "claw", "instance": "exec-success"}
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+			deleteAndWaitPod(t, namespace, podName)
+		})
+
+		createTestPod(ctx, t, podName, namespace, labels)
+
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "exec-success-001",
+				Selector: metav1.LabelSelector{
+					MatchLabels: labels,
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		var capturedRequestID string
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+			ExecFn: func(_ context.Context, _, _, requestID string) (string, string, error) {
+				capturedRequestID = requestID
+				return `{"status":"approved"}`, "", nil
+			},
+		}
+
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, ctrl.Result{}, result)
+		assert.Equal(t, "exec-success-001", capturedRequestID)
+
+		// Verify DevicePaired condition
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		require.Len(t, fetched.Status.Conditions, 1)
+		assert.Equal(t, "Ready", fetched.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionTrue, fetched.Status.Conditions[0].Status)
+		assert.Equal(t, "DevicePaired", fetched.Status.Conditions[0].Reason)
+		assert.Contains(t, fetched.Status.Conditions[0].Message, podName)
+	})
+
+	t.Run("failed exec sets PairingFailed condition", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-exec-failure"
+		podName := "test-exec-failure-pod"
+		labels := map[string]string{"app": "claw", "instance": "exec-failure"}
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+			deleteAndWaitPod(t, namespace, podName)
+		})
+
+		createTestPod(ctx, t, podName, namespace, labels)
+
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "exec-failure-001",
+				Selector: metav1.LabelSelector{
+					MatchLabels: labels,
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+			ExecFn: func(_ context.Context, _, _, _ string) (string, string, error) {
+				return "", "command not found", fmt.Errorf("exec stream: command terminated with exit code 127")
+			},
+		}
+
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+		})
+
+		require.NoError(t, err, "should return nil error (terminal state, no requeue)")
+		assert.Equal(t, ctrl.Result{}, result)
+
+		// Verify PairingFailed condition
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		require.Len(t, fetched.Status.Conditions, 1)
+		assert.Equal(t, "Ready", fetched.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionFalse, fetched.Status.Conditions[0].Status)
+		assert.Equal(t, "PairingFailed", fetched.Status.Conditions[0].Reason)
+		assert.Contains(t, fetched.Status.Conditions[0].Message, "exit code 127")
+	})
+
+	t.Run("selector with app:claw only matches multiple pods", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-app-claw-only"
+		pod1Name := "test-claw-pod-a"
+		pod2Name := "test-claw-pod-b"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+			deleteAndWaitPod(t, namespace, pod1Name)
+			deleteAndWaitPod(t, namespace, pod2Name)
+		})
+
+		// Two pods share the "app: claw" label but differ on a second label
+		createTestPod(ctx, t, pod1Name, namespace, map[string]string{
+			"app":                              "claw",
+			"claw.sandbox.redhat.com/instance": "alice",
+		})
+		createTestPod(ctx, t, pod2Name, namespace, map[string]string{
+			"app":                              "claw",
+			"claw.sandbox.redhat.com/instance": "bob",
+		})
+
+		// Selector with only "app: claw" — no distinguishing second label
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "app-claw-only-001",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "claw",
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+		}
+
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, ctrl.Result{}, result)
+
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		require.Len(t, fetched.Status.Conditions, 1)
+		assert.Equal(t, "Ready", fetched.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionFalse, fetched.Status.Conditions[0].Status)
+		assert.Equal(t, "MultipleMatchingPods", fetched.Status.Conditions[0].Reason)
+	})
+
+	t.Run("selector with app:claw and instance label targets single pod", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-two-label-selector"
+		targetPodName := "test-target-pod"
+		otherPodName := "test-other-pod"
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+			deleteAndWaitPod(t, namespace, targetPodName)
+			deleteAndWaitPod(t, namespace, otherPodName)
+		})
+
+		createTestPod(ctx, t, targetPodName, namespace, map[string]string{
+			"app":                              "claw",
+			"claw.sandbox.redhat.com/instance": "alice",
+		})
+		createTestPod(ctx, t, otherPodName, namespace, map[string]string{
+			"app":                              "claw",
+			"claw.sandbox.redhat.com/instance": "bob",
+		})
+
+		// Selector with both "app: claw" and the distinguishing instance label
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "two-label-001",
+				Selector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app":                              "claw",
+						"claw.sandbox.redhat.com/instance": "alice",
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+			ExecFn: func(_ context.Context, _, _, _ string) (string, string, error) {
+				return `{"status":"approved"}`, "", nil
+			},
+		}
+
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, ctrl.Result{}, result)
+
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		require.Len(t, fetched.Status.Conditions, 1)
+		assert.Equal(t, "Ready", fetched.Status.Conditions[0].Type)
+		assert.Equal(t, metav1.ConditionTrue, fetched.Status.Conditions[0].Status)
+		assert.Equal(t, "DevicePaired", fetched.Status.Conditions[0].Reason)
+		assert.Contains(t, fetched.Status.Conditions[0].Message, targetPodName)
 	})
 }
 

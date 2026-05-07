@@ -226,6 +226,7 @@ func main() {
 	if err = (&controller.ClawDevicePairingRequestReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Config: mgr.GetConfig(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ClawDevicePairingRequest")
 		os.Exit(1)
