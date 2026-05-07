@@ -43,9 +43,10 @@ type PodExecFunc func(ctx context.Context, podName, namespace, requestID string)
 // ClawDevicePairingRequestReconciler reconciles a ClawDevicePairingRequest object
 type ClawDevicePairingRequestReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Config *rest.Config
-	ExecFn PodExecFunc
+	Scheme    *runtime.Scheme
+	Config    *rest.Config
+	Clientset kubernetes.Interface
+	ExecFn    PodExecFunc
 }
 
 // +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=clawdevicepairingrequests,verbs=get;list;watch;create;update;patch
@@ -185,12 +186,7 @@ func (r *ClawDevicePairingRequestReconciler) execInPod(ctx context.Context, podN
 	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	clientset, err := kubernetes.NewForConfig(r.Config)
-	if err != nil {
-		return "", "", fmt.Errorf("creating clientset: %w", err)
-	}
-
-	execReq := clientset.CoreV1().RESTClient().Post().
+	execReq := r.Clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(podName).
 		Namespace(namespace).

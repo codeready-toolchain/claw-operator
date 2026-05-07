@@ -717,11 +717,13 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
-		var capturedRequestID string
+		var capturedPodName, capturedNamespace, capturedRequestID string
 		reconciler := &ClawDevicePairingRequestReconciler{
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
-			ExecFn: func(_ context.Context, _, _, requestID string) (string, string, error) {
+			ExecFn: func(_ context.Context, pod, ns, requestID string) (string, string, error) {
+				capturedPodName = pod
+				capturedNamespace = ns
 				capturedRequestID = requestID
 				return `{"status":"approved"}`, "", nil
 			},
@@ -733,6 +735,8 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, ctrl.Result{}, result)
+		assert.Equal(t, podName, capturedPodName, "exec should target the matched pod")
+		assert.Equal(t, namespace, capturedNamespace, "exec should use the request namespace")
 		assert.Equal(t, "exec-success-001", capturedRequestID)
 
 		// Verify DevicePaired condition

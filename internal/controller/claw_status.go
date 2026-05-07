@@ -229,7 +229,6 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 	// Set Ready condition
 	setReadyCondition(instance, ready, pending)
 
-
 	// Set DevicePairingConfigured condition — derived from the pending list above to avoid a duplicate API call
 	dpReady := !slices.Contains(pending, getDevicePairingDeploymentName(instance.Name))
 	if dpReady {
