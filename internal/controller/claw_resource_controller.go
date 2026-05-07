@@ -467,7 +467,9 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 
 		// Inject Claw Route host into device-pairing Route and apply it
-		injectRouteHostIntoDevicePairingRoute(objects, routeHost, instance.Name)
+		if err := injectRouteHostIntoDevicePairingRoute(objects, routeHost, instance.Name); err != nil {
+			return ctrl.Result{}, err
+		}
 		if _, err := r.applyRouteByName(ctx, objects, instance, getDevicePairingRouteName(instance.Name)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to apply device-pairing Route: %w", err)
 		}
@@ -805,7 +807,8 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 }
 
 // applyRouteByName applies only the Route with the given name from provided objects.
-// Returns number of routes applied (0 if CRD not registered or route not found).
+// Returns number of routes applied (0 if CRD not registered).
+// Returns an error if objects is non-empty but the named Route is not found.
 func (r *ClawResourceReconciler) applyRouteByName(ctx context.Context, objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, routeName string) (int, error) {
 	if len(objects) == 0 {
 		return 0, nil
@@ -816,6 +819,10 @@ func (r *ClawResourceReconciler) applyRouteByName(ctx context.Context, objects [
 		if obj.GetKind() == RouteKind && obj.GetName() == routeName {
 			routeObjects = append(routeObjects, obj)
 		}
+	}
+
+	if len(routeObjects) == 0 {
+		return 0, fmt.Errorf("expected Route %q missing in rendered manifests", routeName)
 	}
 
 	for _, obj := range routeObjects {
@@ -838,15 +845,19 @@ func isClusterScoped(obj *unstructured.Unstructured) bool {
 
 // injectRouteHostIntoDevicePairingRoute replaces the OPENCLAW_ROUTE_HOST placeholder
 // in the device-pairing Route's .spec.host with the resolved Claw Route host.
-func injectRouteHostIntoDevicePairingRoute(objects []*unstructured.Unstructured, routeHost, instanceName string) {
+// Returns an error if the device-pairing Route is not found in the objects.
+func injectRouteHostIntoDevicePairingRoute(objects []*unstructured.Unstructured, routeHost, instanceName string) error {
 	routeName := getDevicePairingRouteName(instanceName)
 	host := strings.TrimPrefix(routeHost, "https://")
 	for _, obj := range objects {
 		if obj.GetKind() == RouteKind && obj.GetName() == routeName {
-			_ = unstructured.SetNestedField(obj.Object, host, "spec", "host")
-			return
+			if err := unstructured.SetNestedField(obj.Object, host, "spec", "host"); err != nil {
+				return fmt.Errorf("failed to set host on device-pairing Route %q: %w", routeName, err)
+			}
+			return nil
 		}
 	}
+	return fmt.Errorf("device-pairing Route %q not found in rendered manifests", routeName)
 }
 
 // injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator.json with actual Route host.

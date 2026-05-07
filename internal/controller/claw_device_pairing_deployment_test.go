@@ -87,7 +87,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 		path, found, err := unstructured.NestedString(dpRoute.Object, "spec", "path")
 		require.NoError(t, err)
 		assert.True(t, found, ".spec.path should be set")
-		assert.Equal(t, "/integration/device-pairing", path)
+		assert.Equal(t, "/integration/device-pairing/", path)
 	})
 
 	t.Run("device-pairing Route host injection sets spec.host", func(t *testing.T) {
@@ -99,7 +99,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{dpRoute}
-		injectRouteHostIntoDevicePairingRoute(objects, "https://claw.example.com", testInstanceName)
+		require.NoError(t, injectRouteHostIntoDevicePairingRoute(objects, "https://claw.example.com", testInstanceName))
 
 		host, found, err := unstructured.NestedString(dpRoute.Object, "spec", "host")
 		require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 		assert.Equal(t, "claw.example.com", host, "should strip https:// prefix and set bare hostname")
 	})
 
-	t.Run("device-pairing Route host injection is no-op when route not found", func(t *testing.T) {
+	t.Run("device-pairing Route host injection errors when route not found", func(t *testing.T) {
 		otherRoute := &unstructured.Unstructured{}
 		otherRoute.SetKind(RouteKind)
 		otherRoute.SetName("other-route")
@@ -116,7 +116,9 @@ func TestDevicePairingDeployment(t *testing.T) {
 		}
 
 		objects := []*unstructured.Unstructured{otherRoute}
-		injectRouteHostIntoDevicePairingRoute(objects, "https://claw.example.com", testInstanceName)
+		err := injectRouteHostIntoDevicePairingRoute(objects, "https://claw.example.com", testInstanceName)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found in rendered manifests")
 
 		_, found, _ := unstructured.NestedString(otherRoute.Object, "spec", "host")
 		assert.False(t, found, "should not set host on other routes")

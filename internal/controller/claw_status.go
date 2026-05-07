@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -228,11 +229,8 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 	// Set Ready condition
 	setReadyCondition(instance, ready, pending)
 
-	// Set DevicePairingConfigured condition based on device-pairing deployment availability
-	dpReady, err := r.getDeploymentAvailableStatus(ctx, instance.Namespace, getDevicePairingDeploymentName(instance.Name))
-	if err != nil {
-		return fmt.Errorf("failed to check device-pairing deployment readiness: %w", err)
-	}
+	// Set DevicePairingConfigured condition — derived from the pending list above to avoid a duplicate API call
+	dpReady := !slices.Contains(pending, getDevicePairingDeploymentName(instance.Name))
 	if dpReady {
 		setCondition(instance, clawv1alpha1.ConditionTypeDevicePairingConfigured, metav1.ConditionTrue, clawv1alpha1.ConditionReasonConfigured, "Device pairing deployment is available")
 	} else {
