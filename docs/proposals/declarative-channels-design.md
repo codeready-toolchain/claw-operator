@@ -50,12 +50,25 @@ The `CredentialSpec` gets these changes:
 // +optional
 Channel string `json:"channel,omitempty"`
 
-// ChannelConfig is opaque JSON merged into the channel's config block
+// ChannelConfig is opaque JSON deep-merged into the channel's config block
 // in operator.json. Use for channel-specific settings (dmPolicy, allowFrom, etc.).
 // +kubebuilder:pruning:PreserveUnknownFields
 // +optional
 ChannelConfig *runtime.RawExtension `json:"channelConfig,omitempty"`
 ```
+
+**ChannelConfig merge semantics:**
+
+The operator builds a base config block per channel (e.g., `{"enabled": true, "botToken": "placeholder"}`), then applies `channelConfig` on top:
+
+- **Objects:** deep-merge (recursive key-level merge)
+- **Arrays:** replaced wholesale (not concatenated)
+- **Scalars:** overwritten by `channelConfig` value
+
+**Protected keys** — the following keys are operator-managed and must not appear in `channelConfig`. Attempts to set them produce a controller-side validation error (reported via `CredentialsResolved` condition):
+
+- `enabled` — always `true` when the channel is declared; removing a channel means removing the credential from the CR
+- Token/secret placeholder fields (`botToken`, `token`, `appToken`) — these are operator-generated placeholders for proxy injection
 
 **`SecretRef` changes from `*SecretRef` (single pointer) to `[]SecretRefEntry` (array).**
 This is a breaking API change — existing CRs using `secretRef: {name: ..., key: ...}` must migrate to the array syntax. The controller code (`claw_credentials.go`, `claw_proxy.go`) accesses `cred.SecretRef.Name`/`cred.SecretRef.Key` directly and needs refactoring to iterate or index the array.
