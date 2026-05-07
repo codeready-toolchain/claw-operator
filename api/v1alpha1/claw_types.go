@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // CredentialType selects the credential injection mechanism used by the proxy.
@@ -69,8 +70,8 @@ const (
 	ConditionReasonConfigFailed     = "ConfigFailed"
 )
 
-// SecretRef references a specific key in a Secret.
-type SecretRef struct {
+// SecretRefEntry references a specific key in a Secret.
+type SecretRefEntry struct {
 	// Name is the name of the Secret
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -80,6 +81,11 @@ type SecretRef struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Key string `json:"key"`
+
+	// Role distinguishes multiple secrets for the same credential.
+	// Required when multiple secretRef entries are present (e.g., Slack botToken/appToken).
+	// +optional
+	Role string `json:"role,omitempty"`
 }
 
 // APIKeyConfig configures injection of a secret value into a custom header.
@@ -128,27 +134,29 @@ type OAuth2Config struct {
 }
 
 // CredentialSpec defines a single credential entry for proxy injection.
-// +kubebuilder:validation:XValidation:rule="self.type != 'apiKey' || has(self.apiKey) || has(self.provider)",message="apiKey config is required when type is apiKey and provider is not set"
-// +kubebuilder:validation:XValidation:rule="self.type != 'gcp' || has(self.gcp)",message="gcp config is required when type is gcp"
-// +kubebuilder:validation:XValidation:rule="self.type != 'pathToken' || has(self.pathToken)",message="pathToken config is required when type is pathToken"
-// +kubebuilder:validation:XValidation:rule="self.type != 'oauth2' || has(self.oauth2)",message="oauth2 config is required when type is oauth2"
-// +kubebuilder:validation:XValidation:rule="self.type == 'none' || has(self.secretRef)",message="secretRef is required for this credential type"
+// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel)",message="either type or channel must be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.provider) || !has(self.channel)",message="provider and channel are mutually exclusive"
 type CredentialSpec struct {
 	// Name uniquely identifies this credential entry.
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
-	// Type selects the credential injection mechanism
-	Type CredentialType `json:"type"`
-
-	// SecretRef references the Kubernetes Secret holding the credential value.
-	// Not required for type "none" (proxy allowlist, no auth).
+	// Type selects the credential injection mechanism.
+	// Optional when channel is set — the operator infers the type from the channel defaults.
 	// +optional
-	SecretRef *SecretRef `json:"secretRef,omitempty"`
+	Type CredentialType `json:"type,omitempty"`
+
+	// SecretRef references Kubernetes Secrets holding credential values.
+	// For single-secret credentials, use a one-element array.
+	// For multi-secret channels (e.g., Slack), use role to distinguish entries.
+	// Not required for type "none" (proxy allowlist, no auth) or channels that use
+	// non-secret auth (e.g., WhatsApp QR pairing).
+	// +optional
+	SecretRef []SecretRefEntry `json:"secretRef,omitempty"`
 
 	// Domain the proxy matches against the request Host header.
 	// Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot).
-	// Optional for known providers (google, anthropic) — the operator infers the default domain.
+	// Optional for known providers and channels — the operator infers the default domain.
 	// +optional
 	Domain string `json:"domain,omitempty"`
 
@@ -175,9 +183,23 @@ type CredentialSpec struct {
 
 	// Provider maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter").
 	// When set, the controller configures gateway routing and generates the provider entry in openclaw.json.
-	// When omitted, the credential is used for MITM forward proxy only (no provider entry).
+	// Mutually exclusive with channel.
 	// +optional
 	Provider string `json:"provider,omitempty"`
+
+	// Channel declares this credential as a messaging channel integration.
+	// When set, the operator enables the channel in OpenClaw's config and
+	// infers proxy defaults (type, domain, injection config, companion routes).
+	// Known values: telegram, discord, slack, whatsapp.
+	// Mutually exclusive with provider.
+	// +optional
+	Channel string `json:"channel,omitempty"`
+
+	// ChannelConfig is opaque JSON deep-merged into the channel's config block
+	// in operator.json. Use for channel-specific settings (dmPolicy, allowFrom, etc.).
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +optional
+	ChannelConfig *runtime.RawExtension `json:"channelConfig,omitempty"`
 
 	// AllowedPaths restricts which URL paths the proxy permits for this domain.
 	// Each entry is a path prefix (e.g., "/v1/api/"). If empty, all paths are allowed.

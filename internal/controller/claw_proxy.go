@@ -195,6 +195,14 @@ func generateProxyConfig(credentials []resolvedCredential) ([]byte, error) {
 		} else {
 			exact = append(exact, route)
 		}
+
+		for _, companion := range generateCompanionRoutes(cred) {
+			if strings.HasPrefix(companion.Domain, ".") {
+				suffix = append(suffix, companion)
+			} else {
+				exact = append(exact, companion)
+			}
+		}
 	}
 
 	// Stable ordering: exact before suffix, alphabetical within each group.
@@ -316,34 +324,35 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, instance
 
 		for _, rc := range credentials {
 			cred := rc.CredentialSpec
+			ref := primarySecret(cred)
 			switch cred.Type {
 			case clawv1alpha1.CredentialTypeAPIKey, clawv1alpha1.CredentialTypeBearer,
 				clawv1alpha1.CredentialTypePathToken, clawv1alpha1.CredentialTypeOAuth2:
-				if cred.SecretRef == nil {
+				if ref == nil {
 					continue
 				}
 				envVars = append(envVars, map[string]any{
 					"name": credEnvVarName(cred.Name),
 					"valueFrom": map[string]any{
 						"secretKeyRef": map[string]any{
-							"name": cred.SecretRef.Name,
-							"key":  cred.SecretRef.Key,
+							"name": ref.Name,
+							"key":  ref.Key,
 						},
 					},
 				})
 
 			case clawv1alpha1.CredentialTypeGCP:
-				if cred.SecretRef == nil {
+				if ref == nil {
 					continue
 				}
 				volName := "cred-" + cred.Name
 				volumes = append(volumes, map[string]any{
 					"name": volName,
 					"secret": map[string]any{
-						"secretName": cred.SecretRef.Name,
+						"secretName": ref.Name,
 						"items": []any{
 							map[string]any{
-								"key":  cred.SecretRef.Key,
+								"key":  ref.Key,
 								"path": "sa-key.json",
 							},
 						},
@@ -356,17 +365,17 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, instance
 				})
 
 			case clawv1alpha1.CredentialTypeKubernetes:
-				if cred.SecretRef == nil {
+				if ref == nil {
 					continue
 				}
 				volName := "cred-" + cred.Name
 				volumes = append(volumes, map[string]any{
 					"name": volName,
 					"secret": map[string]any{
-						"secretName": cred.SecretRef.Name,
+						"secretName": ref.Name,
 						"items": []any{
 							map[string]any{
-								"key":  cred.SecretRef.Key,
+								"key":  ref.Key,
 								"path": "kubeconfig",
 							},
 						},
@@ -432,17 +441,20 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 ) error {
 	versions := make(map[string]string)
 	for _, cred := range instance.Spec.Credentials {
-		if cred.SecretRef == nil {
-			continue
+		for _, ref := range cred.SecretRef {
+			secret := &corev1.Secret{}
+			if err := r.Get(ctx, client.ObjectKey{
+				Namespace: instance.Namespace,
+				Name:      ref.Name,
+			}, secret); err != nil {
+				return fmt.Errorf("failed to get Secret %q for credential %q: %w", ref.Name, cred.Name, err)
+			}
+			key := cred.Name
+			if ref.Role != "" {
+				key = cred.Name + "-" + ref.Role
+			}
+			versions[key] = secret.ResourceVersion
 		}
-		secret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{
-			Namespace: instance.Namespace,
-			Name:      cred.SecretRef.Name,
-		}, secret); err != nil {
-			return fmt.Errorf("failed to get Secret %q for credential %q: %w", cred.SecretRef.Name, cred.Name, err)
-		}
-		versions[cred.Name] = secret.ResourceVersion
 	}
 
 	if len(versions) == 0 {

@@ -527,7 +527,7 @@ func TestConfigureClawDeploymentForKubernetes(t *testing.T) {
 				CredentialSpec: clawv1alpha1.CredentialSpec{
 					Name:      "k8s",
 					Type:      clawv1alpha1.CredentialTypeKubernetes,
-					SecretRef: &clawv1alpha1.SecretRef{Name: "kube-secret", Key: "config"},
+					SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "kube-secret", Key: "config"}},
 				},
 				KubeConfig: &kubeconfigData{},
 			},

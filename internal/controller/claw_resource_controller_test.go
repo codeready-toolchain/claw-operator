@@ -818,10 +818,10 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 					Name:     "gemini",
 					Type:     clawv1alpha1.CredentialTypeAPIKey,
 					Provider: "google",
-					SecretRef: &clawv1alpha1.SecretRef{
+					SecretRef: []clawv1alpha1.SecretRefEntry{{
 						Name: apiKeySecret,
 						Key:  apiKeySecretKey,
-					},
+					}},
 					Domain: ".googleapis.com",
 					APIKey: &clawv1alpha1.APIKeyConfig{
 						Header: "x-goog-api-key",

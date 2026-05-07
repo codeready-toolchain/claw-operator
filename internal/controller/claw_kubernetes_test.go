@@ -540,7 +540,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 			{
 				Name:      "k8s",
 				Type:      clawv1alpha1.CredentialTypeKubernetes,
-				SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: testKubeSecretName, Key: "config"}},
 			},
 		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
@@ -591,7 +591,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 			{
 				Name:      "k8s",
 				Type:      clawv1alpha1.CredentialTypeKubernetes,
-				SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: testKubeSecretName, Key: "config"}},
 			},
 		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
@@ -640,7 +640,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 			{
 				Name:      "k8s",
 				Type:      clawv1alpha1.CredentialTypeKubernetes,
-				SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: testKubeSecretName, Key: "config"}},
 			},
 		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
@@ -710,7 +710,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 			{
 				Name:      "k8s",
 				Type:      clawv1alpha1.CredentialTypeKubernetes,
-				SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: testKubeSecretName, Key: "config"}},
 			},
 		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
@@ -791,7 +791,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 			{
 				Name:      "k8s",
 				Type:      clawv1alpha1.CredentialTypeKubernetes,
-				SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: testKubeSecretName, Key: "config"}},
 			},
 		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
@@ -843,7 +843,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 			{
 				Name:      "k8s",
 				Type:      clawv1alpha1.CredentialTypeKubernetes,
-				SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: testKubeSecretName, Key: "config"}},
 			},
 		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
@@ -896,7 +896,7 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 			{
 				Name:      "k8s",
 				Type:      clawv1alpha1.CredentialTypeKubernetes,
-				SecretRef: &clawv1alpha1.SecretRef{Name: "bad-kube-secret", Key: "config"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "bad-kube-secret", Key: "config"}},
 			},
 		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
