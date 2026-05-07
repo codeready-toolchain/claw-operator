@@ -282,7 +282,7 @@ The main feature PR. Depends on Phase 1's safety net being merged first.
 8. **Add tests** — Layer 1 unit tests for `injectModelCatalogIntoConfigMap` (10 cases in `claw_configmap_test.go`), new primary-preservation `merge.js` tests (4 cases added to `claw_merge_test.go`), and Layer 3 existing test updates (`TestOpenClawDynamicProviders`, `TestClawConfigMapController`, e2e assertions)
 9. **Update `CLAUDE.md`** — document the new model catalog behavior, the merge.js primary-preserving logic, and the updated ConfigMap keys
 
-### Phase 3: Skill refactor and documentation
+### Phase 3: Skill refactor and documentation - DONE
 
 Skill consolidation (`PROXY_SETUP.md` → `PLATFORM.md`) and provider setup docs. No dependency on Phase 2 ordering, but logically follows it since the new "LLM Providers & Models" section references the dynamic model catalog.
 
