@@ -137,8 +137,6 @@ type OAuth2Config struct {
 // CredentialSpec defines a single credential entry for proxy injection.
 // +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel)",message="either type or channel must be set"
 // +kubebuilder:validation:XValidation:rule="!has(self.provider) || !has(self.channel)",message="provider and channel are mutually exclusive"
-// +kubebuilder:validation:XValidation:rule="!has(self.secretRef) || size(self.secretRef) <= 1 || self.secretRef.all(e, has(e.role))",message="role is required when multiple secretRef entries are present"
-// +kubebuilder:validation:XValidation:rule="!has(self.secretRef) || size(self.secretRef) <= 1 || self.secretRef.all(x, self.secretRef.exists_one(y, x.role == y.role))",message="secretRef roles must be unique"
 type CredentialSpec struct {
 	// Name uniquely identifies this credential entry.
 	// +kubebuilder:validation:MinLength=1
@@ -154,7 +152,6 @@ type CredentialSpec struct {
 	// For multi-secret channels (e.g., Slack), use role to distinguish entries.
 	// Not required for type "none" (proxy allowlist, no auth) or channels that use
 	// non-secret auth (e.g., WhatsApp QR pairing).
-	// +kubebuilder:validation:MaxItems=5
 	// +optional
 	SecretRef []SecretRefEntry `json:"secretRef,omitempty"`
 
@@ -222,7 +219,6 @@ type ClawSpec struct {
 	ConfigMode ConfigMode `json:"configMode,omitempty"`
 
 	// Credentials configures proxy credential injection per domain.
-	// +kubebuilder:validation:MaxItems=20
 	// +optional
 	Credentials []CredentialSpec `json:"credentials,omitempty"`
 }
