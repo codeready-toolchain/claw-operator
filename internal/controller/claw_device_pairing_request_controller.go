@@ -19,6 +19,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -36,6 +37,15 @@ import (
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
+
+// ExecCommandError indicates the exec command ran but failed (e.g., non-zero exit),
+// as opposed to a transport/infrastructure error that should be retried.
+type ExecCommandError struct {
+	Err error
+}
+
+func (e *ExecCommandError) Error() string { return e.Err.Error() }
+func (e *ExecCommandError) Unwrap() error { return e.Err }
 
 // PodExecFunc executes a command in a pod and returns stdout, stderr, and error.
 type PodExecFunc func(ctx context.Context, podName, namespace, requestID string) (stdout string, stderr string, err error)
@@ -78,9 +88,10 @@ func (r *ClawDevicePairingRequestReconciler) Reconcile(ctx context.Context, req 
 		"namespace", instance.Namespace,
 		"requestID", instance.Spec.RequestID)
 
-	// Guard: skip if already paired
+	// Guard: skip if already paired for the current spec generation
 	readyCond := meta.FindStatusCondition(instance.Status.Conditions, "Ready")
-	if readyCond != nil && readyCond.Status == metav1.ConditionTrue && readyCond.Reason == "DevicePaired" {
+	if readyCond != nil && readyCond.Status == metav1.ConditionTrue && readyCond.Reason == "DevicePaired" &&
+		readyCond.ObservedGeneration == instance.Generation {
 		logger.Info("Device pairing already completed, skipping")
 		return ctrl.Result{}, nil
 	}
@@ -153,6 +164,12 @@ func (r *ClawDevicePairingRequestReconciler) Reconcile(ctx context.Context, req 
 				"pod", pod.Name,
 				"requestID", instance.Spec.RequestID,
 				"stderr", stderr)
+
+			var cmdErr *ExecCommandError
+			if !errors.As(execErr, &cmdErr) {
+				return ctrl.Result{}, execErr
+			}
+
 			// Re-fetch to avoid conflict after the Processing status update
 			if fetchErr := r.Get(ctx, req.NamespacedName, instance); fetchErr != nil {
 				return ctrl.Result{}, fetchErr
@@ -211,7 +228,10 @@ func (r *ClawDevicePairingRequestReconciler) execInPod(ctx context.Context, podN
 		Stderr: &stderr,
 	})
 	if err != nil {
-		return stdout.String(), stderr.String(), fmt.Errorf("exec stream: %w", err)
+		if execCtx.Err() != nil {
+			return stdout.String(), stderr.String(), fmt.Errorf("exec stream: %w", execCtx.Err())
+		}
+		return stdout.String(), stderr.String(), &ExecCommandError{Err: fmt.Errorf("exec stream: %w", err)}
 	}
 
 	return stdout.String(), stderr.String(), nil

@@ -33,6 +33,8 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+const execApprovedResponse = `{"status":"approved"}`
+
 func TestClawDevicePairingRequestController(t *testing.T) {
 	t.Run("ClawDevicePairingRequest creation with RequestID field", func(t *testing.T) {
 		ctx := context.Background()
@@ -725,7 +727,7 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 				capturedPodName = pod
 				capturedNamespace = ns
 				capturedRequestID = requestID
-				return `{"status":"approved"}`, "", nil
+				return execApprovedResponse, "", nil
 			},
 		}
 
@@ -780,7 +782,7 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 			ExecFn: func(_ context.Context, _, _, _ string) (string, string, error) {
-				return "", "command not found", fmt.Errorf("exec stream: command terminated with exit code 127")
+				return "", "command not found", &ExecCommandError{Err: fmt.Errorf("exec stream: command terminated with exit code 127")}
 			},
 		}
 
@@ -799,6 +801,124 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 		assert.Equal(t, metav1.ConditionFalse, fetched.Status.Conditions[0].Status)
 		assert.Equal(t, "PairingFailed", fetched.Status.Conditions[0].Reason)
 		assert.Contains(t, fetched.Status.Conditions[0].Message, "exit code 127")
+	})
+
+	t.Run("transport error during exec causes requeue", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-exec-transport-err"
+		podName := "test-exec-transport-pod"
+		labels := map[string]string{"app": "claw", "instance": "exec-transport"}
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+			deleteAndWaitPod(t, namespace, podName)
+		})
+
+		createTestPod(ctx, t, podName, namespace, labels)
+
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "transport-err-001",
+				Selector: metav1.LabelSelector{
+					MatchLabels: labels,
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+			ExecFn: func(_ context.Context, _, _, _ string) (string, string, error) {
+				return "", "", fmt.Errorf("creating SPDY executor: dial tcp: connection refused")
+			},
+		}
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+		})
+
+		require.Error(t, err, "transport error should return error for requeue")
+		assert.Contains(t, err.Error(), "connection refused")
+
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		if len(fetched.Status.Conditions) > 0 {
+			assert.NotEqual(t, "PairingFailed", fetched.Status.Conditions[0].Reason,
+				"transport error should not set terminal PairingFailed")
+		}
+	})
+
+	t.Run("spec update re-triggers reconciliation after DevicePaired", func(t *testing.T) {
+		ctx := context.Background()
+		resourceName := "test-generation-retrigger"
+		podName := "test-generation-pod"
+		labels := map[string]string{"app": "claw", "instance": "gen-retrigger"}
+
+		t.Cleanup(func() {
+			deleteAndWaitClawDevicePairingRequest(t, namespace, resourceName)
+			deleteAndWaitPod(t, namespace, podName)
+		})
+
+		createTestPod(ctx, t, podName, namespace, labels)
+
+		instance := &clawv1alpha1.ClawDevicePairingRequest{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: clawv1alpha1.ClawDevicePairingRequestSpec{
+				RequestID: "gen-retrigger-001",
+				Selector: metav1.LabelSelector{
+					MatchLabels: labels,
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		execCount := 0
+		reconciler := &ClawDevicePairingRequestReconciler{
+			Client: k8sClient,
+			Scheme: scheme.Scheme,
+			ExecFn: func(_ context.Context, _, _, _ string) (string, string, error) {
+				execCount++
+				return execApprovedResponse, "", nil
+			},
+		}
+
+		// First reconcile — should exec and set DevicePaired
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, ctrl.Result{}, result)
+		assert.Equal(t, 1, execCount)
+
+		// Second reconcile — same generation, should skip
+		result, err = reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, ctrl.Result{}, result)
+		assert.Equal(t, 1, execCount, "should skip exec for same generation")
+
+		// Update spec to bump generation
+		fetched := &clawv1alpha1.ClawDevicePairingRequest{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, fetched))
+		fetched.Spec.RequestID = "gen-retrigger-002"
+		require.NoError(t, k8sClient.Update(ctx, fetched))
+
+		// Third reconcile — new generation, should re-exec
+		result, err = reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, ctrl.Result{}, result)
+		assert.Equal(t, 2, execCount, "should re-exec after spec update bumps generation")
 	})
 
 	t.Run("selector with app:claw only matches multiple pods", func(t *testing.T) {
@@ -903,7 +1023,7 @@ func TestClawDevicePairingRequestController(t *testing.T) {
 			Client: k8sClient,
 			Scheme: scheme.Scheme,
 			ExecFn: func(_ context.Context, _, _, _ string) (string, string, error) {
-				return `{"status":"approved"}`, "", nil
+				return execApprovedResponse, "", nil
 			},
 		}
 
