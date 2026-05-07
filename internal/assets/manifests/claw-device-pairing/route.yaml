@@ -1,0 +1,18 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: CLAW_INSTANCE_NAME-device-pairing
+  annotations:
+    haproxy.router.openshift.io/rewrite-target: /
+spec:
+  # host: OPENCLAW_ROUTE_HOST
+  path: /integration/device-pairing/
+  to:
+    kind: Service
+    name: CLAW_INSTANCE_NAME-device-pairing
+    weight: 100
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

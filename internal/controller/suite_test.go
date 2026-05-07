@@ -147,6 +147,9 @@ func deleteAndWaitAllResources(t *testing.T, namespace string, instanceNames ...
 		{&appsv1.Deployment{}, client.ObjectKey{Name: getClawDeploymentName(instanceName), Namespace: namespace}},
 		{&corev1.Service{}, client.ObjectKey{Name: getProxyServiceName(instanceName), Namespace: namespace}},
 		{&appsv1.Deployment{}, client.ObjectKey{Name: getProxyDeploymentName(instanceName), Namespace: namespace}},
+		{&corev1.ServiceAccount{}, client.ObjectKey{Name: getDevicePairingServiceAccountName(instanceName), Namespace: namespace}},
+		{&corev1.Service{}, client.ObjectKey{Name: getDevicePairingServiceName(instanceName), Namespace: namespace}},
+		{&appsv1.Deployment{}, client.ObjectKey{Name: getDevicePairingDeploymentName(instanceName), Namespace: namespace}},
 	}
 
 	for _, r := range resources {
@@ -338,6 +341,31 @@ func createClawReconciler() *ClawResourceReconciler {
 		Client: k8sClient,
 		Scheme: scheme.Scheme,
 	}
+}
+
+// setDeploymentAvailable marks a Deployment as Available=True in its status.
+func setDeploymentAvailable(t *testing.T, ctx context.Context, name, namespace string) {
+	t.Helper()
+	deployment := &appsv1.Deployment{}
+	waitFor(t, timeout, interval, func() bool {
+		return k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployment) == nil
+	}, name+" Deployment should be created")
+
+	deployment.Status.Conditions = []appsv1.DeploymentCondition{
+		{
+			Type:   appsv1.DeploymentAvailable,
+			Status: corev1.ConditionTrue,
+		},
+	}
+	require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update "+name+" deployment status")
+}
+
+// setAllDeploymentsAvailable marks claw, claw-proxy, and claw-device-pairing Deployments as available.
+func setAllDeploymentsAvailable(t *testing.T, ctx context.Context, instanceName, namespace string) { //nolint:unparam
+	t.Helper()
+	setDeploymentAvailable(t, ctx, getClawDeploymentName(instanceName), namespace)
+	setDeploymentAvailable(t, ctx, getProxyDeploymentName(instanceName), namespace)
+	setDeploymentAvailable(t, ctx, getDevicePairingDeploymentName(instanceName), namespace)
 }
 
 // reconcileClaw performs a reconciliation for the given Claw resource.

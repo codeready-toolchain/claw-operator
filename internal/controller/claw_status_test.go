@@ -229,7 +229,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			assert.Equal(t, clawv1alpha1.ConditionReasonProvisioning, condition.Reason, "Ready condition reason")
 		})
 
-		t.Run("should set Ready condition to True when both Deployments are ready", func(t *testing.T) {
+		t.Run("should set Ready condition to True when all Deployments are ready", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -256,33 +256,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			deployment := &appsv1.Deployment{}
-			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
-				return err == nil
-			}, "claw Deployment should be created")
-
-			deployment.Status.Conditions = []appsv1.DeploymentCondition{
-				{
-					Type:   appsv1.DeploymentAvailable,
-					Status: corev1.ConditionTrue,
-				},
-			}
-			require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update deployment status")
-
-			proxyDeployment := &appsv1.Deployment{}
-			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
-				return err == nil
-			}, "claw-proxy Deployment should be created")
-
-			proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
-				{
-					Type:   appsv1.DeploymentAvailable,
-					Status: corev1.ConditionTrue,
-				},
-			}
-			require.NoError(t, k8sClient.Status().Update(ctx, proxyDeployment), "failed to update proxy deployment status")
+			setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
@@ -298,6 +272,64 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NotNil(t, condition, "Ready condition should not be nil")
 			assert.Equal(t, metav1.ConditionTrue, condition.Status, "Ready condition status")
 			assert.Equal(t, clawv1alpha1.ConditionReasonReady, condition.Reason, "Ready condition reason")
+		})
+
+		t.Run("should set DevicePairingConfigured to False after initial reconcile", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			updatedInstance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeDevicePairingConfigured)
+			require.NotNil(t, condition, "DevicePairingConfigured condition should exist")
+			assert.Equal(t, metav1.ConditionFalse, condition.Status)
+			assert.Equal(t, clawv1alpha1.ConditionReasonProvisioning, condition.Reason)
+		})
+
+		t.Run("should set DevicePairingConfigured to True when device-pairing Deployment is available", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			setDeploymentAvailable(t, ctx, getDevicePairingDeploymentName(testInstanceName), namespace)
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			updatedInstance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeDevicePairingConfigured)
+			require.NotNil(t, condition, "DevicePairingConfigured condition should exist")
+			assert.Equal(t, metav1.ConditionTrue, condition.Status)
+			assert.Equal(t, clawv1alpha1.ConditionReasonConfigured, condition.Reason)
+		})
+
+		t.Run("should keep Ready False when claw and proxy are ready but device-pairing is not", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			setDeploymentAvailable(t, ctx, getClawDeploymentName(testInstanceName), namespace)
+			setDeploymentAvailable(t, ctx, getProxyDeploymentName(testInstanceName), namespace)
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			updatedInstance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
+			require.NotNil(t, condition)
+			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Ready should be False when device-pairing is not ready")
+			assert.Equal(t, clawv1alpha1.ConditionReasonProvisioning, condition.Reason)
 		})
 
 		t.Run("should update LastTransitionTime only on status change", func(t *testing.T) {
@@ -342,33 +374,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				return false
 			}, "initial Ready condition should be set")
 
-			deployment := &appsv1.Deployment{}
-			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
-				return err == nil
-			}, "claw Deployment should be created")
-
-			deployment.Status.Conditions = []appsv1.DeploymentCondition{
-				{
-					Type:   appsv1.DeploymentAvailable,
-					Status: corev1.ConditionTrue,
-				},
-			}
-			require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update deployment status")
-
-			proxyDeployment := &appsv1.Deployment{}
-			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
-				return err == nil
-			}, "claw-proxy Deployment should be created")
-
-			proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
-				{
-					Type:   appsv1.DeploymentAvailable,
-					Status: corev1.ConditionTrue,
-				},
-			}
-			require.NoError(t, k8sClient.Status().Update(ctx, proxyDeployment), "failed to update proxy deployment status")
+			setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
@@ -701,33 +707,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				deployment := &appsv1.Deployment{}
-				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
-					return err == nil
-				}, "claw Deployment should be created")
-
-				deployment.Status.Conditions = []appsv1.DeploymentCondition{
-					{
-						Type:   appsv1.DeploymentAvailable,
-						Status: corev1.ConditionTrue,
-					},
-				}
-				require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update deployment status")
-
-				proxyDeployment := &appsv1.Deployment{}
-				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
-					return err == nil
-				}, "claw-proxy Deployment should be created")
-
-				proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
-					{
-						Type:   appsv1.DeploymentAvailable,
-						Status: corev1.ConditionTrue,
-					},
-				}
-				require.NoError(t, k8sClient.Status().Update(ctx, proxyDeployment), "failed to update proxy deployment status")
+				setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 				_, err = reconciler.Reconcile(ctx, ctrl.Request{
 					NamespacedName: client.ObjectKey{
@@ -737,6 +717,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
+				deployment := &appsv1.Deployment{}
 				waitFor(t, timeout, interval, func() bool {
 					err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
 					if err != nil {
@@ -792,33 +773,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				deployment := &appsv1.Deployment{}
-				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
-					return err == nil
-				}, "claw Deployment should be created")
-
-				deployment.Status.Conditions = []appsv1.DeploymentCondition{
-					{
-						Type:   appsv1.DeploymentAvailable,
-						Status: corev1.ConditionTrue,
-					},
-				}
-				require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update deployment status")
-
-				proxyDeployment := &appsv1.Deployment{}
-				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
-					return err == nil
-				}, "claw-proxy Deployment should be created")
-
-				proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
-					{
-						Type:   appsv1.DeploymentAvailable,
-						Status: corev1.ConditionTrue,
-					},
-				}
-				require.NoError(t, k8sClient.Status().Update(ctx, proxyDeployment), "failed to update proxy deployment status")
+				setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 				_, err = reconciler.Reconcile(ctx, ctrl.Request{
 					NamespacedName: client.ObjectKey{
@@ -971,33 +926,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 					return found && host == routeHost
 				}, "Route status should have ingress host")
 
-				deployment := &appsv1.Deployment{}
-				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
-					return err == nil
-				}, "claw Deployment should be created")
-
-				deployment.Status.Conditions = []appsv1.DeploymentCondition{
-					{
-						Type:   appsv1.DeploymentAvailable,
-						Status: corev1.ConditionTrue,
-					},
-				}
-				require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update deployment status")
-
-				proxyDeployment := &appsv1.Deployment{}
-				waitFor(t, timeout, interval, func() bool {
-					err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
-					return err == nil
-				}, "claw-proxy Deployment should be created")
-
-				proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
-					{
-						Type:   appsv1.DeploymentAvailable,
-						Status: corev1.ConditionTrue,
-					},
-				}
-				require.NoError(t, k8sClient.Status().Update(ctx, proxyDeployment), "failed to update proxy deployment status")
+				setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 				_, err = reconciler.Reconcile(ctx, ctrl.Request{
 					NamespacedName: client.ObjectKey{
@@ -1122,33 +1051,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			deployment := &appsv1.Deployment{}
-			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: getClawDeploymentName(testInstanceName), Namespace: namespace}, deployment)
-				return err == nil
-			}, "claw deployment to be created")
-
-			deployment.Status.Conditions = []appsv1.DeploymentCondition{
-				{
-					Type:   appsv1.DeploymentAvailable,
-					Status: corev1.ConditionTrue,
-				},
-			}
-			require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update claw deployment status")
-
-			proxyDeployment := &appsv1.Deployment{}
-			waitFor(t, timeout, interval, func() bool {
-				err := k8sClient.Get(ctx, client.ObjectKey{Name: getProxyDeploymentName(testInstanceName), Namespace: namespace}, proxyDeployment)
-				return err == nil
-			}, "claw-proxy deployment to be created")
-
-			proxyDeployment.Status.Conditions = []appsv1.DeploymentCondition{
-				{
-					Type:   appsv1.DeploymentAvailable,
-					Status: corev1.ConditionTrue,
-				},
-			}
-			require.NoError(t, k8sClient.Status().Update(ctx, proxyDeployment), "failed to update claw-proxy deployment status")
+			setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{

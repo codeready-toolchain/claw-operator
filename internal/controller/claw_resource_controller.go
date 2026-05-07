@@ -71,6 +71,7 @@ const (
 	NetworkPolicyKind         = "NetworkPolicy"
 	ServiceKind               = "Service"
 	PersistentVolumeClaimKind = "PersistentVolumeClaim"
+	ClusterRoleKind           = "ClusterRole"
 )
 
 // sanitizeLabelValue ensures a value conforms to Kubernetes label constraints (max 63 chars,
@@ -351,6 +352,18 @@ func getProxyConfigMapName(instanceName string) string {
 	return instanceName + "-proxy-config"
 }
 
+func getDevicePairingDeploymentName(instanceName string) string {
+	return instanceName + "-device-pairing"
+}
+
+func getDevicePairingServiceName(instanceName string) string {
+	return instanceName + "-device-pairing"
+}
+
+func getDevicePairingServiceAccountName(instanceName string) string {
+	return instanceName + "-device-pairing"
+}
+
 // ClawResourceReconciler reconciles all resources for Claw
 type ClawResourceReconciler struct {
 	client.Client
@@ -368,8 +381,12 @@ type ClawResourceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=route.openshift.io,resources=routes/custom-host,verbs=create;update
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
 
 // Reconcile manages the complete lifecycle of resources for Claw instances
 func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -428,16 +445,17 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to stamp secret version annotations: %w", err)
 	}
 
-	// Apply Route and wait for ingress host to be populated
+	// Apply Claw Route and wait for ingress host to be populated
 	var routeHost string
-	var routeApplied int
-	routeApplied, err = r.applyRouteOnly(ctx, objects, instance)
+	var clawRouteApplied int
+	clawRouteName := getRouteName(instance.Name)
+	clawRouteApplied, err = r.applyRouteByName(ctx, objects, instance, clawRouteName)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to apply Route: %w", err)
+		return ctrl.Result{}, fmt.Errorf("failed to apply Claw Route: %w", err)
 	}
 
 	// Only try to fetch Route URL if Route was actually applied (CRD available)
-	if routeApplied > 0 {
+	if clawRouteApplied > 0 {
 		routeHost, err = r.getRouteURL(ctx, instance)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to get Route URL: %w", err)
@@ -447,46 +465,22 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			logger.Info("Route exists but status not populated, requeuing")
 			return ctrl.Result{Requeue: true, RequeueAfter: 5 * time.Second}, nil
 		}
+
+		// Inject Claw Route host into device-pairing Route and apply it
+		if err := injectRouteHostIntoDevicePairingRoute(objects, routeHost, instance.Name); err != nil {
+			return ctrl.Result{}, err
+		}
+		if _, err := r.applyRouteByName(ctx, objects, instance, getDevicePairingRouteName(instance.Name)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to apply device-pairing Route: %w", err)
+		}
 	} else {
 		// Route CRD not registered - proceed with localhost fallback
 		logger.Info("Route CRD not registered, using localhost fallback for CORS")
 	}
 
 	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
-
-	// Inject Route host into ConfigMap
-	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
-	}
-
-	// Inject LLM providers into ConfigMap based on credentials with Provider set
-	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
-	}
-
-	// Inject model catalog into ConfigMap based on credentials with Provider set
-	if err := injectModelCatalogIntoConfigMap(objects, instance); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject model catalog into ConfigMap: %w", err)
-	}
-
-	// Inject channel config into ConfigMap for credentials with Channel set
-	if err := injectChannelsIntoConfigMap(objects, instance); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject channels into ConfigMap: %w", err)
-	}
-
-	// Inject Kubernetes skill into ConfigMap for OpenClaw skill auto-discovery
-	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes skill: %w", err)
-	}
-
-	// Inject non-443 ports from kubernetes credentials into proxy egress NetworkPolicy
-	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
-	}
-
-	// Stamp gateway config hash to trigger rollout when ConfigMap content changes
-	if err := stampGatewayConfigHash(objects, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to stamp gateway config hash: %w", err)
+	if err := r.enrichConfigAndNetworkPolicy(objects, routeHost, instance, resolvedCreds); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Filter out Route (applied in phase above) and proxy ConfigMap (controller-managed)
@@ -501,8 +495,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		remainingObjects = append(remainingObjects, obj)
 	}
 
-	// Set namespace and owner references
+	// Set namespace and owner references (skip cluster-scoped resources)
 	for _, obj := range remainingObjects {
+		if isClusterScoped(obj) {
+			continue
+		}
 		obj.SetNamespace(instance.Namespace)
 		if err := controllerutil.SetControllerReference(instance, obj, r.Scheme); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to set controller reference: %w", err)
@@ -578,6 +575,38 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 	}
 
 	return resolvedCreds, nil
+}
+
+// enrichConfigAndNetworkPolicy injects route host, providers, models, channels, and
+// Kubernetes skill into the gateway ConfigMap and updates the egress NetworkPolicy.
+func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
+	objects []*unstructured.Unstructured,
+	routeHost string,
+	instance *clawv1alpha1.Claw,
+	resolvedCreds []resolvedCredential,
+) error {
+	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
+		return fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
+	}
+	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
+	}
+	if err := injectModelCatalogIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject model catalog into ConfigMap: %w", err)
+	}
+	if err := injectChannelsIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject channels into ConfigMap: %w", err)
+	}
+	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
+		return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
+	}
+	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
+		return fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
+	}
+	if err := stampGatewayConfigHash(objects, instance.Name); err != nil {
+		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
+	}
+	return nil
 }
 
 // configureDeployments applies deployment overrides (proxy image, pull policy, credentials)
@@ -699,10 +728,22 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 		"manifests/claw-proxy/network-policies.yaml": readEmbeddedFile("manifests/claw-proxy/network-policies.yaml"),
 	}
 
+	// Device pairing component manifests
+	devicePairingManifests := map[string][]byte{
+		"manifests/claw-device-pairing/kustomization.yaml":  readEmbeddedFile("manifests/claw-device-pairing/kustomization.yaml"),
+		"manifests/claw-device-pairing/serviceaccount.yaml": readEmbeddedFile("manifests/claw-device-pairing/serviceaccount.yaml"),
+		"manifests/claw-device-pairing/clusterrole.yaml":    readEmbeddedFile("manifests/claw-device-pairing/clusterrole.yaml"),
+		"manifests/claw-device-pairing/rolebinding.yaml":    readEmbeddedFile("manifests/claw-device-pairing/rolebinding.yaml"),
+		"manifests/claw-device-pairing/deployment.yaml":     readEmbeddedFile("manifests/claw-device-pairing/deployment.yaml"),
+		"manifests/claw-device-pairing/service.yaml":        readEmbeddedFile("manifests/claw-device-pairing/service.yaml"),
+		"manifests/claw-device-pairing/route.yaml":          readEmbeddedFile("manifests/claw-device-pairing/route.yaml"),
+	}
+
 	// Write all files to in-memory filesystem
-	allManifests := make(map[string][]byte, len(clawManifests)+len(proxyManifests))
+	allManifests := make(map[string][]byte, len(clawManifests)+len(proxyManifests)+len(devicePairingManifests))
 	maps.Copy(allManifests, clawManifests)
 	maps.Copy(allManifests, proxyManifests)
+	maps.Copy(allManifests, devicePairingManifests)
 
 	for path, content := range allManifests {
 		replaced := bytes.ReplaceAll(content, []byte("CLAW_INSTANCE_NAME"), []byte(instance.Name))
@@ -723,8 +764,15 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 		return nil, err
 	}
 
-	// Merge both object lists
+	// Build device pairing component
+	devicePairingObjects, err := r.buildKustomizeFromPath(fs, "manifests/claw-device-pairing")
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge all object lists
 	allObjects := append(clawObjects, proxyObjects...)
+	allObjects = append(allObjects, devicePairingObjects...)
 
 	// Inject instance labels into selectors for multi-instance discrimination
 	if err := injectInstanceLabels(allObjects, instance.Name); err != nil {
@@ -758,23 +806,25 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 	return appliedCount, nil
 }
 
-// applyRouteOnly applies only the Route resource from provided objects
-// Returns number of routes applied (0 if CRD not registered)
-func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) (int, error) {
-	// Handle empty objects safely (len() on nil slice returns 0)
+// applyRouteByName applies only the Route with the given name from provided objects.
+// Returns number of routes applied (0 if CRD not registered).
+// Returns an error if objects is non-empty but the named Route is not found.
+func (r *ClawResourceReconciler) applyRouteByName(ctx context.Context, objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, routeName string) (int, error) {
 	if len(objects) == 0 {
 		return 0, nil
 	}
 
-	// Filter for Route only
 	routeObjects := []*unstructured.Unstructured{}
 	for _, obj := range objects {
-		if obj.GetKind() == RouteKind {
+		if obj.GetKind() == RouteKind && obj.GetName() == routeName {
 			routeObjects = append(routeObjects, obj)
 		}
 	}
 
-	// Set namespace and owner references
+	if len(routeObjects) == 0 {
+		return 0, fmt.Errorf("expected Route %q missing in rendered manifests", routeName)
+	}
+
 	for _, obj := range routeObjects {
 		obj.SetNamespace(instance.Namespace)
 		if err := controllerutil.SetControllerReference(instance, obj, r.Scheme); err != nil {
@@ -782,8 +832,32 @@ func (r *ClawResourceReconciler) applyRouteOnly(ctx context.Context, objects []*
 		}
 	}
 
-	// Apply Route and return count
 	return r.applyResources(ctx, routeObjects)
+}
+
+func getDevicePairingRouteName(instanceName string) string {
+	return instanceName + "-device-pairing"
+}
+
+func isClusterScoped(obj *unstructured.Unstructured) bool {
+	return obj.GetKind() == ClusterRoleKind
+}
+
+// injectRouteHostIntoDevicePairingRoute replaces the OPENCLAW_ROUTE_HOST placeholder
+// in the device-pairing Route's .spec.host with the resolved Claw Route host.
+// Returns an error if the device-pairing Route is not found in the objects.
+func injectRouteHostIntoDevicePairingRoute(objects []*unstructured.Unstructured, routeHost, instanceName string) error {
+	routeName := getDevicePairingRouteName(instanceName)
+	host := strings.TrimPrefix(routeHost, "https://")
+	for _, obj := range objects {
+		if obj.GetKind() == RouteKind && obj.GetName() == routeName {
+			if err := unstructured.SetNestedField(obj.Object, host, "spec", "host"); err != nil {
+				return fmt.Errorf("failed to set host on device-pairing Route %q: %w", routeName, err)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("device-pairing Route %q not found in rendered manifests", routeName)
 }
 
 // injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator.json with actual Route host.

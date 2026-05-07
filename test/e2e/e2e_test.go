@@ -59,6 +59,10 @@ const (
 	ingressNetPolName   = clawInstanceName + "-ingress"
 	pvcName             = clawInstanceName + "-home-pvc"
 	proxyServiceName    = clawInstanceName + "-proxy"
+
+	devicePairingDeploymentName = clawInstanceName + "-device-pairing"
+	devicePairingServiceName    = clawInstanceName + "-device-pairing"
+	devicePairingSAName         = clawInstanceName + "-device-pairing"
 )
 
 // clawYAMLWithGemini returns a Claw CR YAML using spec.credentials[] with apiKey type.
@@ -836,6 +840,123 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "failed to get gateway env")
 			assert.Equal(t, "1", logOutput,
 				"OPENCLAW_PROXY_ACTIVE should be set to 1")
+		})
+
+		t.Run("should deploy claw-device-pairing alongside Claw and proxy", func(t *testing.T) {
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value",
+				"-n", userNamespace)
+			_, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create Secret")
+
+			t.Log("applying the Claw CR")
+			cmd = exec.Command("kubectl", "apply", "-f",
+				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for Claw ProxyConfigured condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw ProxyConfigured did not become True within %v", defaultTimeout)
+
+			t.Log("verifying device-pairing ServiceAccount exists")
+			cmd = exec.Command("kubectl", "get", "serviceaccount", devicePairingSAName,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "device-pairing ServiceAccount should exist")
+
+			t.Log("verifying device-pairing Deployment exists")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "deployment", devicePairingDeploymentName,
+						"-n", userNamespace)
+					_, err := utils.Run(t, cmd)
+					return err == nil, nil
+				})
+			require.NoError(t, err, "device-pairing Deployment should exist")
+
+			t.Log("verifying device-pairing Deployment uses the correct image")
+			cmd = exec.Command("kubectl", "get", "deployment", devicePairingDeploymentName,
+				"-o", "jsonpath={.spec.template.spec.containers[0].image}",
+				"-n", userNamespace)
+			image, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "quay.io/xcoulon/claw-device-pairing:latest", image,
+				"device-pairing container should use the correct image")
+
+			t.Log("verifying device-pairing Deployment references its ServiceAccount")
+			cmd = exec.Command("kubectl", "get", "deployment", devicePairingDeploymentName,
+				"-o", "jsonpath={.spec.template.spec.serviceAccountName}",
+				"-n", userNamespace)
+			sa, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, devicePairingSAName, sa,
+				"device-pairing Deployment should reference its own ServiceAccount")
+
+			t.Log("verifying device-pairing Service exists and targets the correct port")
+			cmd = exec.Command("kubectl", "get", "service", devicePairingServiceName,
+				"-o", "jsonpath={.spec.ports[0].targetPort}",
+				"-n", userNamespace)
+			port, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "8080", port, "device-pairing Service should target port 8080")
+
+			t.Log("verifying device-pairing Deployment has app.kubernetes.io/name label")
+			cmd = exec.Command("kubectl", "get", "deployment", devicePairingDeploymentName,
+				"-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/name}",
+				"-n", userNamespace)
+			label, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "claw-device-pairing", label,
+				"device-pairing Deployment should have app.kubernetes.io/name=claw-device-pairing")
+
+			t.Log("verifying device-pairing resources have owner references")
+			cmd = exec.Command("kubectl", "get", "deployment", devicePairingDeploymentName,
+				"-o", "jsonpath={.metadata.ownerReferences[0].kind}",
+				"-n", userNamespace)
+			ownerKind, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "Claw", ownerKind, "device-pairing Deployment should be owned by Claw")
+
+			t.Log("verifying device-pairing Deployment security context")
+			cmd = exec.Command("kubectl", "get", "deployment", devicePairingDeploymentName,
+				"-o", "jsonpath={.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem}",
+				"-n", userNamespace)
+			readOnly, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "true", readOnly, "device-pairing container should have readOnlyRootFilesystem")
+
+			t.Log("verifying DevicePairingConfigured condition")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='DevicePairingConfigured')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "DevicePairingConfigured did not become True within %v", defaultTimeout)
 		})
 
 		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {
