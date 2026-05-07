@@ -41,8 +41,8 @@ spec:
     - name: gemini
       type: apiKey
       secretRef:
-        name: gemini-api-key
-        key: api-key
+        - name: gemini-api-key
+          key: api-key
       provider: google
 EOF
 ```
@@ -74,8 +74,8 @@ spec:
     - name: anthropic
       type: apiKey
       secretRef:
-        name: anthropic-api-key
-        key: api-key
+        - name: anthropic-api-key
+          key: api-key
       provider: anthropic
 EOF
 ```
@@ -107,8 +107,8 @@ spec:
     - name: openai
       type: bearer
       secretRef:
-        name: openai-api-key
-        key: api-key
+        - name: openai-api-key
+          key: api-key
       provider: openai
       domain: "api.openai.com"
 EOF
@@ -141,8 +141,8 @@ spec:
     - name: xai
       type: bearer
       secretRef:
-        name: xai-api-key
-        key: api-key
+        - name: xai-api-key
+          key: api-key
       provider: xai
       domain: "api.x.ai"
 EOF
@@ -207,8 +207,8 @@ spec:
     - name: anthropic-vertex
       type: gcp
       secretRef:
-        name: vertex-sa-key
-        key: sa-key.json
+        - name: vertex-sa-key
+          key: sa-key.json
       gcp:
         project: "YOUR_PROJECT_ID"
         location: "us-east5"
@@ -231,8 +231,8 @@ spec:
     - name: gemini
       type: gcp
       secretRef:
-        name: vertex-sa-key
-        key: sa-key.json
+        - name: vertex-sa-key
+          key: sa-key.json
       gcp:
         project: "YOUR_PROJECT_ID"
         location: "us-central1"
@@ -255,8 +255,8 @@ spec:
     - name: anthropic-vertex
       type: gcp
       secretRef:
-        name: vertex-sa-key
-        key: sa-key.json
+        - name: vertex-sa-key
+          key: sa-key.json
       gcp:
         project: "YOUR_PROJECT_ID"
         location: "us-east5"
@@ -264,8 +264,8 @@ spec:
     - name: gemini
       type: gcp
       secretRef:
-        name: vertex-sa-key
-        key: sa-key.json
+        - name: vertex-sa-key
+          key: sa-key.json
       gcp:
         project: "YOUR_PROJECT_ID"
         location: "us-central1"
@@ -368,8 +368,8 @@ spec:
     - name: k8s-workspace
       type: kubernetes
       secretRef:
-        name: my-kubeconfig
-        key: kubeconfig
+        - name: my-kubeconfig
+          key: kubeconfig
 EOF
 ```
 
@@ -388,8 +388,8 @@ spec:
     - name: k8s-multi
       type: kubernetes
       secretRef:
-        name: multi-cluster-kubeconfig
-        key: kubeconfig
+        - name: multi-cluster-kubeconfig
+          key: kubeconfig
 EOF
 ```
 
@@ -414,14 +414,14 @@ spec:
     - name: gemini
       type: apiKey
       secretRef:
-        name: gemini-api-key
-        key: api-key
+        - name: gemini-api-key
+          key: api-key
       provider: google
     - name: k8s-workspace
       type: kubernetes
       secretRef:
-        name: my-kubeconfig
-        key: kubeconfig
+        - name: my-kubeconfig
+          key: kubeconfig
 EOF
 ```
 
@@ -468,8 +468,8 @@ spec:
     - name: telegram
       type: pathToken
       secretRef:
-        name: telegram-bot-secret
-        key: token
+        - name: telegram-bot-secret
+          key: token
       domain: "api.telegram.org"
       pathToken:
         prefix: "/bot"
@@ -507,8 +507,8 @@ spec:
     - name: discord
       type: apiKey
       secretRef:
-        name: discord-bot-secret
-        key: token
+        - name: discord-bot-secret
+          key: token
       domain: "discord.com"
       apiKey:
         header: Authorization
@@ -554,15 +554,15 @@ spec:
     - name: slack-app
       type: bearer
       secretRef:
-        name: slack-secret
-        key: app-token
+        - name: slack-secret
+          key: app-token
       domain: "slack.com"
       allowedPaths: ["/api/apps.connections.open"]
     - name: slack-bot
       type: bearer
       secretRef:
-        name: slack-secret
-        key: bot-token
+        - name: slack-secret
+          key: bot-token
       domain: "slack.com"
     - name: slack-ws
       type: none
@@ -591,8 +591,8 @@ spec:
     - name: gemini
       type: apiKey
       secretRef:
-        name: gemini-api-key
-        key: api-key
+        - name: gemini-api-key
+          key: api-key
       provider: google
     - name: whatsapp
       type: none

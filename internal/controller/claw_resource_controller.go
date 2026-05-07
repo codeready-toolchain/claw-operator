@@ -469,6 +469,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("failed to inject model catalog into ConfigMap: %w", err)
 	}
 
+	// Inject channel config into ConfigMap for credentials with Channel set
+	if err := injectChannelsIntoConfigMap(objects, instance); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to inject channels into ConfigMap: %w", err)
+	}
+
 	// Inject Kubernetes skill into ConfigMap for OpenClaw skill auto-discovery
 	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to inject Kubernetes skill: %w", err)
@@ -523,6 +528,22 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 	logger := log.FromContext(ctx)
 
 	for i := range instance.Spec.Credentials {
+		if instance.Spec.Credentials[i].Channel != "" {
+			if err := resolveChannelDefaults(&instance.Spec.Credentials[i]); err != nil {
+				logger.Error(err, "Failed to resolve channel defaults")
+				setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse,
+					clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+				setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
+					clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+				if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+					logger.Error(statusErr, "Failed to update status after channel defaults failure")
+				}
+				return nil, err
+			}
+		}
+		if instance.Spec.Credentials[i].Channel != "" {
+			continue
+		}
 		if err := resolveProviderDefaults(&instance.Spec.Credentials[i]); err != nil {
 			logger.Error(err, "Failed to resolve provider defaults")
 			setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionFalse, clawv1alpha1.ConditionReasonValidationFailed, err.Error())
@@ -1177,7 +1198,7 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 	var requests []reconcile.Request
 	for _, instance := range openClawList.Items {
 		for _, cred := range instance.Spec.Credentials {
-			if cred.SecretRef != nil && cred.SecretRef.Name == secret.Name {
+			if referencesSecret(cred, secret.Name) {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: types.NamespacedName{
 						Name:      instance.Name,

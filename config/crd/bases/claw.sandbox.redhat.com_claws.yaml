@@ -88,6 +88,20 @@ spec:
                       required:
                       - header
                       type: object
+                    channel:
+                      description: |-
+                        Channel declares this credential as a messaging channel integration.
+                        When set, the operator enables the channel in OpenClaw's config and
+                        infers proxy defaults (type, domain, injection config, companion routes).
+                        Known values: telegram, discord, slack, whatsapp.
+                        Mutually exclusive with provider.
+                      type: string
+                    channelConfig:
+                      description: |-
+                        ChannelConfig is opaque JSON deep-merged into the channel's config block
+                        in operator.json. Use for channel-specific settings (dmPolicy, allowFrom, etc.).
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     defaultHeaders:
                       additionalProperties:
                         type: string
@@ -99,7 +113,7 @@ spec:
                       description: |-
                         Domain the proxy matches against the request Host header.
                         Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot).
-                        Optional for known providers (google, anthropic) — the operator infers the default domain.
+                        Optional for known providers and channels — the operator infers the default domain.
                       type: string
                     gcp:
                       description: GCP configures GCP service account credential injection.
@@ -159,27 +173,42 @@ spec:
                       description: |-
                         Provider maps this credential to an OpenClaw LLM provider (e.g., "google", "anthropic", "openai", "openrouter").
                         When set, the controller configures gateway routing and generates the provider entry in openclaw.json.
-                        When omitted, the credential is used for MITM forward proxy only (no provider entry).
+                        Mutually exclusive with channel.
                       type: string
                     secretRef:
                       description: |-
-                        SecretRef references the Kubernetes Secret holding the credential value.
-                        Not required for type "none" (proxy allowlist, no auth).
-                      properties:
-                        key:
-                          description: Key is the key in the Secret's data map
-                          minLength: 1
-                          type: string
-                        name:
-                          description: Name is the name of the Secret
-                          minLength: 1
-                          type: string
-                      required:
-                      - key
-                      - name
-                      type: object
+                        SecretRef references Kubernetes Secrets holding credential values.
+                        For single-secret credentials, use a one-element array.
+                        For multi-secret channels (e.g., Slack), use role to distinguish entries.
+                        Not required for type "none" (proxy allowlist, no auth) or channels that use
+                        non-secret auth (e.g., WhatsApp QR pairing).
+                      items:
+                        description: SecretRefEntry references a specific key in a
+                          Secret.
+                        properties:
+                          key:
+                            description: Key is the key in the Secret's data map
+                            minLength: 1
+                            type: string
+                          name:
+                            description: Name is the name of the Secret
+                            minLength: 1
+                            type: string
+                          role:
+                            description: |-
+                              Role distinguishes multiple secrets for the same credential.
+                              Required when multiple secretRef entries are present (e.g., Slack botToken/appToken).
+                            maxLength: 63
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      type: array
                     type:
-                      description: Type selects the credential injection mechanism
+                      description: |-
+                        Type selects the credential injection mechanism.
+                        Optional when channel is set — the operator infers the type from the channel defaults.
                       enum:
                       - apiKey
                       - bearer
@@ -191,20 +220,28 @@ spec:
                       type: string
                   required:
                   - name
-                  - type
                   type: object
                   x-kubernetes-validations:
-                  - message: apiKey config is required when type is apiKey and provider
-                      is not set
+                  - message: either type or channel must be set
+                    rule: has(self.type) || has(self.channel)
+                  - message: provider and channel are mutually exclusive
+                    rule: '!has(self.provider) || !has(self.channel)'
+                  - message: secretRef is required unless type is none or channel
+                      is set
+                    rule: has(self.channel) || self.type == 'none' || has(self.secretRef)
+                  - message: apiKey config is required when type is apiKey without
+                      inferred defaults
                     rule: self.type != 'apiKey' || has(self.apiKey) || has(self.provider)
-                  - message: gcp config is required when type is gcp
-                    rule: self.type != 'gcp' || has(self.gcp)
-                  - message: pathToken config is required when type is pathToken
-                    rule: self.type != 'pathToken' || has(self.pathToken)
-                  - message: oauth2 config is required when type is oauth2
-                    rule: self.type != 'oauth2' || has(self.oauth2)
-                  - message: secretRef is required for this credential type
-                    rule: self.type == 'none' || has(self.secretRef)
+                      || has(self.channel)
+                  - message: gcp config is required when type is gcp without inferred
+                      defaults
+                    rule: self.type != 'gcp' || has(self.gcp) || has(self.channel)
+                  - message: pathToken config is required when type is pathToken without
+                      inferred defaults
+                    rule: self.type != 'pathToken' || has(self.pathToken) || has(self.channel)
+                  - message: oauth2 config is required when type is oauth2 without
+                      inferred defaults
+                    rule: self.type != 'oauth2' || has(self.oauth2) || has(self.channel)
                 type: array
             type: object
           status:

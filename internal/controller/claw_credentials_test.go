@@ -64,7 +64,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			{
 				Name:      "bad",
 				Type:      clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{Name: "no-such-secret", Key: "key"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "no-such-secret", Key: "key"}},
 				Domain:    "api.example.com",
 			},
 		}
@@ -97,7 +97,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			{
 				Name:      "test",
 				Type:      clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{Name: "wrong-key-secret", Key: "api-key"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "wrong-key-secret", Key: "api-key"}},
 				Domain:    "api.example.com",
 			},
 		}
@@ -130,7 +130,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 	})
 
-	t.Run("should reject creation when secretRef is nil for apiKey type via CEL validation", func(t *testing.T) {
+	t.Run("should reject creation via CEL when secretRef is empty for apiKey type", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
@@ -145,11 +145,11 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			},
 		}
 		err := k8sClient.Create(ctx, instance)
-		require.Error(t, err, "admission should reject apiKey without secretRef")
+		require.Error(t, err, "CEL should reject apiKey credential without secretRef")
 		assert.Contains(t, err.Error(), "secretRef is required")
 	})
 
-	t.Run("should reject creation when apiKey config is nil via CEL validation", func(t *testing.T) {
+	t.Run("should reject creation via CEL when apiKey config is nil", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
@@ -159,13 +159,65 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			{
 				Name:      "no-config",
 				Type:      clawv1alpha1.CredentialTypeAPIKey,
-				SecretRef: &clawv1alpha1.SecretRef{Name: "some-secret", Key: "key"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "some-secret", Key: "key"}},
 				Domain:    "api.example.com",
 			},
 		}
 		err := k8sClient.Create(ctx, instance)
-		require.Error(t, err, "admission should reject apiKey without apiKey config")
+		require.Error(t, err, "CEL should reject apiKey credential without apiKey config")
 		assert.Contains(t, err.Error(), "apiKey config is required")
+	})
+
+	t.Run("should reject creation via CEL when neither type nor channel is set", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "bare",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "s", Key: "k"}},
+				Domain:    "api.example.com",
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "admission should reject credential with neither type nor channel")
+		assert.Contains(t, err.Error(), "either type or channel must be set")
+	})
+
+	t.Run("should reject creation via CEL when both provider and channel are set", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "conflict",
+				Channel:  "telegram",
+				Provider: "google",
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "admission should reject credential with both provider and channel")
+		assert.Contains(t, err.Error(), "provider and channel are mutually exclusive")
+	})
+
+	t.Run("should accept creation via CEL when channel is set without type", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:    "tg",
+				Channel: "telegram",
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.NoError(t, err, "admission should accept credential with channel but no type")
 	})
 
 	t.Run("should set CredentialsResolved=False when validation fails", func(t *testing.T) {
@@ -178,7 +230,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			{
 				Name:      "bad",
 				Type:      clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{Name: "missing", Key: "k"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "missing", Key: "k"}},
 				Domain:    "api.example.com",
 			},
 		}
@@ -320,6 +372,83 @@ func TestOpenClawCredentialSecretReference(t *testing.T) {
 		})
 	})
 
+}
+
+func TestMultiSecretCredentialValidation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("should validate all secrets in multi-entry SecretRef", func(t *testing.T) {
+		t.Cleanup(func() {
+			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: "slack-secret", Namespace: namespace})
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		secret := &corev1.Secret{}
+		secret.Name = "slack-secret"
+		secret.Namespace = namespace
+		secret.Data = map[string][]byte{
+			"bot-token": []byte("xoxb-test"),
+			"app-token": []byte("xapp-test"),
+		}
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:   "slack",
+				Type:   clawv1alpha1.CredentialTypeBearer,
+				Domain: "slack.com",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "slack-secret", Key: "bot-token", Role: "botToken"},
+					{Name: "slack-secret", Key: "app-token", Role: "appToken"},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+	})
+
+	t.Run("should fail when one secret in multi-entry SecretRef has wrong key", func(t *testing.T) {
+		t.Cleanup(func() {
+			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: "partial-secret", Namespace: namespace})
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		secret := &corev1.Secret{}
+		secret.Name = "partial-secret"
+		secret.Namespace = namespace
+		secret.Data = map[string][]byte{
+			"bot-token": []byte("xoxb-test"),
+		}
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:   "slack",
+				Type:   clawv1alpha1.CredentialTypeBearer,
+				Domain: "slack.com",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "partial-secret", Key: "bot-token", Role: "botToken"},
+					{Name: "partial-secret", Key: "app-token", Role: "appToken"},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "key \"app-token\" not found")
+	})
 }
 
 func TestFindClawsReferencingSecret(t *testing.T) {

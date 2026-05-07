@@ -262,9 +262,8 @@ func createClawInstance(t *testing.T, ctx context.Context, name, namespace strin
 			Name:     "gemini",
 			Type:     clawv1alpha1.CredentialTypeAPIKey,
 			Provider: "google",
-			SecretRef: &clawv1alpha1.SecretRef{
-				Name: aiModelSecret,
-				Key:  aiModelSecretKey,
+			SecretRef: []clawv1alpha1.SecretRefEntry{
+				{Name: aiModelSecret, Key: aiModelSecretKey},
 			},
 			Domain: ".googleapis.com",
 			APIKey: &clawv1alpha1.APIKeyConfig{
@@ -296,9 +295,8 @@ func testCredentials() []clawv1alpha1.CredentialSpec {
 			Name:     "gemini",
 			Type:     clawv1alpha1.CredentialTypeAPIKey,
 			Provider: "google",
-			SecretRef: &clawv1alpha1.SecretRef{
-				Name: aiModelSecret,
-				Key:  aiModelSecretKey,
+			SecretRef: []clawv1alpha1.SecretRefEntry{
+				{Name: aiModelSecret, Key: aiModelSecretKey},
 			},
 			Domain: ".googleapis.com",
 			APIKey: &clawv1alpha1.APIKeyConfig{
@@ -314,9 +312,8 @@ func testCredentialsMITMOnly() []clawv1alpha1.CredentialSpec {
 		{
 			Name: "gemini",
 			Type: clawv1alpha1.CredentialTypeAPIKey,
-			SecretRef: &clawv1alpha1.SecretRef{
-				Name: aiModelSecret,
-				Key:  aiModelSecretKey,
+			SecretRef: []clawv1alpha1.SecretRefEntry{
+				{Name: aiModelSecret, Key: aiModelSecretKey},
 			},
 			Domain: ".googleapis.com",
 			APIKey: &clawv1alpha1.APIKeyConfig{

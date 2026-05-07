@@ -83,8 +83,8 @@ spec:
     - name: gemini
       type: apiKey
       secretRef:
-        name: gemini-api-key
-        key: api-key
+        - name: gemini-api-key
+          key: api-key
       provider: google
 EOF
 ```

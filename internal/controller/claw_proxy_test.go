@@ -165,10 +165,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 				Name:     "gemini",
 				Type:     clawv1alpha1.CredentialTypeAPIKey,
 				Provider: "google",
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "secret",
 					Key:  "key",
-				},
+				}},
 				Domain: "generativelanguage.googleapis.com",
 				APIKey: &clawv1alpha1.APIKeyConfig{
 					Header: "x-goog-api-key",
@@ -194,10 +194,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 			{
 				Name: "telegram",
 				Type: clawv1alpha1.CredentialTypeAPIKey,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "secret",
 					Key:  "key",
-				},
+				}},
 				Domain: "api.telegram.org",
 				APIKey: &clawv1alpha1.APIKeyConfig{
 					Header: "x-api-key",
@@ -220,10 +220,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 			{
 				Name: "openai",
 				Type: clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "secret",
 					Key:  "key",
-				},
+				}},
 				Domain: "api.openai.com",
 				DefaultHeaders: map[string]string{
 					"OpenAI-Organization": "org-123",
@@ -248,10 +248,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 				Name:     "vertex",
 				Type:     clawv1alpha1.CredentialTypeGCP,
 				Provider: "google",
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "gcp-secret",
 					Key:  "sa.json",
-				},
+				}},
 				Domain: ".googleapis.com",
 				GCP: &clawv1alpha1.GCPConfig{
 					Project:  "my-project",
@@ -278,17 +278,17 @@ func TestGenerateProxyConfig(t *testing.T) {
 			{
 				Name: "suffix",
 				Type: clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "s", Key: "k",
-				},
+				}},
 				Domain: ".example.com",
 			},
 			{
 				Name: "exact",
 				Type: clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "s", Key: "k",
-				},
+				}},
 				Domain: "api.example.com",
 			},
 		}
@@ -338,10 +338,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 			{
 				Name: "telegram",
 				Type: clawv1alpha1.CredentialTypePathToken,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "telegram-secret",
 					Key:  "token",
-				},
+				}},
 				Domain: "api.telegram.org",
 				PathToken: &clawv1alpha1.PathTokenConfig{
 					Prefix: "/bot",
@@ -365,10 +365,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 			{
 				Name: "discord",
 				Type: clawv1alpha1.CredentialTypeAPIKey,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "discord-bot-secret",
 					Key:  "token",
-				},
+				}},
 				Domain: "discord.com",
 				APIKey: &clawv1alpha1.APIKeyConfig{
 					Header:      "Authorization",
@@ -394,10 +394,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 			{
 				Name: "myservice",
 				Type: clawv1alpha1.CredentialTypeOAuth2,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "oauth-secret",
 					Key:  "client-secret",
-				},
+				}},
 				Domain: "api.myservice.com",
 				OAuth2: &clawv1alpha1.OAuth2Config{
 					ClientID: "my-client-id",
@@ -430,9 +430,9 @@ func TestGenerateProxyConfig(t *testing.T) {
 			{
 				Name: "keep-me",
 				Type: clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "s", Key: "k",
-				},
+				}},
 				Domain: "api.example.com",
 			},
 		}
@@ -452,10 +452,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 				Name:     "telegram",
 				Type:     clawv1alpha1.CredentialTypePathToken,
 				Provider: "custom",
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "telegram-secret",
 					Key:  "token",
-				},
+				}},
 				Domain: "api.telegram.org",
 				PathToken: &clawv1alpha1.PathTokenConfig{
 					Prefix: "/bot",
@@ -479,10 +479,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 				Name:     "claude",
 				Type:     clawv1alpha1.CredentialTypeBearer,
 				Provider: "anthropic",
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "anthropic-secret",
 					Key:  "api-key",
-				},
+				}},
 				Domain: "api.anthropic.com",
 				DefaultHeaders: map[string]string{
 					"anthropic-version": "2023-06-01",
@@ -508,10 +508,10 @@ func TestGenerateProxyConfig(t *testing.T) {
 				Name:     "myservice",
 				Type:     clawv1alpha1.CredentialTypeOAuth2,
 				Provider: "myservice",
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "oauth-secret",
 					Key:  "client-secret",
-				},
+				}},
 				Domain: "api.myservice.com",
 				OAuth2: &clawv1alpha1.OAuth2Config{
 					ClientID: "my-client-id",
@@ -536,20 +536,20 @@ func TestGenerateProxyConfig(t *testing.T) {
 			{
 				Name: "slack-app",
 				Type: clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "slack-secret",
 					Key:  "app-token",
-				},
+				}},
 				Domain:       "slack.com",
 				AllowedPaths: []string{"/api/apps.connections.open"},
 			},
 			{
 				Name: "slack-bot",
 				Type: clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "slack-secret",
 					Key:  "bot-token",
-				},
+				}},
 				Domain: "slack.com",
 			},
 			{
@@ -680,10 +680,10 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 			{
 				Name: "openrouter",
 				Type: clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "or-secret",
 					Key:  "api-key",
-				},
+				}},
 				Domain:   "openrouter.ai",
 				Provider: "openrouter",
 			},
@@ -854,10 +854,10 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 				Name:     "anthropic-vertex",
 				Type:     clawv1alpha1.CredentialTypeGCP,
 				Provider: "anthropic",
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "vertex-sa",
 					Key:  "sa.json",
-				},
+				}},
 				Domain: ".googleapis.com",
 				GCP: &clawv1alpha1.GCPConfig{
 					Project:  "my-project",
@@ -883,10 +883,10 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 				Name:     "gemini-vertex",
 				Type:     clawv1alpha1.CredentialTypeGCP,
 				Provider: "google",
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "gcp-secret",
 					Key:  "sa.json",
-				},
+				}},
 				Domain: ".googleapis.com",
 				GCP: &clawv1alpha1.GCPConfig{
 					Project:  "my-project",
@@ -897,10 +897,10 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 				Name:     "anthropic-vertex",
 				Type:     clawv1alpha1.CredentialTypeGCP,
 				Provider: "anthropic",
-				SecretRef: &clawv1alpha1.SecretRef{
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
 					Name: "vertex-sa",
 					Key:  "sa.json",
-				},
+				}},
 				Domain: ".googleapis.com",
 				GCP: &clawv1alpha1.GCPConfig{
 					Project:  "my-project",
@@ -980,7 +980,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 			{
 				Name:      "vertex",
 				Type:      clawv1alpha1.CredentialTypeGCP,
-				SecretRef: &clawv1alpha1.SecretRef{Name: "gcp-sa", Key: "sa.json"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "gcp-sa", Key: "sa.json"}},
 				Domain:    ".googleapis.com",
 				GCP:       &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
 			},
@@ -1041,14 +1041,14 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 			{
 				Name:      "gemini",
 				Type:      clawv1alpha1.CredentialTypeAPIKey,
-				SecretRef: &clawv1alpha1.SecretRef{Name: "s1", Key: "k1"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "s1", Key: "k1"}},
 				Domain:    ".googleapis.com",
 				APIKey:    &clawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"},
 			},
 			{
 				Name:      "openai",
 				Type:      clawv1alpha1.CredentialTypeBearer,
-				SecretRef: &clawv1alpha1.SecretRef{Name: "s2", Key: "k2"},
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "s2", Key: "k2"}},
 				Domain:    "api.openai.com",
 			},
 		}
@@ -1073,7 +1073,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 				CredentialSpec: clawv1alpha1.CredentialSpec{
 					Name:      "k8s",
 					Type:      clawv1alpha1.CredentialTypeKubernetes,
-					SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+					SecretRef: []clawv1alpha1.SecretRefEntry{{Name: testKubeSecretName, Key: "config"}},
 				},
 			},
 		}
@@ -1205,7 +1205,7 @@ func TestGenerateProxyConfigKubernetes(t *testing.T) {
 				CredentialSpec: clawv1alpha1.CredentialSpec{
 					Name:      "k8s",
 					Type:      clawv1alpha1.CredentialTypeKubernetes,
-					SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+					SecretRef: []clawv1alpha1.SecretRefEntry{{Name: testKubeSecretName, Key: "config"}},
 				},
 				KubeConfig: &kubeconfigData{
 					Clusters: []kubeconfigCluster{
@@ -1256,7 +1256,7 @@ func TestGenerateProxyConfigKubernetes(t *testing.T) {
 				CredentialSpec: clawv1alpha1.CredentialSpec{
 					Name:      "k8s",
 					Type:      clawv1alpha1.CredentialTypeKubernetes,
-					SecretRef: &clawv1alpha1.SecretRef{Name: testKubeSecretName, Key: "config"},
+					SecretRef: []clawv1alpha1.SecretRefEntry{{Name: testKubeSecretName, Key: "config"}},
 				},
 				KubeConfig: &kubeconfigData{
 					Clusters: []kubeconfigCluster{

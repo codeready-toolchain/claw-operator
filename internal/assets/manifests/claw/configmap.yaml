@@ -341,8 +341,8 @@ data:
         - name: telegram
           type: pathToken
           secretRef:
-            name: telegram-bot-secret
-            key: token
+            - name: telegram-bot-secret
+              key: token
           domain: "api.telegram.org"
           pathToken:
             prefix: "/bot"
@@ -371,8 +371,8 @@ data:
         - name: discord
           type: apiKey
           secretRef:
-            name: discord-bot-secret
-            key: token
+            - name: discord-bot-secret
+              key: token
           domain: "discord.com"
           apiKey:
             header: Authorization
@@ -408,15 +408,15 @@ data:
         - name: slack-app
           type: bearer
           secretRef:
-            name: slack-secret
-            key: app-token
+            - name: slack-secret
+              key: app-token
           domain: "slack.com"
           allowedPaths: ["/api/apps.connections.open"]
         - name: slack-bot
           type: bearer
           secretRef:
-            name: slack-secret
-            key: bot-token
+            - name: slack-secret
+              key: bot-token
           domain: "slack.com"
         - name: slack-ws
           type: none

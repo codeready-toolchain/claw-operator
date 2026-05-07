@@ -72,8 +72,8 @@ spec:
     - name: gemini
       type: apiKey
       secretRef:
-        name: %s
-        key: %s
+        - name: %s
+          key: %s
       domain: ".googleapis.com"
       apiKey:
         header: x-goog-api-key
@@ -953,8 +953,8 @@ spec:
     - name: k8s-test
       type: kubernetes
       secretRef:
-        name: %s
-        key: kubeconfig
+        - name: %s
+          key: kubeconfig
 `, kubeSecretNm)
 			crFile := filepath.Join("/tmp", "claw-e2e-kube.yaml")
 			err = os.WriteFile(crFile, []byte(clawYAML), os.FileMode(0o644))

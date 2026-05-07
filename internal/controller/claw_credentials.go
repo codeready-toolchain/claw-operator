@@ -65,6 +65,52 @@ type resolvedCredential struct {
 	KubeConfig *kubeconfigData
 }
 
+// primarySecret returns the first SecretRefEntry, or nil if the slice is empty.
+// Use for credentials that have a single secret (all types except multi-secret channels).
+func primarySecret(cred clawv1alpha1.CredentialSpec) *clawv1alpha1.SecretRefEntry {
+	if len(cred.SecretRef) == 0 {
+		return nil
+	}
+	return &cred.SecretRef[0]
+}
+
+// secretForRole returns the SecretRefEntry matching the given role, or nil if not found.
+// Use for multi-secret channels (e.g., Slack with botToken/appToken roles).
+func secretForRole(cred clawv1alpha1.CredentialSpec, role string) *clawv1alpha1.SecretRefEntry {
+	for i := range cred.SecretRef {
+		if cred.SecretRef[i].Role == role {
+			return &cred.SecretRef[i]
+		}
+	}
+	return nil
+}
+
+// proxySecretForCredential returns the SecretRefEntry that the MITM proxy uses
+// for credential injection. For multi-secret channels (e.g., Slack botToken/appToken),
+// it matches the channel's primary SecretRole rather than blindly picking SecretRef[0].
+func proxySecretForCredential(cred clawv1alpha1.CredentialSpec) *clawv1alpha1.SecretRefEntry {
+	if cred.Channel != "" && len(cred.SecretRef) > 1 {
+		if defaults, ok := knownChannels[cred.Channel]; ok && len(defaults.SecretRoles) > 0 {
+			if role := defaults.SecretRoles[0].Role; role != "" {
+				if ref := secretForRole(cred, role); ref != nil {
+					return ref
+				}
+			}
+		}
+	}
+	return primarySecret(cred)
+}
+
+// referencesSecret returns true if any SecretRefEntry in the credential references the given secret name.
+func referencesSecret(cred clawv1alpha1.CredentialSpec, secretName string) bool {
+	for _, ref := range cred.SecretRef {
+		if ref.Name == secretName {
+			return true
+		}
+	}
+	return false
+}
+
 // generateGatewayToken generates a cryptographically secure random token
 // using crypto/rand. Returns a 64-character hex string (32 random bytes).
 func generateGatewayToken() (string, error) {
@@ -168,32 +214,41 @@ func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instanc
 
 		// Validate SecretRef exists for types that require it
 		if cred.Type != clawv1alpha1.CredentialTypeNone {
-			if cred.SecretRef == nil {
+			if len(cred.SecretRef) == 0 {
 				errs = append(errs, fmt.Errorf("credential %q (type %s): secretRef is required", cred.Name, cred.Type))
 				continue
 			}
-			secret := &corev1.Secret{}
-			if err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: cred.SecretRef.Name}, secret); err != nil {
-				if apierrors.IsNotFound(err) {
-					errs = append(errs, fmt.Errorf("credential %q: Secret %q not found", cred.Name, cred.SecretRef.Name))
-				} else {
-					errs = append(errs, fmt.Errorf("credential %q: failed to get Secret %q: %w", cred.Name, cred.SecretRef.Name, err))
-				}
-				continue
-			}
-			data, ok := secret.Data[cred.SecretRef.Key]
-			if !ok {
-				errs = append(errs, fmt.Errorf("credential %q: key %q not found in Secret %q", cred.Name, cred.SecretRef.Key, cred.SecretRef.Name))
-				continue
-			}
-
-			if cred.Type == clawv1alpha1.CredentialTypeKubernetes {
-				kd, err := parseAndValidateKubeconfig(data)
-				if err != nil {
-					errs = append(errs, fmt.Errorf("credential %q: %w", cred.Name, err))
+			var credFailed bool
+			for _, ref := range cred.SecretRef {
+				secret := &corev1.Secret{}
+				if err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: ref.Name}, secret); err != nil {
+					if apierrors.IsNotFound(err) {
+						errs = append(errs, fmt.Errorf("credential %q: Secret %q not found", cred.Name, ref.Name))
+					} else {
+						errs = append(errs, fmt.Errorf("credential %q: failed to get Secret %q: %w", cred.Name, ref.Name, err))
+					}
+					credFailed = true
 					continue
 				}
-				rc.KubeConfig = kd
+				data, ok := secret.Data[ref.Key]
+				if !ok {
+					errs = append(errs, fmt.Errorf("credential %q: key %q not found in Secret %q", cred.Name, ref.Key, ref.Name))
+					credFailed = true
+					continue
+				}
+
+				if cred.Type == clawv1alpha1.CredentialTypeKubernetes {
+					kd, err := parseAndValidateKubeconfig(data)
+					if err != nil {
+						errs = append(errs, fmt.Errorf("credential %q: %w", cred.Name, err))
+						credFailed = true
+						continue
+					}
+					rc.KubeConfig = kd
+				}
+			}
+			if credFailed {
+				continue
 			}
 		}
 
