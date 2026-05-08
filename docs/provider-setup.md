@@ -613,3 +613,44 @@ You can override any inferred field if needed (e.g., routing through a corporate
 ```
 
 The `channel` field still enables declarative channel config injection into `operator.json` — only the proxy routing is overridden. You can override `type`, `domain`, and type-specific config (`apiKey`, `pathToken`) independently.
+
+## External Services
+
+### GitHub REST API
+
+Gives OpenClaw access to GitHub's REST API for working with issues, pull requests, code search, and repositories. The proxy injects a Personal Access Token as a bearer credential — the real token never reaches the gateway pod.
+
+> **Note:** The pre-allowed `github.com` domain covers git HTTPS clones only (for npm dependencies). `api.github.com` is a separate host and requires an explicit credential entry.
+
+**1. Create a Personal Access Token** at [github.com/settings/tokens](https://github.com/settings/tokens). A fine-grained token scoped to specific repositories is recommended over a classic token.
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic github-pat-secret \
+  --from-literal=token=YOUR_GITHUB_PAT \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: github
+      type: bearer
+      domain: api.github.com
+      secretRef:
+        - name: github-pat-secret
+          key: token
+EOF
+```
+
+The proxy intercepts requests to `api.github.com` and injects `Authorization: Bearer <real PAT>`. Skills that use `curl` with the GitHub REST API (like the built-in `gh-issues` skill) work through the proxy — they use a placeholder token that the proxy replaces transparently.
+
+> **`gh` CLI vs curl:** The `gh` CLI manages its own credentials via `gh auth login` (interactive OAuth). It doesn't use the `Authorization` header in the same way as `curl`-based skills, so proxy-based credential injection is less reliable with `gh`. For best results, use skills that call the GitHub REST API with `curl` directly.
