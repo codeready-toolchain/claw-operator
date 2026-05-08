@@ -356,6 +356,7 @@ func TestInjectChannelsIntoConfigMap(t *testing.T) {
 		assert.Equal(t, true, tg["enabled"])
 		assert.Equal(t, "placeholder", tg["botToken"])
 		assert.Equal(t, "open", tg["dmPolicy"])
+		assert.Equal(t, []any{"*"}, tg["allowFrom"])
 
 		plugins, ok := operatorJSON["plugins"].(map[string]any)
 		require.True(t, ok)
@@ -677,6 +678,7 @@ func TestChannelCredentialReconciliation(t *testing.T) {
 		assert.Equal(t, true, tg["enabled"])
 		assert.Equal(t, "placeholder", tg["botToken"])
 		assert.Equal(t, "open", tg["dmPolicy"], "operator should set open dmPolicy for Telegram")
+		assert.Equal(t, []any{"*"}, tg["allowFrom"], "operator should set wildcard allowFrom for Telegram")
 
 		proxyCM := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {
