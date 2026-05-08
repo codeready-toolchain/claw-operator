@@ -477,7 +477,9 @@ EOF
 
 The operator infers `type: pathToken`, `domain: api.telegram.org`, and `pathToken.prefix: /bot`. The proxy intercepts requests like `/botplaceholder/sendMessage` and forwards them as `/bot<REAL_TOKEN>/sendMessage`. The real token never reaches the gateway pod.
 
-To customize channel behavior (e.g., restrict who can DM the bot), use `channelConfig`:
+By default, the operator sets `dmPolicy: "open"` so anyone who knows the bot's username can message it. This means Telegram works immediately after setup — no pairing approval needed.
+
+To restrict who can DM the bot, override with `channelConfig`:
 
 ```yaml
     - name: telegram
@@ -487,8 +489,10 @@ To customize channel behavior (e.g., restrict who can DM the bot), use `channelC
           key: token
       channelConfig:
         dmPolicy: allowlist
-        allowFrom: [12345]
+        allowFrom: [12345, 67890]
 ```
+
+Valid `dmPolicy` values: `open` (default — anyone can message), `allowlist` (only listed user IDs), `pairing` (manual approval via CLI), `disabled` (no DMs).
 
 ### Discord
 

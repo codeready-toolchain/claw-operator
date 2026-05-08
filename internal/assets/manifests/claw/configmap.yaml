@@ -340,12 +340,16 @@ data:
     **Step 4.** Tell the user to scan the QR code with their phone
     (WhatsApp → Linked Devices).
 
-    ### Channel customization (channelConfig)
+    ### Telegram DM access policy
 
-    Users can pass extra settings to operator-managed channels via `channelConfig`
-    on the credential entry. These are deep-merged into the channel's config block:
+    By default, the operator sets `dmPolicy: "open"` with `allowFrom: ["*"]` for
+    Telegram, meaning **anyone** who knows the bot username can message it. This is
+    the simplest setup since each Claw instance is a personal assistant.
+
+    To restrict access, the user can override via `channelConfig`:
 
     ```yaml
+    # Allow only specific Telegram user IDs
     - name: telegram
       channel: telegram
       secretRef:
@@ -353,8 +357,24 @@ data:
           key: token
       channelConfig:
         dmPolicy: allowlist
-        allowFrom: [12345]
+        allowFrom: [12345, 67890]
     ```
+
+    Valid `dmPolicy` values:
+    - `open` (operator default) — allow anyone (requires `allowFrom: ["*"]`)
+    - `allowlist` — only Telegram user IDs listed in `allowFrom` can chat
+    - `pairing` — unknown users get a pairing code; requires manual approval
+      via `openclaw pairing approve telegram <CODE>` in the gateway pod
+    - `disabled` — all DMs blocked
+
+    Do NOT tell users to run `openclaw pairing approve` commands. If they need
+    DM restrictions, advise them to set `dmPolicy: "allowlist"` with specific
+    Telegram user IDs in the Claw CR instead.
+
+    ### Channel customization (channelConfig)
+
+    Users can pass extra settings to operator-managed channels via `channelConfig`
+    on the credential entry. These are deep-merged into the channel's config block.
 
     Protected keys (`enabled`, `botToken`, `token`, `appToken`) cannot be set via
     `channelConfig` — they are operator-managed.

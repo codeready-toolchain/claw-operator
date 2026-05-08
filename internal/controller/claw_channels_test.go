@@ -197,12 +197,17 @@ func TestGenerateCompanionRoutes(t *testing.T) {
 }
 
 func TestBuildChannelConfig(t *testing.T) {
-	t.Run("telegram builds base config with enabled and botToken", func(t *testing.T) {
+	t.Run("telegram builds base config with enabled, botToken, and open dmPolicy", func(t *testing.T) {
 		cred := clawv1alpha1.CredentialSpec{Name: "tg", Channel: "telegram"}
 		config, err := buildChannelConfig(cred)
 		require.NoError(t, err)
 		assert.Equal(t, true, config["enabled"])
 		assert.Equal(t, "placeholder", config["botToken"])
+		assert.Equal(t, "open", config["dmPolicy"])
+		allowFrom, ok := config["allowFrom"].([]any)
+		require.True(t, ok, "allowFrom should be a slice")
+		require.Len(t, allowFrom, 1)
+		assert.Equal(t, "*", allowFrom[0])
 	})
 
 	t.Run("discord builds base config with enabled and botToken", func(t *testing.T) {
@@ -230,7 +235,7 @@ func TestBuildChannelConfig(t *testing.T) {
 		assert.Len(t, config, 1)
 	})
 
-	t.Run("channelConfig is deep-merged into base config", func(t *testing.T) {
+	t.Run("channelConfig overrides operator dmPolicy default", func(t *testing.T) {
 		cred := clawv1alpha1.CredentialSpec{
 			Name:    "tg",
 			Channel: "telegram",
@@ -245,7 +250,8 @@ func TestBuildChannelConfig(t *testing.T) {
 		assert.Equal(t, "allowlist", config["dmPolicy"])
 		allowFrom, ok := config["allowFrom"].([]any)
 		require.True(t, ok)
-		assert.Len(t, allowFrom, 1)
+		require.Len(t, allowFrom, 1)
+		assert.Equal(t, float64(12345), allowFrom[0])
 	})
 
 	t.Run("protected key enabled is rejected", func(t *testing.T) {
@@ -349,6 +355,7 @@ func TestInjectChannelsIntoConfigMap(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, true, tg["enabled"])
 		assert.Equal(t, "placeholder", tg["botToken"])
+		assert.Equal(t, "open", tg["dmPolicy"])
 
 		plugins, ok := operatorJSON["plugins"].(map[string]any)
 		require.True(t, ok)
@@ -390,7 +397,7 @@ func TestInjectChannelsIntoConfigMap(t *testing.T) {
 		assert.False(t, hasChannels, "channels should not be injected when no channel credentials exist")
 	})
 
-	t.Run("channelConfig is merged into channel config block", func(t *testing.T) {
+	t.Run("channelConfig overrides operator dmPolicy in configmap", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials([]clawv1alpha1.CredentialSpec{
 			{
@@ -414,7 +421,7 @@ func TestInjectChannelsIntoConfigMap(t *testing.T) {
 		tg := channels["telegram"].(map[string]any)
 		assert.Equal(t, true, tg["enabled"])
 		assert.Equal(t, "placeholder", tg["botToken"])
-		assert.Equal(t, "allowlist", tg["dmPolicy"])
+		assert.Equal(t, "allowlist", tg["dmPolicy"], "user channelConfig should override operator default")
 	})
 
 	t.Run("protected key in channelConfig returns error", func(t *testing.T) {
@@ -669,6 +676,7 @@ func TestChannelCredentialReconciliation(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, true, tg["enabled"])
 		assert.Equal(t, "placeholder", tg["botToken"])
+		assert.Equal(t, "open", tg["dmPolicy"], "operator should set open dmPolicy for Telegram")
 
 		proxyCM := &corev1.ConfigMap{}
 		waitFor(t, timeout, interval, func() bool {

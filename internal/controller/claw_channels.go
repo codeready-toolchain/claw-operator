@@ -64,7 +64,9 @@ var knownChannels = map[string]channelDefault{
 			{Placeholder: "placeholder"},
 		},
 		ConfigBase: map[string]any{
-			"botToken": "placeholder",
+			"botToken":  "placeholder",
+			"dmPolicy":  "open",
+			"allowFrom": []any{"*"},
 		},
 	},
 	"discord": {
