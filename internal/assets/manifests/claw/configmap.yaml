@@ -414,6 +414,37 @@ data:
     (`xoxb-...`) handles all other API calls. WebSocket connections to
     `*.slack.com` pass through without injection.
 
+    # GitHub API Access
+
+    The pre-allowed `github.com` domain covers **git HTTPS operations only** (clones,
+    tarball fetches for npm dependencies). It does NOT cover `api.github.com`, which
+    is a separate host used by GitHub's REST and GraphQL APIs.
+
+    To give OpenClaw access to the GitHub REST API (for issues, PRs, code search,
+    etc.), the user needs a bearer credential for `api.github.com`:
+
+    ```yaml
+    - name: github
+      type: bearer
+      domain: api.github.com
+      secretRef:
+        - name: github-pat-secret
+          key: token
+    ```
+
+    The proxy injects `Authorization: Bearer <real PAT>` into every request to
+    `api.github.com`. Skills that use `curl` with the GitHub REST API (like
+    `gh-issues`) work through the proxy — the skill uses a placeholder token, and
+    the proxy replaces it transparently.
+
+    **Important:** The `gh` CLI manages its own credentials via `gh auth login`
+    (interactive OAuth flow stored in `~/.config/gh/`). It does NOT use the
+    `Authorization` header on REST requests in the same way, so the proxy-based
+    approach works best with **curl-based skills** rather than the `gh` CLI.
+    If the user asks about `gh` CLI access, recommend the curl + REST API approach
+    instead, or explain that `gh auth login` requires an interactive session inside
+    the pod and stores credentials in the gateway container (less secure).
+
     # Custom Domains
 
     For any other external service, the user can add a `type: none` entry with the
