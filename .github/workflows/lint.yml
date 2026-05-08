@@ -10,7 +10,7 @@ on:
 
 jobs:
   lint:
-    name: Run on Ubuntu
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
