@@ -486,6 +486,8 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if len(instance.Spec.McpServers) > 0 {
 		setCondition(instance, clawv1alpha1.ConditionTypeMcpServersConfigured, metav1.ConditionTrue,
 			clawv1alpha1.ConditionReasonConfigured, "MCP server configuration injected")
+	} else {
+		meta.RemoveStatusCondition(&instance.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
 	}
 
 	// Filter out Route (applied in phase above) and proxy ConfigMap (controller-managed)

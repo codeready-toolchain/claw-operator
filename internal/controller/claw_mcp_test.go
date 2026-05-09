@@ -337,6 +337,46 @@ func TestMcpServersIntegration(t *testing.T) {
 		assert.Nil(t, condition, "McpServersConfigured condition should not be set when no MCP servers")
 	})
 
+	t.Run("should remove McpServersConfigured condition when mcpServers removed", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"test": {URL: "https://example.com/mcp"},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, updated))
+		condition := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
+		require.NotNil(t, condition, "condition should be set after first reconcile")
+
+		updated.Spec.McpServers = nil
+		require.NoError(t, k8sClient.Update(ctx, updated))
+
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		after := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, after))
+		condition = meta.FindStatusCondition(after.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
+		assert.Nil(t, condition, "McpServersConfigured condition should be removed after mcpServers cleared")
+	})
+
 	t.Run("should inject stdio MCP server into ConfigMap after reconciliation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
