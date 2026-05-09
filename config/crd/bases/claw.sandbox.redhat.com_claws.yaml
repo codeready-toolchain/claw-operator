@@ -243,6 +243,45 @@ spec:
                       inferred defaults
                     rule: self.type != 'oauth2' || has(self.oauth2) || has(self.channel)
                 type: array
+              mcpServers:
+                additionalProperties:
+                  description: McpServerSpec defines an MCP server the operator injects
+                    into OpenClaw's config.
+                  properties:
+                    args:
+                      description: Args are command-line arguments for the stdio server.
+                      items:
+                        type: string
+                      type: array
+                    command:
+                      description: Command is the executable for a stdio MCP server.
+                      type: string
+                    env:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Env are plain environment variables passed to the stdio server process
+                        and written into the MCP server config in operator.json.
+                        Use for non-secret values and tier-2 placeholder tokens.
+                      type: object
+                    transport:
+                      description: |-
+                        Transport selects the HTTP transport type ("streamable-http" or "sse").
+                        Only valid when url is set.
+                      type: string
+                    url:
+                      description: URL is the endpoint for an HTTP MCP server.
+                      type: string
+                  type: object
+                  x-kubernetes-validations:
+                  - message: either command (stdio) or url (HTTP) must be set
+                    rule: has(self.command) || has(self.url)
+                  - message: command and url are mutually exclusive
+                    rule: '!has(self.command) || !has(self.url)'
+                description: |-
+                  McpServers declares MCP servers injected into OpenClaw's config.
+                  Map keys are server names as they appear in the mcp.servers config.
+                type: object
             type: object
           status:
             description: ClawStatus defines the observed state of Claw

@@ -29,6 +29,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -100,8 +101,13 @@ var builtinPassthroughDomains = []builtinPassthrough{
 }
 
 // generateProxyConfig builds the proxy config JSON from resolved credentials.
+// HTTP MCP server URLs are auto-extracted as passthrough routes when not already
+// covered by a credential or builtin domain.
 // Exact-match domains are emitted before suffix-match domains for predictable matching.
-func generateProxyConfig(credentials []resolvedCredential) ([]byte, error) {
+func generateProxyConfig(
+	credentials []resolvedCredential,
+	mcpServers map[string]clawv1alpha1.McpServerSpec,
+) ([]byte, error) {
 	var exact, suffix []proxyRoute
 
 	coveredDomains := make(map[string]bool)
@@ -111,9 +117,12 @@ func generateProxyConfig(credentials []resolvedCredential) ([]byte, error) {
 
 	for _, bp := range builtinPassthroughDomains {
 		if !coveredDomains[bp.Domain] {
+			coveredDomains[bp.Domain] = true
 			exact = append(exact, proxyRoute{Domain: bp.Domain, Injector: "none", AllowedPaths: bp.AllowedPaths})
 		}
 	}
+
+	exact = append(exact, mcpPassthroughRoutes(mcpServers, coveredDomains)...)
 
 	for _, rc := range credentials {
 		cred := rc.CredentialSpec
@@ -221,6 +230,31 @@ func generateProxyConfig(credentials []resolvedCredential) ([]byte, error) {
 
 	cfg := proxyConfig{Routes: append(exact, suffix...)}
 	return json.Marshal(cfg)
+}
+
+// mcpPassthroughRoutes extracts domains from HTTP MCP server URLs and returns
+// passthrough routes for domains not already covered by credentials or builtins.
+func mcpPassthroughRoutes(
+	mcpServers map[string]clawv1alpha1.McpServerSpec,
+	coveredDomains map[string]bool,
+) []proxyRoute {
+	var routes []proxyRoute
+	for _, mcp := range mcpServers {
+		if mcp.URL == "" {
+			continue
+		}
+		parsed, err := url.Parse(mcp.URL)
+		if err != nil || parsed.Hostname() == "" {
+			continue
+		}
+		domain := strings.ToLower(parsed.Hostname())
+		if coveredDomains[domain] {
+			continue
+		}
+		coveredDomains[domain] = true
+		routes = append(routes, proxyRoute{Domain: domain, Injector: "none"})
+	}
+	return routes
 }
 
 // applyProxyConfigMap creates or updates the proxy config ConfigMap with the precomputed JSON.

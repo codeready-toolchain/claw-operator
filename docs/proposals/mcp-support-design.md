@@ -236,7 +236,7 @@ Failures also set `Ready=False`.
 
 Each phase corresponds to a single PR. Phases must be merged in order.
 
-### Phase 1: HTTP/SSE and basic stdio MCP support (tiers 1 & 2)
+### Phase 1: HTTP/SSE and basic stdio MCP support (tiers 1 & 2) - DONE
 
 Delivers working MCP for HTTP servers (auto-allowlisted) and stdio servers with static/placeholder env vars. No `envFrom` field yet — the CRD only advertises capabilities the reconciler supports.
 
