@@ -410,6 +410,123 @@ func configureClawDeploymentConfigMode(objects []*unstructured.Unstructured, ins
 	return fmt.Errorf("claw deployment not found in manifests")
 }
 
+// configureGatewayForMcpServers adds secret-backed environment variables to the gateway
+// container for MCP servers using tier 3 envFrom. Each envFrom entry becomes an env var
+// with valueFrom.secretKeyRef, so the real secret value is available at runtime.
+func configureGatewayForMcpServers(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	var envFromEntries []clawv1alpha1.McpEnvFromSecret
+	for _, spec := range instance.Spec.McpServers {
+		envFromEntries = append(envFromEntries, spec.EnvFrom...)
+	}
+	if len(envFromEntries) == 0 {
+		return nil
+	}
+
+	gatewayName := getClawDeploymentName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from claw deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in claw deployment")
+		}
+
+		containerIdx := -1
+		var container map[string]any
+		for i, c := range containers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawGatewayContainerName {
+				containerIdx = i
+				container = cm
+				break
+			}
+		}
+		if containerIdx < 0 {
+			return fmt.Errorf("container %q not found in claw deployment", ClawGatewayContainerName)
+		}
+
+		envVars, _, _ := unstructured.NestedSlice(container, "env")
+		for _, ef := range envFromEntries {
+			envVars = append(envVars, map[string]any{
+				"name": ef.Name,
+				"valueFrom": map[string]any{
+					"secretKeyRef": map[string]any{
+						"name": ef.SecretRef.Name,
+						"key":  ef.SecretRef.Key,
+					},
+				},
+			})
+		}
+
+		if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
+			return fmt.Errorf("failed to set env vars on claw deployment: %w", err)
+		}
+		containers[containerIdx] = container
+		if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+			return fmt.Errorf("failed to set containers on claw deployment: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
+}
+
+// stampMcpSecretVersionAnnotation stamps the gateway deployment pod template with
+// ResourceVersions of Secrets referenced by MCP envFrom entries. This triggers a
+// rollout when any MCP secret data changes.
+func (r *ClawResourceReconciler) stampMcpSecretVersionAnnotation(
+	ctx context.Context,
+	objects []*unstructured.Unstructured,
+	instance *clawv1alpha1.Claw,
+) error {
+	versions := make(map[string]string)
+	for serverName, spec := range instance.Spec.McpServers {
+		for _, ef := range spec.EnvFrom {
+			secret := &corev1.Secret{}
+			if err := r.Get(ctx, client.ObjectKey{
+				Namespace: instance.Namespace,
+				Name:      ef.SecretRef.Name,
+			}, secret); err != nil {
+				return fmt.Errorf("failed to get Secret %q for MCP server %q env %q: %w",
+					ef.SecretRef.Name, serverName, ef.Name, err)
+			}
+			key := serverName + "-" + ef.Name
+			versions[key] = secret.ResourceVersion
+		}
+	}
+
+	if len(versions) == 0 {
+		return nil
+	}
+
+	gatewayName := getClawDeploymentName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		annotations, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		for key, rv := range versions {
+			annotations[clawv1alpha1.AnnotationPrefixMcpSecretVersion+key+clawv1alpha1.AnnotationSuffixMcpSecretVersion] = rv
+		}
+		if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
+			return fmt.Errorf("failed to set MCP secret version annotations: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("gateway deployment not found for MCP secret version stamping")
+}
+
 // stampGatewayConfigHash computes a SHA-256 hash of the gateway ConfigMap data and
 // stamps it on the gateway pod template. This triggers a rollout when operator.json
 // or other operator-managed config files change (e.g., after an operator upgrade).

@@ -17,13 +17,50 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
+
+// validateMcpServerSecrets validates that all envFrom-referenced Secrets exist and
+// contain the specified keys. Returns a joined error describing all failures.
+func (r *ClawResourceReconciler) validateMcpServerSecrets(ctx context.Context, instance *clawv1alpha1.Claw) error {
+	var errs []error
+	for serverName, spec := range instance.Spec.McpServers {
+		for _, ef := range spec.EnvFrom {
+			secret := &corev1.Secret{}
+			if err := r.Get(ctx, client.ObjectKey{
+				Namespace: instance.Namespace,
+				Name:      ef.SecretRef.Name,
+			}, secret); err != nil {
+				if apierrors.IsNotFound(err) {
+					errs = append(errs, fmt.Errorf("MCP server %q envFrom %q: Secret %q not found",
+						serverName, ef.Name, ef.SecretRef.Name))
+				} else {
+					errs = append(errs, fmt.Errorf("MCP server %q envFrom %q: failed to get Secret %q: %w",
+						serverName, ef.Name, ef.SecretRef.Name, err))
+				}
+				continue
+			}
+			if _, ok := secret.Data[ef.SecretRef.Key]; !ok {
+				errs = append(errs, fmt.Errorf("MCP server %q envFrom %q: key %q not found in Secret %q",
+					serverName, ef.Name, ef.SecretRef.Key, ef.SecretRef.Name))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("MCP server secret validation failed: %w", errors.Join(errs...))
+	}
+	return nil
+}
 
 // injectMcpServersIntoConfigMap injects MCP server configuration into operator.json
 // for all entries in spec.mcpServers. Stdio servers get command/args/env; HTTP servers
@@ -74,6 +111,8 @@ func injectMcpServersIntoConfigMap(objects []*unstructured.Unstructured, instanc
 }
 
 // buildMcpServerConfig builds the JSON-ready config for a single MCP server entry.
+// For envFrom entries, the env var name is included in the env map with the env var
+// name as a placeholder value — the real value comes from the container environment.
 func buildMcpServerConfig(spec clawv1alpha1.McpServerSpec) map[string]any {
 	entry := map[string]any{}
 
@@ -82,8 +121,16 @@ func buildMcpServerConfig(spec clawv1alpha1.McpServerSpec) map[string]any {
 		if len(spec.Args) > 0 {
 			entry["args"] = spec.Args
 		}
-		if len(spec.Env) > 0 {
-			entry["env"] = spec.Env
+
+		envMap := make(map[string]string, len(spec.Env)+len(spec.EnvFrom))
+		for k, v := range spec.Env {
+			envMap[k] = v
+		}
+		for _, ef := range spec.EnvFrom {
+			envMap[ef.Name] = ef.Name
+		}
+		if len(envMap) > 0 {
+			entry["env"] = envMap
 		}
 	} else {
 		entry["url"] = spec.URL

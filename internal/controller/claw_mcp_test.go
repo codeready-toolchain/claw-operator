@@ -23,10 +23,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
@@ -239,6 +241,123 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 	})
 }
 
+func TestBuildMcpServerConfig(t *testing.T) {
+	t.Run("should include envFrom names as placeholder env vars", func(t *testing.T) {
+		spec := clawv1alpha1.McpServerSpec{
+			Command: "node",
+			Args:    []string{"db-mcp-server.js"},
+			Env:     map[string]string{"DB_HOST": "postgres.internal"},
+			EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+				{
+					Name:      "DB_PASSWORD",
+					SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-creds", Key: "password"},
+				},
+			},
+		}
+
+		config := buildMcpServerConfig(spec)
+
+		assert.Equal(t, "node", config["command"])
+		env := config["env"].(map[string]string)
+		assert.Equal(t, "postgres.internal", env["DB_HOST"])
+		assert.Equal(t, "DB_PASSWORD", env["DB_PASSWORD"])
+	})
+
+	t.Run("should include only envFrom placeholders when no plain env", func(t *testing.T) {
+		spec := clawv1alpha1.McpServerSpec{
+			Command: "my-tool",
+			EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+				{
+					Name:      "API_KEY",
+					SecretRef: clawv1alpha1.SecretRefEntry{Name: "secret", Key: "key"},
+				},
+			},
+		}
+
+		config := buildMcpServerConfig(spec)
+
+		env := config["env"].(map[string]string)
+		assert.Equal(t, "API_KEY", env["API_KEY"])
+		assert.Len(t, env, 1)
+	})
+
+	t.Run("should omit env when neither env nor envFrom set", func(t *testing.T) {
+		spec := clawv1alpha1.McpServerSpec{
+			Command: "simple-server",
+		}
+
+		config := buildMcpServerConfig(spec)
+
+		assert.NotContains(t, config, "env")
+	})
+
+	t.Run("should not include envFrom for HTTP servers", func(t *testing.T) {
+		spec := clawv1alpha1.McpServerSpec{
+			URL:       "https://example.com/mcp",
+			Transport: "streamable-http",
+		}
+
+		config := buildMcpServerConfig(spec)
+
+		assert.NotContains(t, config, "env")
+		assert.Equal(t, "https://example.com/mcp", config["url"])
+	})
+
+	t.Run("should merge multiple envFrom entries with plain env", func(t *testing.T) {
+		spec := clawv1alpha1.McpServerSpec{
+			Command: "multi-secret",
+			Env:     map[string]string{"HOST": "localhost"},
+			EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+				{
+					Name:      "USER",
+					SecretRef: clawv1alpha1.SecretRefEntry{Name: "s1", Key: "user"},
+				},
+				{
+					Name:      "PASS",
+					SecretRef: clawv1alpha1.SecretRefEntry{Name: "s2", Key: "pass"},
+				},
+			},
+		}
+
+		config := buildMcpServerConfig(spec)
+
+		env := config["env"].(map[string]string)
+		assert.Equal(t, "localhost", env["HOST"])
+		assert.Equal(t, "USER", env["USER"])
+		assert.Equal(t, "PASS", env["PASS"])
+		assert.Len(t, env, 3)
+	})
+}
+
+func TestInjectMcpServersWithEnvFrom(t *testing.T) {
+	t.Run("should inject stdio server with envFrom placeholders into ConfigMap", func(t *testing.T) {
+		objects := makeMcpConfigMap(`{"gateway":{}}`)
+		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
+			"custom-db": {
+				Command: "node",
+				Args:    []string{"db-mcp-server.js"},
+				Env:     map[string]string{"DB_HOST": "postgres.internal"},
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "DB_PASSWORD",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-creds", Key: "password"},
+					},
+				},
+			},
+		})
+
+		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+
+		config := getMcpConfig(t, objects)
+		server := config["mcp"].(map[string]any)["servers"].(map[string]any)["custom-db"].(map[string]any)
+
+		assert.Equal(t, "node", server["command"])
+		env := server["env"].(map[string]any)
+		assert.Equal(t, "postgres.internal", env["DB_HOST"])
+		assert.Equal(t, "DB_PASSWORD", env["DB_PASSWORD"])
+	})
+}
+
 func TestMcpServersIntegration(t *testing.T) {
 	ctx := context.Background()
 
@@ -427,6 +546,354 @@ func TestMcpServersIntegration(t *testing.T) {
 		assert.Equal(t, []any{"-y", "@modelcontextprotocol/server-github"}, args)
 		env := gh["env"].(map[string]any)
 		assert.Equal(t, "placeholder", env["GITHUB_PERSONAL_ACCESS_TOKEN"])
+	})
+
+	t.Run("should inject envFrom MCP server and mount env vars on gateway", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		aiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, aiSecret))
+
+		dbSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "db-credentials", Namespace: namespace},
+			Data:       map[string][]byte{"password": []byte("s3cret")},
+		}
+		require.NoError(t, k8sClient.Create(ctx, dbSecret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"custom-db": {
+						Command: "node",
+						Args:    []string{"db-mcp-server.js"},
+						Env:     map[string]string{"DB_HOST": "postgres.internal"},
+						EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+							{
+								Name:      "DB_PASSWORD",
+								SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-credentials", Key: "password"},
+							},
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		// Verify ConfigMap has envFrom placeholder
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getConfigMapName(testInstanceName),
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+		server := config["mcp"].(map[string]any)["servers"].(map[string]any)["custom-db"].(map[string]any)
+		env := server["env"].(map[string]any)
+		assert.Equal(t, "postgres.internal", env["DB_HOST"])
+		assert.Equal(t, "DB_PASSWORD", env["DB_PASSWORD"])
+
+		// Verify gateway deployment has secretKeyRef env var
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+
+		var foundSecretEnv bool
+		for _, c := range deployment.Spec.Template.Spec.Containers {
+			if c.Name != ClawGatewayContainerName {
+				continue
+			}
+			for _, e := range c.Env {
+				if e.Name == "DB_PASSWORD" && e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
+					assert.Equal(t, "db-credentials", e.ValueFrom.SecretKeyRef.Name)
+					assert.Equal(t, "password", e.ValueFrom.SecretKeyRef.Key)
+					foundSecretEnv = true
+				}
+			}
+		}
+		assert.True(t, foundSecretEnv, "gateway should have DB_PASSWORD env from secretKeyRef")
+
+		// Verify condition is True
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, updated))
+		condition := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
+	})
+
+	t.Run("should set McpServersConfigured=False when envFrom secret is missing", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		aiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, aiSecret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"custom-db": {
+						Command: "node",
+						EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+							{
+								Name:      "DB_PASSWORD",
+								SecretRef: clawv1alpha1.SecretRefEntry{Name: "nonexistent-secret", Key: "password"},
+							},
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
+		})
+		require.Error(t, err, "reconcile should fail when envFrom secret is missing")
+		assert.Contains(t, err.Error(), "nonexistent-secret")
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, updated))
+
+		condition := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
+		require.NotNil(t, condition, "McpServersConfigured should be set")
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, clawv1alpha1.ConditionReasonValidationFailed, condition.Reason)
+		assert.Contains(t, condition.Message, "nonexistent-secret")
+
+		readyCondition := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeReady)
+		require.NotNil(t, readyCondition)
+		assert.Equal(t, metav1.ConditionFalse, readyCondition.Status)
+	})
+
+	t.Run("should set McpServersConfigured=False when envFrom secret key is missing", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		aiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, aiSecret))
+
+		wrongKeySecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "db-creds-wrong", Namespace: namespace},
+			Data:       map[string][]byte{"wrong-key": []byte("value")},
+		}
+		require.NoError(t, k8sClient.Create(ctx, wrongKeySecret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"custom-db": {
+						Command: "node",
+						EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+							{
+								Name:      "DB_PASSWORD",
+								SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-creds-wrong", Key: "password"},
+							},
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
+		})
+		require.Error(t, err, "reconcile should fail when envFrom secret key is missing")
+		assert.Contains(t, err.Error(), "password")
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, updated))
+
+		condition := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
+		require.NotNil(t, condition, "McpServersConfigured should be set")
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Contains(t, condition.Message, "password")
+		assert.Contains(t, condition.Message, "not found in Secret")
+	})
+
+	t.Run("should stamp MCP secret version annotation on gateway deployment", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		aiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, aiSecret))
+
+		dbSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "db-stamp-test", Namespace: namespace},
+			Data:       map[string][]byte{"password": []byte("s3cret")},
+		}
+		require.NoError(t, k8sClient.Create(ctx, dbSecret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"db-tool": {
+						Command: "node",
+						EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+							{
+								Name:      "DB_PASS",
+								SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-stamp-test", Key: "password"},
+							},
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+
+		annotationKey := clawv1alpha1.AnnotationPrefixMcpSecretVersion + "db-tool-DB_PASS" + clawv1alpha1.AnnotationSuffixMcpSecretVersion
+		rv, exists := deployment.Spec.Template.Annotations[annotationKey]
+		assert.True(t, exists, "MCP secret version annotation should be present")
+		assert.NotEmpty(t, rv, "annotation value should be the secret ResourceVersion")
+	})
+
+	t.Run("should succeed when MCP servers have no envFrom entries", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		aiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, aiSecret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"context7": {URL: "https://mcp.context7.com/mcp"},
+					"github": {
+						Command: "npx",
+						Env:     map[string]string{"TOKEN": "placeholder"},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, updated))
+		condition := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
+	})
+
+	t.Run("should recover from validation failure after creating missing secret", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		aiSecret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, aiSecret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"db-tool": {
+						Command: "node",
+						EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+							{
+								Name:      "DB_PASS",
+								SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-recovery-test", Key: "password"},
+							},
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+
+		// First reconcile fails — secret doesn't exist
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
+		})
+		require.Error(t, err)
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, updated))
+		condition := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+
+		// Create the missing secret
+		dbSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "db-recovery-test", Namespace: namespace},
+			Data:       map[string][]byte{"password": []byte("s3cret")},
+		}
+		require.NoError(t, k8sClient.Create(ctx, dbSecret))
+
+		// Second reconcile succeeds
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, updated))
+		condition = meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionTrue, condition.Status,
+			"condition should transition from False to True after secret is created")
+	})
+
+	t.Run("should accept valid MCP server with envFrom via CEL", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"db-tool": {
+						Command: "node",
+						EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+							{
+								Name:      "DB_PASSWORD",
+								SecretRef: clawv1alpha1.SecretRefEntry{Name: "my-secret", Key: "pass"},
+							},
+						},
+					},
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.NoError(t, err, "valid stdio MCP server with envFrom should be accepted by CEL")
 	})
 }
 

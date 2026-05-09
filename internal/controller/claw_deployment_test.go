@@ -594,3 +594,276 @@ func TestConfigureClawDeploymentForKubernetes(t *testing.T) {
 		assert.Empty(t, envVars)
 	})
 }
+
+// --- MCP gateway env injection tests ---
+
+func TestConfigureGatewayForMcpServers(t *testing.T) {
+	makeGatewayDeployment := func() []*unstructured.Unstructured {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name": ClawGatewayContainerName,
+							"env":  []any{},
+						},
+					},
+				},
+			},
+		}
+		return []*unstructured.Unstructured{dep}
+	}
+
+	t.Run("should add secretKeyRef env vars for envFrom entries", func(t *testing.T) {
+		objects := makeGatewayDeployment()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"custom-db": {
+				Command: "node",
+				Args:    []string{"db-mcp-server.js"},
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "DB_PASSWORD",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-credentials", Key: "password"},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, configureGatewayForMcpServers(objects, instance))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		require.Len(t, envVars, 1)
+		env := envVars[0].(map[string]any)
+		assert.Equal(t, "DB_PASSWORD", env["name"])
+		valueFrom := env["valueFrom"].(map[string]any)
+		secretKeyRef := valueFrom["secretKeyRef"].(map[string]any)
+		assert.Equal(t, "db-credentials", secretKeyRef["name"])
+		assert.Equal(t, "password", secretKeyRef["key"])
+	})
+
+	t.Run("should be no-op when no envFrom entries exist", func(t *testing.T) {
+		objects := makeGatewayDeployment()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"context7": {URL: "https://mcp.context7.com/mcp"},
+			"github": {
+				Command: "npx",
+				Env:     map[string]string{"TOKEN": "placeholder"},
+			},
+		}
+
+		require.NoError(t, configureGatewayForMcpServers(objects, instance))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+		assert.Empty(t, envVars)
+	})
+
+	t.Run("should be no-op when no MCP servers configured", func(t *testing.T) {
+		objects := makeGatewayDeployment()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+
+		require.NoError(t, configureGatewayForMcpServers(objects, instance))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+		assert.Empty(t, envVars)
+	})
+
+	t.Run("should handle multiple servers with envFrom", func(t *testing.T) {
+		objects := makeGatewayDeployment()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"db-server": {
+				Command: "node",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "DB_PASS",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-secret", Key: "pass"},
+					},
+				},
+			},
+			"api-server": {
+				Command: "python",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "API_KEY",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "api-secret", Key: "key"},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, configureGatewayForMcpServers(objects, instance))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		require.Len(t, envVars, 2)
+		envNames := map[string]bool{}
+		for _, e := range envVars {
+			env := e.(map[string]any)
+			envNames[env["name"].(string)] = true
+		}
+		assert.True(t, envNames["DB_PASS"])
+		assert.True(t, envNames["API_KEY"])
+	})
+
+	t.Run("should return error when deployment is missing", func(t *testing.T) {
+		objects := []*unstructured.Unstructured{}
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"db": {
+				Command: "node",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "SECRET",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "s", Key: "k"},
+					},
+				},
+			},
+		}
+
+		err := configureGatewayForMcpServers(objects, instance)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "claw deployment not found")
+	})
+
+	t.Run("should return error when gateway container is missing", func(t *testing.T) {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{"name": "wrong-container"},
+					},
+				},
+			},
+		}
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"db": {
+				Command: "node",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "SECRET",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "s", Key: "k"},
+					},
+				},
+			},
+		}
+
+		err := configureGatewayForMcpServers([]*unstructured.Unstructured{dep}, instance)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), ClawGatewayContainerName)
+	})
+
+	t.Run("should preserve pre-existing env vars on gateway container", func(t *testing.T) {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name": ClawGatewayContainerName,
+							"env": []any{
+								map[string]any{"name": "HOME", "value": "/home/node"},
+								map[string]any{"name": "NODE_ENV", "value": "production"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"db": {
+				Command: "node",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "DB_PASS",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-secret", Key: "pass"},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, configureGatewayForMcpServers([]*unstructured.Unstructured{dep}, instance))
+
+		containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		require.Len(t, envVars, 3, "should have 2 pre-existing + 1 new env var")
+		assert.Equal(t, "HOME", envVars[0].(map[string]any)["name"])
+		assert.Equal(t, "NODE_ENV", envVars[1].(map[string]any)["name"])
+		assert.Equal(t, "DB_PASS", envVars[2].(map[string]any)["name"])
+	})
+
+	t.Run("should handle multiple envFrom on a single server", func(t *testing.T) {
+		objects := makeGatewayDeployment()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"multi-secret-tool": {
+				Command: "node",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "DB_USER",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-secret", Key: "user"},
+					},
+					{
+						Name:      "DB_PASS",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-secret", Key: "pass"},
+					},
+					{
+						Name:      "DB_HOST",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-secret", Key: "host"},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, configureGatewayForMcpServers(objects, instance))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		require.Len(t, envVars, 3)
+		envNames := map[string]bool{}
+		for _, e := range envVars {
+			env := e.(map[string]any)
+			envNames[env["name"].(string)] = true
+			valueFrom := env["valueFrom"].(map[string]any)
+			secretKeyRef := valueFrom["secretKeyRef"].(map[string]any)
+			assert.Equal(t, "db-secret", secretKeyRef["name"])
+		}
+		assert.True(t, envNames["DB_USER"])
+		assert.True(t, envNames["DB_PASS"])
+		assert.True(t, envNames["DB_HOST"])
+	})
+}

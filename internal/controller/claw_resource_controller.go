@@ -417,6 +417,19 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	// Validate MCP envFrom secrets exist and contain specified keys
+	if err := r.validateMcpServerSecrets(ctx, instance); err != nil {
+		logger.Error(err, "MCP server secret validation failed")
+		setCondition(instance, clawv1alpha1.ConditionTypeMcpServersConfigured, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after MCP secret validation failure")
+		}
+		return ctrl.Result{}, err
+	}
+
 	// Generate proxy config, apply ConfigMaps (proxy config + Vertex AI stub ADC)
 	proxyConfigJSON, err := r.applyProxyResources(ctx, instance, resolvedCreds)
 	if err != nil {
@@ -443,6 +456,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Stamp Secret ResourceVersions to trigger rollout when Secret data changes
 	if err := r.stampSecretVersionAnnotation(ctx, objects, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to stamp secret version annotations: %w", err)
+	}
+
+	// Stamp MCP envFrom Secret versions on gateway deployment for rollout
+	if err := r.stampMcpSecretVersionAnnotation(ctx, objects, instance); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to stamp MCP secret version annotations: %w", err)
 	}
 
 	// Apply Claw Route and wait for ingress host to be populated
@@ -646,6 +664,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	}
 	if err := configureClawDeploymentConfigMode(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure claw deployment config mode: %w", err)
+	}
+	if err := configureGatewayForMcpServers(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure gateway for MCP servers: %w", err)
 	}
 	return nil
 }
