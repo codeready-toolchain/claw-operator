@@ -1417,4 +1417,33 @@ func TestMcpServerDomainExtraction(t *testing.T) {
 		route := findRouteByDomain(t, cfg.Routes, "mcp.example.com")
 		assert.Equal(t, "none", route.Injector, "domain should be lowercased")
 	})
+
+	t.Run("should not add passthrough when suffix credential covers the domain", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:   "gcp",
+				Type:   clawv1alpha1.CredentialTypeGCP,
+				Domain: ".googleapis.com",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "gcp-sa", Key: "key.json"},
+				},
+				GCP: &clawv1alpha1.GCPConfig{Project: "my-project", Location: "us-central1"},
+			},
+		}
+		mcpServers := map[string]clawv1alpha1.McpServerSpec{
+			"vertex": {URL: "https://us-central1-aiplatform.googleapis.com/mcp"},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), mcpServers)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		for _, r := range cfg.Routes {
+			if r.Domain == "us-central1-aiplatform.googleapis.com" {
+				t.Fatal("MCP passthrough should not shadow suffix credential for .googleapis.com")
+			}
+		}
+	})
 }

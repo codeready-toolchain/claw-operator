@@ -234,6 +234,9 @@ func generateProxyConfig(
 
 // mcpPassthroughRoutes extracts domains from HTTP MCP server URLs and returns
 // passthrough routes for domains not already covered by credentials or builtins.
+// Suffix-match credentials (e.g. ".googleapis.com") cover subdomains, so an MCP
+// URL like "https://us-central1-aiplatform.googleapis.com/..." won't emit a
+// redundant exact route that would shadow the credential's auth injection.
 func mcpPassthroughRoutes(
 	mcpServers map[string]clawv1alpha1.McpServerSpec,
 	coveredDomains map[string]bool,
@@ -248,13 +251,28 @@ func mcpPassthroughRoutes(
 			continue
 		}
 		domain := strings.ToLower(parsed.Hostname())
-		if coveredDomains[domain] {
+		if domainCovered(domain, coveredDomains) {
 			continue
 		}
 		coveredDomains[domain] = true
 		routes = append(routes, proxyRoute{Domain: domain, Injector: "none"})
 	}
 	return routes
+}
+
+// domainCovered returns true if domain is already covered by an exact entry or
+// a suffix entry (leading dot) in coveredDomains. This prevents MCP passthrough
+// routes from shadowing credential injection on suffix-matched domains.
+func domainCovered(domain string, coveredDomains map[string]bool) bool {
+	if coveredDomains[domain] {
+		return true
+	}
+	for covered := range coveredDomains {
+		if strings.HasPrefix(covered, ".") && strings.HasSuffix(domain, covered) {
+			return true
+		}
+	}
+	return false
 }
 
 // applyProxyConfigMap creates or updates the proxy config ConfigMap with the precomputed JSON.
