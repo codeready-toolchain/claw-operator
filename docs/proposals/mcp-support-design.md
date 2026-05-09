@@ -1,6 +1,6 @@
 # MCP Server Support
 
-**Status:** Draft — pending decisions from [mcp-support-questions.md](mcp-support-questions.md)
+**Status:** Final — all decisions resolved in [mcp-support-questions.md](mcp-support-questions.md)
 
 ## Overview
 
@@ -10,22 +10,36 @@ This feature enables users to declare MCP servers in the Claw CR with proper sec
 
 ## Design Principles
 
-1. **Security first:** Real secrets must not reach the gateway container whenever possible. The MITM proxy pattern is the preferred path for HTTP-based MCP servers. For stdio MCP servers that require secrets as environment variables, the gateway container receives them directly — this is the "unless it's the only way" exception, documented explicitly.
+1. **Security first:** Real secrets must not reach the gateway container whenever possible. The MITM proxy is the preferred credential injection path. HTTP/SSE MCP servers are recommended over stdio. For stdio, a proxy-placeholder pattern keeps secrets off the gateway in most cases. Direct gateway env var secrets (`envFrom`) are the last resort.
 
 2. **Declarative and reconcilable:** MCP server configuration is part of the Claw CR spec, reconciled into `operator.json` the same way providers and channels are today.
 
-3. **Minimal API surface:** Follow existing patterns (channels, providers) rather than inventing new ones. Reuse `secretRef` for credentials.
+3. **Minimal API surface:** Follow existing patterns (channels, providers) rather than inventing new ones. Reuse `credentials` for domain allowlisting and auth injection.
 
 4. **User config preserved:** In `merge` mode, operator-managed MCP servers merge alongside user-managed servers added via `openclaw config patch` or `openclaw mcp set`. Operator-managed servers win on collision (same server name).
 
 ## Architecture
 
+### Three-Tier Security Model
+
+| Tier | Transport | Secret handling | Secrets on gateway? |
+|---|---|---|---|
+| **1. HTTP/SSE MCP** (preferred) | HTTP URL | Proxy `credentials` entry for the URL's domain | No |
+| **2. Stdio + proxy placeholder** (recommended for stdio) | Subprocess | Placeholder env var + proxy `credentials` entry for known domains | No |
+| **3. Stdio + real secret** (escape hatch) | Subprocess | `envFrom` with `secretKeyRef` on the gateway container | Yes |
+
+**Tier 1** — HTTP/SSE MCP servers are the recommended path. Traffic goes through the MITM proxy. The user adds a `credentials` entry for the MCP URL's domain. The proxy injects auth headers. No secrets on the gateway.
+
+**Tier 2** — Stdio MCP subprocesses inherit `HTTP_PROXY`/`HTTPS_PROXY`, so their outbound HTTPS calls go through the MITM proxy. The user sets the env var to a placeholder value and adds a `credentials` entry for the domain. The MCP server sends auth with the placeholder, the proxy strips and replaces it. The user needs to know which domain the MCP server calls and what auth type it uses. The platform skill documents this for well-known MCP servers.
+
+**Tier 3** — When the user doesn't know the MCP server's internals, or the MCP server uses the secret for non-HTTP purposes, `envFrom` mounts the real secret on the gateway container. This is an explicit opt-in — the user accepts the security tradeoff.
+
 ### How MCP Servers Work in OpenClaw
 
 OpenClaw supports two MCP transport types:
 
-- **Stdio**: A child process spawned by the gateway (`command` + `args`). Environment variables are passed to the child process. This is the most common type for local tool servers.
-- **HTTP** (`streamable-http` or `sse`): An outbound HTTP connection to a remote URL. Headers can be passed. No subprocess.
+- **Stdio**: A child process spawned by the gateway (`command` + `args`). Environment variables are passed to the child process.
+- **HTTP** (`streamable-http` or `sse`): An outbound HTTP connection to a remote URL.
 
 OpenClaw configuration path: `mcp.servers` in `openclaw.json`:
 
@@ -37,7 +51,7 @@ OpenClaw configuration path: `mcp.servers` in `openclaw.json`:
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-github"],
         "env": {
-          "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_real_token"
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "placeholder"
         }
       },
       "context7": {
@@ -51,151 +65,259 @@ OpenClaw configuration path: `mcp.servers` in `openclaw.json`:
 
 ### Operator Flow
 
+Mapped to the actual reconciliation order in `claw_resource_controller.go`:
+
 ```
 Claw CR spec.mcpServers
          │
          ▼
-  resolveAndApplyCredentials()  ◄── validate secrets exist (stdio env)
+  resolveAndApplyCredentials()
+         ├─► validateMcpServerSecrets()     ◄── validate envFrom secrets exist
+         │                                       set McpServersConfigured condition
+         │
+         ▼
+  applyProxyResources()
+         ├─► generateProxyConfig()          ◄── auto-extract HTTP MCP URL domains
+         │                                       as passthrough routes (alongside
+         │                                       credential routes and builtins)
+         │
+         ▼
+  buildKustomizedObjects()                  ◄── load embedded Kustomize manifests
+         │
+         ▼
+  configureDeployments()
+         ├─► configureGatewayForMcpServers() ◄── env vars on gateway container
+         │                                        (tier 3 envFrom secrets)
+         │
+         ▼
+  stampMcpSecretVersionAnnotation()         ◄── stamp gateway deployment pod
+         │                                       template (rollout on secret change)
          │
          ▼
   enrichConfigAndNetworkPolicy()
-         │
-         ├─► injectMcpServersIntoConfigMap()  ──► operator.json { mcp.servers }
-         │
-         └─► proxy domain handling (HTTP MCP URLs)
+         ├─► injectMcpServersIntoConfigMap() ◄── operator.json { mcp.servers }
          │
          ▼
-  configureGatewayForMcpServers()  ──► env vars on gateway container (stdio secrets)
-         │
-         ▼
-  merge.js (init-config)  ──► PVC openclaw.json (deep-merge preserves user MCP servers)
+  merge.js (init-config at pod start)       ◄── PVC openclaw.json (deep-merge
+                                                 preserves user MCP servers)
 ```
 
-### Security Model
-
-> **Open question:** How should stdio MCP server secrets be handled? — see [questions document](mcp-support-questions.md), Q1.
-
-**HTTP MCP servers** with credentials in `headers`: Can be handled by the MITM proxy (inject headers on matching domain), keeping secrets off the gateway. The proxy already supports this pattern via `defaultHeaders` on credential routes.
-
-**Stdio MCP servers** with `env` secrets: The subprocess inherits env from the gateway process. There is no proxy interception for env vars — they must be on the gateway container. This is architecturally unavoidable for stdio MCP.
-
-> **Open question:** Should HTTP MCP server auth go through the proxy or be injected as config? — see [questions document](mcp-support-questions.md), Q2.
+Note: `stampSecretVersionAnnotation` (existing) stamps the **proxy** deployment for credential secrets. MCP `envFrom` secrets need a separate `stampMcpSecretVersionAnnotation` that stamps the **gateway** deployment, since that's where the env vars are mounted.
 
 ### Network Access
 
-- **Stdio MCP servers** make their own outbound connections. Their traffic goes through `HTTP_PROXY`/`HTTPS_PROXY` (the MITM proxy). Domains they need must be in the proxy allowlist — either as builtin passthroughs, existing credentials, or new `type: none` domain entries.
+- **HTTP MCP servers**: Domain auto-extracted from `url` and added as a `type: none` passthrough route in the proxy config. If the user also has a `credentials` entry for the same domain (for auth), the credential takes precedence.
 
-- **HTTP MCP servers** connect to a `url`. The gateway's HTTP client goes through the proxy. The MCP URL's domain must be allowed.
+- **Stdio MCP servers**: Users add `credentials` entries for domains the MCP server needs. For tier 2, these credentials also handle auth injection.
 
-> **Open question:** How should proxy domain allowlisting work for MCP servers? — see [questions document](mcp-support-questions.md), Q3.
+## CRD Schema
 
-## Core Concepts
-
-### CRD Schema
-
-> **Open question:** Where should MCP servers live in the CRD? — see [questions document](mcp-support-questions.md), Q4.
-
-A new `spec.mcpServers` map on `ClawSpec`:
+New `spec.mcpServers` map on `ClawSpec`:
 
 ```go
 type ClawSpec struct {
-    ConfigMode  ConfigMode       `json:"configMode,omitempty"`
-    Credentials []CredentialSpec `json:"credentials,omitempty"`
-    McpServers  map[string]McpServerSpec `json:"mcpServers,omitempty"`
+    ConfigMode  ConfigMode                  `json:"configMode,omitempty"`
+    Credentials []CredentialSpec            `json:"credentials,omitempty"`
+    McpServers  map[string]McpServerSpec    `json:"mcpServers,omitempty"`
 }
 ```
 
-Each `McpServerSpec` supports both stdio and HTTP transports:
+Each `McpServerSpec`:
 
 ```go
+// McpServerSpec defines an MCP server the operator injects into OpenClaw's config.
+// +kubebuilder:validation:XValidation:rule="has(self.command) || has(self.url)",message="either command (stdio) or url (HTTP) must be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.command) || !has(self.url)",message="command and url are mutually exclusive"
 type McpServerSpec struct {
-    // Stdio transport
-    Command string   `json:"command,omitempty"`
-    Args    []string `json:"args,omitempty"`
+    // Command is the executable for a stdio MCP server.
+    // +optional
+    Command string `json:"command,omitempty"`
 
-    // HTTP transport
-    URL       string `json:"url,omitempty"`
-    Transport string `json:"transport,omitempty"` // "streamable-http" or "sse"
+    // Args are command-line arguments for the stdio server.
+    // +optional
+    Args []string `json:"args,omitempty"`
 
-    // Env vars for stdio (plain values)
+    // URL is the endpoint for an HTTP MCP server.
+    // +optional
+    URL string `json:"url,omitempty"`
+
+    // Transport selects the HTTP transport type ("streamable-http" or "sse").
+    // Only valid when url is set.
+    // +optional
+    Transport string `json:"transport,omitempty"`
+
+    // Env are plain environment variables passed to the stdio server process
+    // and written into the MCP server config in operator.json.
+    // Use for non-secret values and tier-2 placeholder tokens.
+    // +optional
     Env map[string]string `json:"env,omitempty"`
 
-    // Secret-backed env vars for stdio
+    // EnvFrom are secret-backed environment variables mounted on the gateway
+    // container and inherited by the stdio server subprocess (tier 3).
+    // Use only when the proxy-placeholder pattern (tier 2) is not viable.
+    // +optional
     EnvFrom []McpEnvFromSecret `json:"envFrom,omitempty"`
-
-    // Additional domains the MCP server needs (added to proxy allowlist)
-    AllowedDomains []string `json:"allowedDomains,omitempty"`
 }
 
+// McpEnvFromSecret maps a Kubernetes Secret key to an environment variable.
 type McpEnvFromSecret struct {
-    Name      string `json:"name"`       // env var name
-    SecretRef SecretRefEntry `json:"secretRef"` // k8s secret reference
+    // Name is the environment variable name.
+    // +kubebuilder:validation:MinLength=1
+    Name string `json:"name"`
+
+    // SecretRef references a key in a Kubernetes Secret.
+    SecretRef SecretRefEntry `json:"secretRef"`
 }
 ```
 
-> **Open question:** Should `env` and `envFrom` be separate fields or unified? — see [questions document](mcp-support-questions.md), Q5.
+### CEL Validation
 
-### ConfigMap Injection
+Only structurally certain rules:
+- `command` and `url` are mutually exclusive
+- At least one of `command` or `url` must be set
 
-A new `injectMcpServersIntoConfigMap()` function (following the channels/providers pattern) that:
+No validation of `transport` values or `env` key naming — those are OpenClaw's concern.
 
-1. Builds `mcp.servers` map from `spec.mcpServers`
-2. For `envFrom` entries, resolves to placeholder values (the real secrets go on the gateway container, not in the ConfigMap)
-3. Merges into `operator.json` under `mcp.servers`
+### Reconciler Validation
 
-### Gateway Deployment Modification
+- `envFrom` referenced Secrets must exist and contain the specified key (same pattern as credential validation)
+- Failures set `McpServersConfigured=False` with a descriptive message
 
-A new `configureGatewayForMcpServers()` function (following the Vertex/Kubernetes pattern in `claw_deployment.go`) that:
+## ConfigMap Injection
 
-1. For each `McpServerSpec` with `envFrom`, adds env vars to the gateway container sourced from `secretKeyRef`
-2. The env var name matches what's in the MCP server's `env` config so the subprocess inherits it
+New `injectMcpServersIntoConfigMap()` function (following the channels/providers pattern):
 
-### Proxy Configuration
+1. For each `McpServerSpec`, builds the server config object:
+   - Stdio: `{ "command": ..., "args": ..., "env": { ... } }` — `env` includes plain values from `env` field. For `envFrom` entries, the env var name is included in the config with a placeholder value (the real value comes from the container environment at runtime).
+   - HTTP: `{ "url": ..., "transport": ... }`
+2. Sets `config["mcp"]["servers"][name] = serverConfig`
+3. Marshals back into `operator.json`
 
-For HTTP MCP servers, the URL's domain must be in the proxy allowlist. Options:
+## Gateway Deployment Modification
 
-- Automatic: parse the URL, add as a `type: none` passthrough route
-- Manual: user adds a `credentials` entry for the domain
+New `configureGatewayForMcpServers()` function in `claw_deployment.go`, called from `configureDeployments()` alongside the existing Vertex/Kubernetes gateway modifications:
 
-> **Open question:** Should this be automatic or manual? — see [questions document](mcp-support-questions.md), Q3.
+- For each `McpServerSpec` with `envFrom` entries, adds env vars to the gateway container:
+  ```json
+  {
+    "name": "GITHUB_PERSONAL_ACCESS_TOKEN",
+    "valueFrom": {
+      "secretKeyRef": {
+        "name": "github-pat-secret",
+        "key": "token"
+      }
+    }
+  }
+  ```
+
+New `stampMcpSecretVersionAnnotation()` — separate from the existing `stampSecretVersionAnnotation` which targets the **proxy** deployment. MCP secrets are on the **gateway** deployment, so this function stamps the gateway pod template with MCP secret `ResourceVersion`s to trigger rollouts when secrets change.
+
+## Proxy Configuration
+
+HTTP MCP URL domain auto-extraction happens inside `generateProxyConfig()` (in `claw_proxy.go`), which runs during `applyProxyResources()` — before ConfigMap injection. The function receives the Claw instance's `McpServers` map (or a pre-extracted list of domains) and:
+
+1. Parses each HTTP MCP URL to extract the hostname
+2. Checks if the domain is already covered by a `credentials` entry or builtin passthrough
+3. If not covered, adds a `type: none` passthrough route to the proxy config
+
+This ensures unauthenticated HTTP MCP servers "just work" without requiring a separate `credentials` entry.
+
+## Status Condition
+
+New `McpServersConfigured` condition type:
+
+- `True` — all MCP server secrets validated and config injected
+- `False` — secret validation failed (with descriptive message)
+- Not set when `spec.mcpServers` is empty
+
+Failures also set `Ready=False`.
 
 ## Implementation Plan
 
-### Phase 1: CRD and ConfigMap Injection
+Each phase corresponds to a single PR. Phases must be merged in order.
 
-1. Add `McpServerSpec` types to `api/v1alpha1/claw_types.go`
-2. Run `make manifests && make generate`
-3. Add `injectMcpServersIntoConfigMap()` in new file `internal/controller/claw_mcp.go`
-4. Wire into `enrichConfigAndNetworkPolicy()` in `claw_resource_controller.go`
-5. Add unit tests in `claw_mcp_test.go`
+### Phase 1: HTTP/SSE and basic stdio MCP support (tiers 1 & 2)
 
-### Phase 2: Secret Handling (stdio env)
+Delivers working MCP for HTTP servers (auto-allowlisted) and stdio servers with static/placeholder env vars. No `envFrom` field yet — the CRD only advertises capabilities the reconciler supports.
 
-1. Add `configureGatewayForMcpServers()` in `claw_deployment.go`
-2. Add secret validation in `resolveAndApplyCredentials()` (or new MCP validation step)
-3. Stamp secret versions for MCP secrets (rollout on secret change)
-4. Add unit tests
+1. Add `McpServerSpec` type to `api/v1alpha1/claw_types.go` (**without** `EnvFrom` field)
+2. Add `McpServers map[string]McpServerSpec` field to `ClawSpec`
+3. Add `ConditionTypeMcpServersConfigured` constant
+4. Add CEL validation rules (`command` xor `url`)
+5. Run `make manifests && make generate`
+6. Add `injectMcpServersIntoConfigMap()` in new file `internal/controller/claw_mcp.go`
+7. Add HTTP MCP URL domain extraction in `generateProxyConfig()` (in `claw_proxy.go`)
+8. Wire `injectMcpServersIntoConfigMap` into `enrichConfigAndNetworkPolicy()`
+9. Set `McpServersConfigured` condition (`True` on success, not set when empty)
+10. Add unit tests in `claw_mcp_test.go` and `claw_proxy_test.go`
 
-### Phase 3: Proxy Allowlisting (HTTP MCP)
+### Phase 2: Stdio MCP secret injection (tier 3 — escape hatch)
 
-1. Parse HTTP MCP URLs, generate proxy routes
-2. Add companion domain support via `allowedDomains`
-3. Unit tests for proxy config generation with MCP domains
+Adds the `envFrom` field and reconciler logic to mount real secrets into the gateway container for stdio MCP servers that manage their own credentials.
 
-### Phase 4: Documentation and Platform Skill
+1. Add `McpEnvFromSecret` type and `EnvFrom []McpEnvFromSecret` field to `McpServerSpec`
+2. Add CEL validation for `envFrom` entries
+3. Run `make manifests && make generate`
+4. Add MCP `envFrom` secret validation in `resolveAndApplyCredentials()` (or adjacent)
+5. Add `configureGatewayForMcpServers()` in `claw_deployment.go`, called from `configureDeployments()`
+6. Add `stampMcpSecretVersionAnnotation()` targeting the gateway deployment
+7. Enhance `McpServersConfigured` condition to report secret validation failures
+8. Add unit tests
 
-1. Update PLATFORM.md with MCP server guidance
-2. Add MCP section to `docs/provider-setup.md`
-3. Add `McpServersConfigured` status condition
+### Phase 3: MCP documentation
 
-## Open Questions
+Required part of the feature — not follow-up work.
 
-Summary of unresolved decisions — see [mcp-support-questions.md](mcp-support-questions.md) for details:
+1. Update PLATFORM.md with comprehensive MCP section (three-tier model, worked examples for well-known MCP servers, guidance on which tier to recommend)
+2. Add MCP section to `docs/provider-setup.md` (step-by-step setup for all three tiers)
 
-- **Q1:** How should stdio MCP server secrets be handled?
-- **Q2:** Should HTTP MCP auth go through the proxy or be config-injected?
-- **Q3:** How should proxy domain allowlisting work for MCP servers?
-- **Q4:** Where should MCP config live in the CRD?
-- **Q5:** Should `env` and `envFrom` be separate or unified?
-- **Q6:** Should the operator validate MCP server configurations?
-- **Q7:** How should the status condition work for MCP?
+## Example: Full CR
+
+```yaml
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    # LLM provider
+    - name: anthropic
+      type: apiKey
+      secretRef:
+        - name: anthropic-api-key
+          key: api-key
+      provider: anthropic
+
+    # GitHub API — enables tier 2 proxy placeholder for the GitHub MCP server
+    - name: github
+      type: bearer
+      domain: api.github.com
+      secretRef:
+        - name: github-pat-secret
+          key: token
+
+  mcpServers:
+    # Tier 1: HTTP MCP — domain auto-extracted, no secrets needed
+    context7:
+      url: https://mcp.context7.com/mcp
+      transport: streamable-http
+
+    # Tier 2: Stdio MCP — placeholder env, proxy injects real PAT
+    github:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: placeholder
+
+    # Tier 3: Stdio MCP — real secret on gateway (escape hatch)
+    custom-db:
+      command: node
+      args: ["db-mcp-server.js"]
+      env:
+        DB_HOST: postgres.internal
+      envFrom:
+        - name: DB_PASSWORD
+          secretRef:
+            name: db-credentials
+            key: password
+```

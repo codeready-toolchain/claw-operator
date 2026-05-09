@@ -1,108 +1,112 @@
 # MCP Support — Design Questions
 
-**Status:** Open — decisions pending
+**Status:** All decisions resolved
 **Related:** [Design document](mcp-support-design.md)
 
 Each question has options with trade-offs and a recommendation. Go through them one by one to form the design, then update the design document.
 
-## Q1: How should stdio MCP server secrets be handled?
+## Q1: How should MCP server secrets be handled?
 
-Stdio MCP servers run as subprocesses of the gateway. They inherit the gateway process environment. There is no HTTP layer to intercept — the proxy cannot inject secrets for these. The fundamental question: do we accept putting secrets on the gateway container for stdio MCP, or do we limit support to avoid it?
+MCP servers may need credentials (API tokens, passwords). The operator's core security principle is that real secrets stay on the proxy, not the gateway. The question: how does this apply to the two MCP transport types?
 
-### Option A: Gateway env vars via `secretKeyRef` (accept the exception)
+### Three-tier security model (chosen)
 
-Secrets are mounted as env vars on the gateway container, referenced from Kubernetes Secrets. The MCP server config in `operator.json` uses placeholder values; the real values come from the process environment, which the subprocess inherits.
+| Tier | Transport | Secret handling | Secrets on gateway? |
+|---|---|---|---|
+| **1. HTTP/SSE MCP** (preferred) | HTTP URL | Proxy `credentials` entry for the URL's domain | No |
+| **2. Stdio + proxy placeholder** (recommended for stdio) | Subprocess | Placeholder env var + proxy `credentials` entry for known domains | No |
+| **3. Stdio + real secret** (escape hatch) | Subprocess | `envFrom` with `secretKeyRef` on the gateway container | Yes |
 
-- **Pro:** Full stdio MCP support — works with all MCP servers (GitHub, filesystem, database, etc.)
-- **Pro:** Follows the same pattern as `OPENCLAW_GATEWAY_TOKEN` (already a `secretKeyRef` on the gateway)
-- **Pro:** Matches how the upstream operator and installer handle MCP secrets
-- **Con:** Breaks the "no real secrets on the gateway" principle for these specific env vars
-- **Con:** A compromised gateway process can read these env vars
+**Tier 1 — HTTP/SSE MCP servers:** Traffic goes through the MITM proxy. The user adds a `credentials` entry for the MCP URL's domain (e.g., `type: bearer` for `api.example.com`). The proxy injects auth headers. No secrets on the gateway.
 
-### Option B: No secret support for stdio MCP — only plain env
+**Tier 2 — Stdio with proxy placeholder:** Stdio MCP subprocesses inherit `HTTP_PROXY`/`HTTPS_PROXY`, so their outbound HTTPS calls go through the MITM proxy too. If the user knows which domain the MCP server talks to, they can set the env var to a **placeholder** value and add a `credentials` entry for the domain. The MCP server sends `Authorization: Bearer placeholder`, the proxy strips it and injects the real token. Example:
 
-Only allow plain-text `env` values (non-secret). Users who need secrets must manually configure them via `openclaw config patch` inside the pod or use HTTP MCP servers instead.
+```yaml
+spec:
+  credentials:
+    - name: github
+      type: bearer
+      domain: api.github.com
+      secretRef:
+        - name: github-pat-secret
+          key: token
+  mcpServers:
+    github:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: placeholder
+```
 
-- **Pro:** Maintains strict secret isolation
-- **Con:** Most useful stdio MCP servers need secrets (GitHub PAT, database passwords)
-- **Con:** Poor UX — user has to manually inject secrets after every pod restart
-- **Con:** The upstream operator doesn't have this limitation
+The user needs to know: which domain the MCP server calls, and what auth type it uses. The platform skill documents this for well-known MCP servers.
 
-### Option C: Sidecar proxy for stdio MCP servers
+**Tier 3 — Stdio with real secret (escape hatch):** When the user doesn't know the MCP server's internals, or the MCP server uses the secret for non-HTTP purposes, `envFrom` mounts the real secret as a gateway container env var. This breaks the "no secrets on gateway" principle but is the only option in these cases. Follows the same pattern as `OPENCLAW_GATEWAY_TOKEN` (already a `secretKeyRef` on the gateway).
 
-Run stdio MCP servers in a separate sidecar container with secrets, communicating with the gateway over a local socket or HTTP bridge.
+- **Pro:** Full coverage — every MCP server can be supported at some tier
+- **Pro:** Tiers 1 and 2 preserve the security model (no secrets on gateway)
+- **Pro:** Tier 3 is explicit opt-in — user consciously accepts the tradeoff
+- **Pro:** Tier 2 works for the most common stdio MCP servers (GitHub, Slack, etc.) whose APIs are well-documented
 
-- **Pro:** Secrets stay off the gateway container
-- **Con:** Massive complexity — MCP stdio protocol uses stdin/stdout pipes, not sockets
-- **Con:** Would require a custom bridge component that doesn't exist
-- **Con:** Fundamentally changes the MCP execution model
+_Considered and rejected: No secret support for stdio (impractical: most useful stdio MCP servers need secrets). Sidecar proxy for stdio (massive complexity: MCP stdio uses stdin/stdout pipes, not sockets)._
 
-**Recommendation:** Option A. The gateway already has `secretKeyRef`-based secrets (`OPENCLAW_GATEWAY_TOKEN`, proxy CA). Stdio MCP is architecturally incapable of proxy-based injection. This is the documented "unless it's the only way" exception. The blast radius is limited: these env vars are only visible to the gateway process and its children, not externally accessible.
+**Decision:** Three-tier model. HTTP/SSE is the recommended path (tier 1). Stdio with proxy placeholder is the recommended stdio path (tier 2) — platform skill documents the pattern for well-known MCP servers. `envFrom` with real secrets on the gateway (tier 3) is the escape hatch for cases where tiers 1–2 don't work. Users must also add `credentials` entries to allowlist domains their stdio MCP server needs (applies to both tiers 2 and 3).
+
+**Documentation requirement:** The three-tier model and the proxy-placeholder pattern are non-obvious. Implementation must include:
+- **PLATFORM.md skill update**: Comprehensive section teaching OpenClaw how to guide users through each tier, with worked examples for well-known MCP servers (GitHub, etc.). The skill must explain which tier to recommend based on the user's situation, how to identify domains/auth types for tier 2, and when to fall back to tier 3.
+- **`docs/provider-setup.md` update**: Step-by-step setup instructions for MCP servers, with examples covering all three tiers.
+
+These doc updates are a required part of the implementation, not a follow-up.
 
 ## Q2: Should HTTP MCP auth go through the proxy or be config-injected?
 
-HTTP MCP servers (`url`-based, using `streamable-http` or `sse` transport) can have auth headers. The question is whether those headers should be injected by the MITM proxy (keeping secrets off the gateway) or written into the MCP config in `operator.json`.
+**Resolved by Q1.** The three-tier model from Q1 establishes that HTTP MCP auth uses the proxy via `credentials` entries (tier 1). No separate decision needed.
 
-### Option A: Proxy-injected headers (reuse credential system)
+**Decision:** Proxy-injected headers (Option A). User adds both an MCP server entry and a `credentials` entry for the domain. The proxy injects auth. Secrets stay off the gateway. This is consistent with the operator's security model and reuses existing credential infrastructure.
 
-User adds both an MCP server entry (for config) and a `credentials` entry (for auth). The credential's `domain` matches the MCP URL's host, and the proxy injects auth headers.
-
-- **Pro:** Consistent with the operator's security model — real secrets stay on the proxy
-- **Pro:** Reuses existing credential infrastructure (no new secret plumbing)
-- **Pro:** HTTP MCP servers behave like any other authenticated HTTP endpoint
-- **Con:** User must configure two things (MCP server + credential) for one service
-- **Con:** Slightly more complex UX for simple cases
-
-### Option B: Config-injected headers (secrets in `operator.json`)
-
-Auth headers are written directly into the MCP server's `headers` field in `operator.json`, sourced from Kubernetes Secrets.
-
-- **Pro:** Single configuration point — everything about the MCP server is in one place
-- **Con:** Secrets end up in `operator.json` on the ConfigMap, readable by the gateway
-- **Con:** Breaks the proxy-based secret isolation for HTTP traffic (where it IS possible)
-- **Con:** ConfigMap data is not encrypted at rest (unlike Secrets)
-
-### Option C: Hybrid — proxy for auth, config for non-secret headers
-
-MCP server config has non-secret headers (like `Content-Type`). Auth goes through a credential entry. The operator documents the pattern.
-
-- **Pro:** Best of both worlds — secrets stay secure, non-secret config stays simple
-- **Con:** Same two-thing UX concern as Option A, though documented patterns mitigate this
-
-**Recommendation:** Option A. HTTP traffic already goes through the MITM proxy. The proxy can handle auth injection for MCP URLs exactly like it does for LLM providers. Users already know the credential pattern. The PLATFORM.md skill can guide Claw to help users set up both pieces together.
+_Considered and rejected: Option B — config-injected headers (secrets in `operator.json` on a ConfigMap, breaks proxy isolation). Option C — hybrid (same outcome as A, unnecessary distinction)._
 
 ## Q3: How should proxy domain allowlisting work for MCP servers?
 
 MCP servers need network access. Stdio MCP servers make outbound HTTP calls (through the proxy). HTTP MCP servers connect to their URL (through the proxy). Domains must be in the proxy allowlist.
 
-### Option A: Automatic from URL + explicit `allowedDomains`
-
-For HTTP MCP servers, auto-extract the domain from `url` and add it as a passthrough route. For stdio MCP servers (and any extra domains HTTP servers need), use an `allowedDomains` field on the MCP spec.
-
-- **Pro:** HTTP MCP "just works" — URL implies the domain
-- **Pro:** `allowedDomains` covers stdio MCP servers that need specific endpoints
-- **Con:** Auto-extraction adds implicit behavior (domain allowlisted without explicit credential entry)
-- **Con:** `allowedDomains` is a new concept alongside `credentials`
-
-### Option B: Manual via existing `credentials` entries
-
-Users add `type: none` credential entries for any domains MCP servers need. No new fields on the MCP spec.
-
-- **Pro:** Single mechanism for all domain allowlisting (existing pattern)
-- **Pro:** No new API surface
-- **Con:** Verbose — user must add separate credential entries for every MCP domain
-- **Con:** Poor discoverability — not obvious that MCP needs credential entries for domains
-
 ### Option C: Automatic from URL only (no `allowedDomains` field)
 
-Auto-extract domain from HTTP MCP URLs. Stdio MCP server domains must be allowlisted via `credentials` entries.
+Auto-extract domain from HTTP MCP URLs and add as a `type: none` passthrough route. Stdio MCP server domains are allowlisted via `credentials` entries (which the user already adds for tier 2/3 auth anyway per Q1).
 
-- **Pro:** Simpler API — no `allowedDomains` field
-- **Pro:** HTTP MCP works automatically
-- **Con:** Stdio MCP servers that need network access require separate credential entries
-- **Con:** Inconsistent — HTTP auto-allowlisted, stdio not
+- **Pro:** HTTP MCP "just works" — unauthenticated HTTP MCP servers (like Context7) need only the MCP entry, no separate credential
+- **Pro:** Authenticated HTTP MCP servers already have a `credentials` entry (Q1 tier 1), so auto-extraction is redundant but harmless
+- **Pro:** No new API surface — no `allowedDomains` field
+- **Pro:** Stdio domain handling is consistent with Q1 — users add `credentials` entries for both auth and allowlisting
 
-**Recommendation:** Option C. Keep it simple for Phase 1. HTTP MCP URLs naturally imply a domain — auto-extracting it is pragmatic and low-risk (it's a `type: none` passthrough, not credential injection). Stdio MCP server domains are less predictable (they depend on what the subprocess does) and are better handled explicitly via `credentials`. This avoids a new `allowedDomains` concept. We can always add it later if the UX is painful.
+_Considered and rejected: Option A — auto from URL + `allowedDomains` field (adds a new domain-allowlisting concept parallel to `credentials`, unnecessary complexity). Option B — manual via `credentials` entries only (forces a `type: none` credential for every unauthenticated HTTP MCP server, verbose for the common case)._
+
+**Decision:** Option C. HTTP MCP URLs auto-extract the domain as a passthrough. Stdio MCP domains use existing `credentials` entries. No new API surface.
+
+Example — unauthenticated HTTP MCP (Context7) + authenticated stdio MCP (GitHub):
+
+```yaml
+spec:
+  credentials:
+    # Tier 2: proxy injects real PAT on api.github.com (also allowlists the domain)
+    - name: github
+      type: bearer
+      domain: api.github.com
+      secretRef:
+        - name: github-pat-secret
+          key: token
+  mcpServers:
+    # HTTP MCP — domain auto-extracted from URL, no credential needed
+    context7:
+      url: https://mcp.context7.com/mcp
+      transport: streamable-http
+
+    # Stdio MCP — placeholder env, proxy handles real auth on api.github.com
+    github:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: placeholder
+```
 
 ## Q4: Where should MCP config live in the CRD?
 
@@ -129,49 +133,11 @@ spec:
 - **Pro:** Clean separation — MCP is not a "credential" or "channel"
 - **Pro:** Map keyed by server name (natural for MCP where names matter)
 - **Pro:** Room for MCP-specific fields without overloading `CredentialSpec`
-- **Con:** Adds a new top-level spec field (API surface growth)
+- **Pro:** Maps directly to OpenClaw's `mcp.servers` config shape
 
-### Option B: Extend `CredentialSpec` with an `mcp` field
+_Considered and rejected: Option B — extend `CredentialSpec` (already complex with 7 types + channels + providers; MCP doesn't fit the credential model). Option C — raw config pass-through like the upstream operator (no structured validation, no secret integration, secrets as plain text in config)._
 
-Add MCP config as another variant of `CredentialSpec`, similar to how `channel` works:
-
-```yaml
-spec:
-  credentials:
-    - name: github-mcp
-      type: none
-      mcp:
-        command: npx
-        args: ["-y", "@modelcontextprotocol/server-github"]
-```
-
-- **Pro:** Reuses existing credential infrastructure
-- **Pro:** Secret handling via `secretRef` is already built in
-- **Con:** `CredentialSpec` is already complex (7 types, channels, providers). MCP would overload it further
-- **Con:** MCP servers don't fit the credential model — they're not about injecting auth on a domain
-- **Con:** Forces MCP into credential validation logic that doesn't apply
-
-### Option C: Raw config pass-through (`spec.config.raw`)
-
-Follow the upstream operator pattern — users pass raw MCP JSON through an opaque config field:
-
-```yaml
-spec:
-  config:
-    raw:
-      mcp:
-        servers:
-          github: { command: npx, args: [...] }
-```
-
-- **Pro:** Zero new types — just pass through to `openclaw.json`
-- **Pro:** Matches upstream operator pattern exactly
-- **Con:** No structured validation, no secret integration
-- **Con:** Secrets would need to be plain text in the config (security problem)
-- **Con:** No proxy domain auto-allowlisting
-- **Con:** Doesn't leverage operator capabilities
-
-**Recommendation:** Option A. MCP servers are conceptually distinct from credentials and channels. A dedicated `spec.mcpServers` map gives clean separation, structured validation, and room for proper secret handling. It's also the most natural mapping to OpenClaw's `mcp.servers` config shape.
+**Decision:** Option A. `spec.mcpServers` as a new top-level map.
 
 ## Q5: Should `env` and `envFrom` be separate fields or unified?
 
@@ -196,52 +162,32 @@ mcpServers:
 - **Pro:** Clear distinction between secret and non-secret values
 - **Pro:** Plain `env` values go directly into `operator.json`; `envFrom` become `secretKeyRef` on the container and placeholders in config
 - **Pro:** Follows Kubernetes naming conventions (`env` + `envFrom`)
-- **Con:** Two fields for related concept
+- **Pro:** Maps cleanly to the three-tier model: `env` for tier 2 placeholders, `envFrom` for tier 3 real secrets
 
-### Option B: Unified `env` with inline secret references
+_Considered and rejected: Option B — unified `env` with polymorphic values (string | object is ugly in Go CRD types, CRD schema can't express it cleanly, harder to distinguish which env vars need container-level `secretKeyRef` mounting)._
 
-```yaml
-mcpServers:
-  github:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      LOG_LEVEL: debug
-      GITHUB_PERSONAL_ACCESS_TOKEN:
-        secretRef:
-          name: github-pat-secret
-          key: token
-```
-
-- **Pro:** Single field, mixed plain and secret values
-- **Con:** Polymorphic value type (string | object) is ugly in Go CRD types and CEL validation
-- **Con:** CRD schema can't easily express "value is either a string or an object with secretRef"
-- **Con:** Harder to distinguish which env vars need container-level `secretKeyRef` mounting
-
-**Recommendation:** Option A. The Kubernetes naming convention is well-understood. The Go type system handles it cleanly. The separation makes the reconciler logic straightforward: `env` goes to ConfigMap, `envFrom` goes to both ConfigMap (as placeholder) and Deployment (as `secretKeyRef`).
+**Decision:** Option A. Separate `env` and `envFrom` fields.
 
 ## Q6: Should the operator validate MCP server configurations?
 
 The operator could validate MCP server configs (e.g., stdio must have `command`, HTTP must have `url`, not both). Or it could pass them through and let OpenClaw validate at runtime.
 
-### Option A: Validate with CEL rules on the CRD
+### Decision: Validate only what we're 100% sure about
 
-Add `XValidation` rules like: "command and url are mutually exclusive", "transport requires url", etc.
+CEL rules for things that are structurally certain:
+- `command` and `url` are mutually exclusive (a server can't be both stdio and HTTP)
+- At least one of `command` or `url` must be set (an empty server entry is always wrong)
+- `envFrom` secret references must be well-formed (name + key required)
 
-- **Pro:** Fast feedback — `oc apply` fails immediately with a clear message
-- **Pro:** Consistent with how `CredentialSpec` validates (CEL rules on type/provider/channel)
-- **Con:** More CEL rules to maintain
-- **Con:** If OpenClaw adds new transport types, CRD validation could reject valid configs
+Skip validation for things that could change in OpenClaw:
+- Don't enforce `transport` values (`sse`, `streamable-http`) — OpenClaw could add new ones
+- Don't enforce that `args` requires `command` — OpenClaw might evolve
+- Don't validate `env` key naming — that's the MCP server's concern
 
-### Option B: Minimal validation only
+Reconciler-time validation (not CEL):
+- `envFrom` referenced Secrets must exist and contain the specified key (same pattern as credential validation)
 
-Only validate what the operator needs to function (e.g., `envFrom` secretRef exists). Let OpenClaw handle the rest.
-
-- **Pro:** Forward-compatible — new MCP features in OpenClaw don't require CRD updates
-- **Pro:** Less maintenance
-- **Con:** Misconfigurations surface at runtime, not apply time
-
-**Recommendation:** Option A. CEL validation is the project convention. Basic structural rules (stdio xor HTTP, required fields) catch common mistakes early. The rules can be relaxed later if needed; tightening is harder.
+_Rationale: Tight validation that blocks valid configs is worse than loose validation that lets misconfigs through to runtime. OpenClaw gives clear errors for bad MCP config. We only gate on things that are structurally impossible to be correct._
 
 ## Q7: How should the status condition work for MCP?
 
@@ -253,22 +199,7 @@ Separate condition, set to `True` when all MCP server secrets are validated and 
 
 - **Pro:** Clear signal for MCP-specific issues
 - **Pro:** Follows existing pattern (`CredentialsResolved`, `ProxyConfigured`)
-- **Con:** More conditions to track
 
-### Option B: Fold into `CredentialsResolved`
+_Considered and rejected: Option B — fold into `CredentialsResolved` (muddies the meaning, MCP isn't a "credential"). Option C — no new condition, only `Ready` (less granular, can't distinguish MCP failures from other issues)._
 
-MCP secret validation runs alongside credential validation; failures show on `CredentialsResolved`.
-
-- **Pro:** Fewer conditions
-- **Con:** Muddies the meaning of `CredentialsResolved` — MCP isn't a "credential"
-- **Con:** Harder to diagnose MCP-specific issues
-
-### Option C: No new condition — only `Ready`
-
-MCP failures surface on the top-level `Ready` condition with a descriptive message.
-
-- **Pro:** Simplest
-- **Con:** Less granular debugging
-- **Con:** `Ready=False` doesn't indicate whether the issue is MCP, credentials, or something else
-
-**Recommendation:** Option A. A dedicated condition is cheap, follows the project pattern, and makes MCP issues immediately diagnosable. The operator already has 4 conditions — one more is fine.
+**Decision:** Option A. New `McpServersConfigured` condition.
