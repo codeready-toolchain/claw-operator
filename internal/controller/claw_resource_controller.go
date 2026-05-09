@@ -483,6 +483,13 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	if len(instance.Spec.McpServers) > 0 {
+		setCondition(instance, clawv1alpha1.ConditionTypeMcpServersConfigured, metav1.ConditionTrue,
+			clawv1alpha1.ConditionReasonConfigured, "MCP server configuration injected")
+	} else {
+		meta.RemoveStatusCondition(&instance.Status.Conditions, clawv1alpha1.ConditionTypeMcpServersConfigured)
+	}
+
 	// Filter out Route (applied in phase above) and proxy ConfigMap (controller-managed)
 	remainingObjects := []*unstructured.Unstructured{}
 	for _, obj := range objects {
@@ -597,6 +604,9 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	if err := injectChannelsIntoConfigMap(objects, instance); err != nil {
 		return fmt.Errorf("failed to inject channels into ConfigMap: %w", err)
 	}
+	if err := injectMcpServersIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject MCP servers into ConfigMap: %w", err)
+	}
 	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
 	}
@@ -646,7 +656,7 @@ func (r *ClawResourceReconciler) configureDeployments(
 func (r *ClawResourceReconciler) applyProxyResources(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) ([]byte, error) {
 	logger := log.FromContext(ctx)
 
-	proxyConfigJSON, err := generateProxyConfig(resolvedCreds)
+	proxyConfigJSON, err := generateProxyConfig(resolvedCreds, instance.Spec.McpServers)
 	if err != nil {
 		logger.Error(err, "Failed to generate proxy config")
 		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())

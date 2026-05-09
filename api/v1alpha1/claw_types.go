@@ -51,6 +51,7 @@ const (
 	ConditionTypeCredentialsResolved     = "CredentialsResolved"
 	ConditionTypeProxyConfigured         = "ProxyConfigured"
 	ConditionTypeDevicePairingConfigured = "DevicePairingConfigured"
+	ConditionTypeMcpServersConfigured    = "McpServersConfigured"
 )
 
 // Annotation keys used on pod templates to trigger rollouts on config changes.
@@ -214,6 +215,34 @@ type CredentialSpec struct {
 	AllowedPaths []string `json:"allowedPaths,omitempty"`
 }
 
+// McpServerSpec defines an MCP server the operator injects into OpenClaw's config.
+// +kubebuilder:validation:XValidation:rule="has(self.command) || has(self.url)",message="either command (stdio) or url (HTTP) must be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.command) || !has(self.url)",message="command and url are mutually exclusive"
+type McpServerSpec struct {
+	// Command is the executable for a stdio MCP server.
+	// +optional
+	Command string `json:"command,omitempty"`
+
+	// Args are command-line arguments for the stdio server.
+	// +optional
+	Args []string `json:"args,omitempty"`
+
+	// URL is the endpoint for an HTTP MCP server.
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// Transport selects the HTTP transport type ("streamable-http" or "sse").
+	// Only valid when url is set.
+	// +optional
+	Transport string `json:"transport,omitempty"`
+
+	// Env are plain environment variables passed to the stdio server process
+	// and written into the MCP server config in operator.json.
+	// Use for non-secret values and tier-2 placeholder tokens.
+	// +optional
+	Env map[string]string `json:"env,omitempty"`
+}
+
 // ClawSpec defines the desired state of Claw
 type ClawSpec struct {
 	// ConfigMode controls how operator config is applied on pod start.
@@ -227,6 +256,11 @@ type ClawSpec struct {
 	// Credentials configures proxy credential injection per domain.
 	// +optional
 	Credentials []CredentialSpec `json:"credentials,omitempty"`
+
+	// McpServers declares MCP servers injected into OpenClaw's config.
+	// Map keys are server names as they appear in the mcp.servers config.
+	// +optional
+	McpServers map[string]McpServerSpec `json:"mcpServers,omitempty"`
 }
 
 // ClawStatus defines the observed state of Claw
