@@ -502,6 +502,7 @@ func TestFindClawsReferencingSecret(t *testing.T) {
 		mcpSecretName := "mcp-db-secret"
 		mcpSecret := createTestAPIKeySecret(mcpSecretName, namespace, "password", "s3cret")
 		require.NoError(t, k8sClient.Create(ctx, mcpSecret))
+		t.Cleanup(func() { _ = k8sClient.Delete(ctx, mcpSecret) })
 
 		instance := &clawv1alpha1.Claw{}
 		instance.Name = testInstanceName
