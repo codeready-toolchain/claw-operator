@@ -251,7 +251,7 @@ Delivers working MCP for HTTP servers (auto-allowlisted) and stdio servers with 
 9. Set `McpServersConfigured` condition (`True` on success, not set when empty)
 10. Add unit tests in `claw_mcp_test.go` and `claw_proxy_test.go`
 
-### Phase 2: Stdio MCP secret injection (tier 3 — escape hatch)
+### Phase 2: Stdio MCP secret injection (tier 3 — escape hatch) - DONE
 
 Adds the `envFrom` field and reconciler logic to mount real secrets into the gateway container for stdio MCP servers that manage their own credentials.
 

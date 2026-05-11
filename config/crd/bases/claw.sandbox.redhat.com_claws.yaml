@@ -264,6 +264,47 @@ spec:
                         and written into the MCP server config in operator.json.
                         Use for non-secret values and tier-2 placeholder tokens.
                       type: object
+                    envFrom:
+                      description: |-
+                        EnvFrom are secret-backed environment variables mounted on the gateway
+                        container and inherited by the stdio server subprocess (tier 3).
+                        Use only when the proxy-placeholder pattern (tier 2) is not viable.
+                      items:
+                        description: |-
+                          McpEnvFromSecret maps a Kubernetes Secret key to an environment variable
+                          on the gateway container for tier 3 MCP secret injection.
+                        properties:
+                          name:
+                            description: Name is the environment variable name.
+                            minLength: 1
+                            type: string
+                          secretRef:
+                            description: SecretRef references a key in a Kubernetes
+                              Secret.
+                            properties:
+                              key:
+                                description: Key is the key in the Secret's data map
+                                minLength: 1
+                                type: string
+                              name:
+                                description: Name is the name of the Secret
+                                minLength: 1
+                                type: string
+                              role:
+                                description: |-
+                                  Role distinguishes multiple secrets for the same credential.
+                                  Required when multiple secretRef entries are present (e.g., Slack botToken/appToken).
+                                maxLength: 63
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                        required:
+                        - name
+                        - secretRef
+                        type: object
+                      type: array
                     transport:
                       description: |-
                         Transport selects the HTTP transport type ("streamable-http" or "sse").
@@ -278,6 +319,10 @@ spec:
                     rule: has(self.command) || has(self.url)
                   - message: command and url are mutually exclusive
                     rule: '!has(self.command) || !has(self.url)'
+                  - message: envFrom is only allowed for stdio MCP servers (command),
+                      not HTTP (url)
+                    rule: '!has(self.url) || !has(self.envFrom) || size(self.envFrom)
+                      == 0'
                 description: |-
                   McpServers declares MCP servers injected into OpenClaw's config.
                   Map keys are server names as they appear in the mcp.servers config.

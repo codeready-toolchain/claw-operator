@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -493,5 +494,66 @@ func TestFindClawsReferencingSecret(t *testing.T) {
 
 		requests := reconciler.findClawsReferencingSecret(ctx, secret)
 		assert.Empty(t, requests)
+	})
+
+	t.Run("should map MCP envFrom secret to Claw reconcile request", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		mcpSecretName := "mcp-db-secret"
+		mcpSecret := createTestAPIKeySecret(mcpSecretName, namespace, "password", "s3cret")
+		require.NoError(t, k8sClient.Create(ctx, mcpSecret))
+		t.Cleanup(func() { _ = k8sClient.Delete(ctx, mcpSecret) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = testCredentials()
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"db-tool": {
+				Command: "node",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "DB_PASSWORD",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: mcpSecretName, Key: "password"},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		requests := reconciler.findClawsReferencingSecret(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: mcpSecretName, Namespace: namespace},
+		})
+		require.Len(t, requests, 1)
+		assert.Equal(t, testInstanceName, requests[0].Name)
+	})
+
+	t.Run("should not duplicate request when secret matches both credential and MCP envFrom", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstance(t, ctx, testInstanceName, namespace)
+
+		instance := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, instance))
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"tool": {
+				Command: "cmd",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "TOKEN",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: aiModelSecret, Key: aiModelSecretKey},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Update(ctx, instance))
+
+		reconciler := createClawReconciler()
+		requests := reconciler.findClawsReferencingSecret(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: aiModelSecret, Namespace: namespace},
+		})
+		require.Len(t, requests, 1, "should return exactly one request, not duplicate")
 	})
 }

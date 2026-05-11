@@ -417,6 +417,19 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	// Validate MCP envFrom secrets exist and contain specified keys
+	if err := r.validateMcpServerSecrets(ctx, instance); err != nil {
+		logger.Error(err, "MCP server secret validation failed")
+		setCondition(instance, clawv1alpha1.ConditionTypeMcpServersConfigured, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after MCP secret validation failure")
+		}
+		return ctrl.Result{}, err
+	}
+
 	// Generate proxy config, apply ConfigMaps (proxy config + Vertex AI stub ADC)
 	proxyConfigJSON, err := r.applyProxyResources(ctx, instance, resolvedCreds)
 	if err != nil {
@@ -443,6 +456,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Stamp Secret ResourceVersions to trigger rollout when Secret data changes
 	if err := r.stampSecretVersionAnnotation(ctx, objects, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to stamp secret version annotations: %w", err)
+	}
+
+	// Stamp MCP envFrom Secret versions on gateway deployment for rollout
+	if err := r.stampMcpSecretVersionAnnotation(ctx, objects, instance); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to stamp MCP secret version annotations: %w", err)
 	}
 
 	// Apply Claw Route and wait for ingress host to be populated
@@ -646,6 +664,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	}
 	if err := configureClawDeploymentConfigMode(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure claw deployment config mode: %w", err)
+	}
+	if err := configureGatewayForMcpServers(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure gateway for MCP servers: %w", err)
 	}
 	return nil
 }
@@ -1278,21 +1299,34 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 		return nil
 	}
 
-	// Find Claw CRs that reference this Secret
+	// Find Claw CRs that reference this Secret (via credentials or MCP envFrom)
 	var requests []reconcile.Request
 	for _, instance := range openClawList.Items {
-		for _, cred := range instance.Spec.Credentials {
-			if referencesSecret(cred, secret.Name) {
-				requests = append(requests, reconcile.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      instance.Name,
-						Namespace: instance.Namespace,
-					},
-				})
-				break
-			}
+		if clawReferencesSecret(instance, secret.Name) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      instance.Name,
+					Namespace: instance.Namespace,
+				},
+			})
 		}
 	}
 
 	return requests
+}
+
+func clawReferencesSecret(instance clawv1alpha1.Claw, secretName string) bool {
+	for _, cred := range instance.Spec.Credentials {
+		if referencesSecret(cred, secretName) {
+			return true
+		}
+	}
+	for _, spec := range instance.Spec.McpServers {
+		for _, ef := range spec.EnvFrom {
+			if ef.SecretRef.Name == secretName {
+				return true
+			}
+		}
+	}
+	return false
 }

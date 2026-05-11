@@ -56,10 +56,12 @@ const (
 
 // Annotation keys used on pod templates to trigger rollouts on config changes.
 const (
-	AnnotationKeyProxyConfigHash   = "claw.sandbox.redhat.com/proxy-config-hash"
-	AnnotationKeyGatewayConfigHash = "claw.sandbox.redhat.com/gateway-config-hash"
-	AnnotationPrefixSecretVersion  = "claw.sandbox.redhat.com/"
-	AnnotationSuffixSecretVersion  = "-secret-version"
+	AnnotationKeyProxyConfigHash     = "claw.sandbox.redhat.com/proxy-config-hash"
+	AnnotationKeyGatewayConfigHash   = "claw.sandbox.redhat.com/gateway-config-hash"
+	AnnotationPrefixSecretVersion    = "claw.sandbox.redhat.com/"
+	AnnotationSuffixSecretVersion    = "-secret-version"
+	AnnotationPrefixMcpSecretVersion = "claw.sandbox.redhat.com/mcp-"
+	AnnotationSuffixMcpSecretVersion = "-secret-version"
 )
 
 // Condition reasons for Claw status.
@@ -218,6 +220,7 @@ type CredentialSpec struct {
 // McpServerSpec defines an MCP server the operator injects into OpenClaw's config.
 // +kubebuilder:validation:XValidation:rule="has(self.command) || has(self.url)",message="either command (stdio) or url (HTTP) must be set"
 // +kubebuilder:validation:XValidation:rule="!has(self.command) || !has(self.url)",message="command and url are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="!has(self.url) || !has(self.envFrom) || size(self.envFrom) == 0",message="envFrom is only allowed for stdio MCP servers (command), not HTTP (url)"
 type McpServerSpec struct {
 	// Command is the executable for a stdio MCP server.
 	// +optional
@@ -241,6 +244,23 @@ type McpServerSpec struct {
 	// Use for non-secret values and tier-2 placeholder tokens.
 	// +optional
 	Env map[string]string `json:"env,omitempty"`
+
+	// EnvFrom are secret-backed environment variables mounted on the gateway
+	// container and inherited by the stdio server subprocess (tier 3).
+	// Use only when the proxy-placeholder pattern (tier 2) is not viable.
+	// +optional
+	EnvFrom []McpEnvFromSecret `json:"envFrom,omitempty"`
+}
+
+// McpEnvFromSecret maps a Kubernetes Secret key to an environment variable
+// on the gateway container for tier 3 MCP secret injection.
+type McpEnvFromSecret struct {
+	// Name is the environment variable name.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// SecretRef references a key in a Kubernetes Secret.
+	SecretRef SecretRefEntry `json:"secretRef"`
 }
 
 // ClawSpec defines the desired state of Claw
