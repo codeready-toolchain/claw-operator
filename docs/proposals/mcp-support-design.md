@@ -264,7 +264,7 @@ Adds the `envFrom` field and reconciler logic to mount real secrets into the gat
 7. Enhance `McpServersConfigured` condition to report secret validation failures
 8. Add unit tests
 
-### Phase 3: MCP documentation
+### Phase 3: MCP documentation - DONE
 
 Required part of the feature — not follow-up work.
 

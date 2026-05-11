@@ -138,7 +138,7 @@ data:
   PLATFORM.md: |
     ---
     name: platform
-    description: "Platform overview, proxy architecture, LLM provider model management, and messaging channel integration."
+    description: "Platform overview, proxy architecture, LLM provider model management, messaging channel integration, and MCP server configuration."
     ---
 
     # Platform Overview
@@ -444,6 +444,119 @@ data:
     If the user asks about `gh` CLI access, recommend the curl + REST API approach
     instead, or explain that `gh auth login` requires an interactive session inside
     the pod and stores credentials in the gateway container (less secure).
+
+    # MCP Servers
+
+    MCP (Model Context Protocol) servers extend your capabilities with structured tool
+    access to external services. The operator manages MCP server configuration via
+    `spec.mcpServers` in the Claw CR — separate from `credentials`.
+
+    ## Three-tier security model
+
+    | Tier | Transport | Secret handling | Secrets on gateway? |
+    |------|-----------|-----------------|---------------------|
+    | 1. HTTP/SSE (preferred) | HTTP URL | Proxy `credentials` entry for the domain | No |
+    | 2. Stdio + proxy placeholder | Subprocess | Placeholder env + `credentials` entry | No |
+    | 3. Stdio + real secret (escape hatch) | Subprocess | `envFrom` with `secretKeyRef` | Yes |
+
+    ## Which tier to recommend
+
+    Use this decision tree:
+
+    1. **Is the MCP server HTTP/SSE?** → Tier 1. Add the `url` to `mcpServers`. If
+       it needs auth, add a `credentials` entry for the domain (same as any other
+       external service). If unauthenticated, no `credentials` entry needed — the
+       domain is auto-extracted as a passthrough route.
+
+    2. **Is it stdio and you know which domain/auth it uses?** → Tier 2. Add the
+       MCP server with a placeholder env var, and add a `credentials` entry for the
+       target domain. The proxy replaces the placeholder with the real credential.
+
+    3. **Is it stdio but you don't know its internals, or it uses the secret for
+       non-HTTP purposes?** → Tier 3. Use `envFrom` to mount the real secret on
+       the gateway container. The user accepts that the secret is on the gateway.
+
+    ## Worked examples
+
+    ### Context7 (Tier 1 — unauthenticated HTTP)
+
+    No secret, no credential entry needed. The domain is auto-extracted:
+
+    ```yaml
+    mcpServers:
+      context7:
+        url: https://mcp.context7.com/mcp
+        transport: streamable-http
+    ```
+
+    ### GitHub MCP (Tier 2 — stdio with proxy placeholder)
+
+    The GitHub MCP server (`@modelcontextprotocol/server-github`) calls
+    `api.github.com` using the `GITHUB_PERSONAL_ACCESS_TOKEN` env var as a bearer
+    token. The proxy intercepts and injects the real PAT:
+
+    ```yaml
+    credentials:
+      - name: github
+        type: bearer
+        domain: api.github.com
+        secretRef:
+          - name: github-pat-secret
+            key: token
+
+    mcpServers:
+      github:
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-github"]
+        env:
+          GITHUB_PERSONAL_ACCESS_TOKEN: placeholder
+    ```
+
+    If the user already has a `credentials` entry for `api.github.com` (for REST
+    API access), the **same entry** covers the MCP server too — no duplication needed.
+
+    ### Generic stdio MCP (Tier 3 — real secret on gateway)
+
+    When you don't know what domain the MCP server calls, or it uses the secret
+    for non-HTTP purposes (e.g., database password):
+
+    ```yaml
+    mcpServers:
+      custom-db:
+        command: node
+        args: ["db-mcp-server.js"]
+        env:
+          DB_HOST: postgres.internal
+        envFrom:
+          - name: DB_PASSWORD
+            secretRef:
+              name: db-credentials
+              key: password
+    ```
+
+    The user must also add a `credentials` entry (even `type: none`) for any
+    domains the MCP server needs to reach through the proxy.
+
+    ## How MCP interacts with other config
+
+    - **`spec.mcpServers`** is separate from `spec.credentials`. MCP entries define
+      what servers to run; credentials define proxy routing and auth injection.
+    - **HTTP MCP domains** are auto-extracted as passthrough routes — no `credentials`
+      entry needed for unauthenticated HTTP MCP servers.
+    - **Stdio MCP domains** must be allowlisted via `credentials` entries (the same
+      list used for providers and channels). This applies to both tier 2 and tier 3.
+    - **Merge mode:** Operator-managed MCP servers merge alongside user-managed
+      servers added via `openclaw mcp set`. On collision (same server name), the
+      operator-managed entry wins.
+
+    ## What NOT to do
+
+    **Do NOT** run `openclaw mcp set` or `openclaw mcp remove` for operator-managed
+    MCP servers (those declared in `spec.mcpServers`). The operator owns these entries
+    — manual changes will be overwritten on the next pod restart.
+
+    User-managed MCP servers (added via `openclaw mcp set` inside the pod) coexist
+    fine with operator-managed ones as long as names don't collide.
 
     # Custom Domains
 
