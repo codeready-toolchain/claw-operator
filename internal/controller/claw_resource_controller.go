@@ -1299,21 +1299,34 @@ func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context,
 		return nil
 	}
 
-	// Find Claw CRs that reference this Secret
+	// Find Claw CRs that reference this Secret (via credentials or MCP envFrom)
 	var requests []reconcile.Request
 	for _, instance := range openClawList.Items {
-		for _, cred := range instance.Spec.Credentials {
-			if referencesSecret(cred, secret.Name) {
-				requests = append(requests, reconcile.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      instance.Name,
-						Namespace: instance.Namespace,
-					},
-				})
-				break
-			}
+		if clawReferencesSecret(instance, secret.Name) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      instance.Name,
+					Namespace: instance.Namespace,
+				},
+			})
 		}
 	}
 
 	return requests
+}
+
+func clawReferencesSecret(instance clawv1alpha1.Claw, secretName string) bool {
+	for _, cred := range instance.Spec.Credentials {
+		if referencesSecret(cred, secretName) {
+			return true
+		}
+	}
+	for _, spec := range instance.Spec.McpServers {
+		for _, ef := range spec.EnvFrom {
+			if ef.SecretRef.Name == secretName {
+				return true
+			}
+		}
+	}
+	return false
 }

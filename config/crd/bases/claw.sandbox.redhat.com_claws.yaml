@@ -319,6 +319,10 @@ spec:
                     rule: has(self.command) || has(self.url)
                   - message: command and url are mutually exclusive
                     rule: '!has(self.command) || !has(self.url)'
+                  - message: envFrom is only allowed for stdio MCP servers (command),
+                      not HTTP (url)
+                    rule: '!has(self.url) || !has(self.envFrom) || size(self.envFrom)
+                      == 0'
                 description: |-
                   McpServers declares MCP servers injected into OpenClaw's config.
                   Map keys are server names as they appear in the mcp.servers config.

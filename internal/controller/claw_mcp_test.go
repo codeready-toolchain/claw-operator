@@ -774,7 +774,7 @@ func TestMcpServersIntegration(t *testing.T) {
 			}, deployment) == nil
 		}, "Deployment should be created")
 
-		annotationKey := clawv1alpha1.AnnotationPrefixMcpSecretVersion + "db-tool-DB_PASS" + clawv1alpha1.AnnotationSuffixMcpSecretVersion
+		annotationKey := clawv1alpha1.AnnotationPrefixMcpSecretVersion + mcpAnnotationKey("db-tool", "DB_PASS") + clawv1alpha1.AnnotationSuffixMcpSecretVersion
 		rv, exists := deployment.Spec.Template.Annotations[annotationKey]
 		assert.True(t, exists, "MCP secret version annotation should be present")
 		assert.NotEmpty(t, rv, "annotation value should be the secret ResourceVersion")

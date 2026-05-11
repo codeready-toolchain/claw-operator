@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -865,5 +866,163 @@ func TestConfigureGatewayForMcpServers(t *testing.T) {
 		assert.True(t, envNames["DB_USER"])
 		assert.True(t, envNames["DB_PASS"])
 		assert.True(t, envNames["DB_HOST"])
+	})
+
+	t.Run("should deduplicate envFrom entries with the same env var name", func(t *testing.T) {
+		objects := makeGatewayDeployment()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"aaa-server": {
+				Command: "node",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "SHARED_TOKEN",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "secret-a", Key: "token"},
+					},
+				},
+			},
+			"bbb-server": {
+				Command: "python",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "SHARED_TOKEN",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "secret-b", Key: "token"},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, configureGatewayForMcpServers(objects, instance))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		require.Len(t, envVars, 1, "duplicate env var names should be deduped")
+		env := envVars[0].(map[string]any)
+		assert.Equal(t, "SHARED_TOKEN", env["name"])
+		secretKeyRef := env["valueFrom"].(map[string]any)["secretKeyRef"].(map[string]any)
+		assert.Equal(t, "secret-b", secretKeyRef["name"], "bbb-server should win (sorted after aaa-server)")
+	})
+
+	t.Run("should not duplicate when existing env matches desired secretKeyRef", func(t *testing.T) {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name": ClawGatewayContainerName,
+							"env": []any{
+								map[string]any{
+									"name": "DB_PASS",
+									"valueFrom": map[string]any{
+										"secretKeyRef": map[string]any{
+											"name": "db-secret",
+											"key":  "pass",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"db": {
+				Command: "node",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{
+						Name:      "DB_PASS",
+						SecretRef: clawv1alpha1.SecretRefEntry{Name: "db-secret", Key: "pass"},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, configureGatewayForMcpServers([]*unstructured.Unstructured{dep}, instance))
+
+		containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		require.Len(t, envVars, 1, "matching existing env should not create a duplicate")
+	})
+
+	t.Run("should produce deterministic order across multiple runs", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.McpServers = map[string]clawv1alpha1.McpServerSpec{
+			"z-server": {
+				Command: "z",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{Name: "Z_VAR", SecretRef: clawv1alpha1.SecretRefEntry{Name: "z-secret", Key: "k"}},
+				},
+			},
+			"a-server": {
+				Command: "a",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{Name: "A_VAR", SecretRef: clawv1alpha1.SecretRefEntry{Name: "a-secret", Key: "k"}},
+				},
+			},
+			"m-server": {
+				Command: "m",
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{Name: "M_VAR", SecretRef: clawv1alpha1.SecretRefEntry{Name: "m-secret", Key: "k"}},
+				},
+			},
+		}
+
+		orders := make([]string, 0, 10)
+		for range 10 {
+			objects := makeGatewayDeployment()
+			require.NoError(t, configureGatewayForMcpServers(objects, instance))
+
+			containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+			container := containers[0].(map[string]any)
+			envVars := container["env"].([]any)
+
+			names := make([]string, 0, len(envVars))
+			for _, e := range envVars {
+				names = append(names, e.(map[string]any)["name"].(string))
+			}
+			orders = append(orders, fmt.Sprintf("%v", names))
+		}
+
+		for i := 1; i < len(orders); i++ {
+			assert.Equal(t, orders[0], orders[i], "env var order should be deterministic")
+		}
+	})
+}
+
+func TestMcpAnnotationKey(t *testing.T) {
+	t.Run("should produce valid annotation key segment", func(t *testing.T) {
+		key := mcpAnnotationKey("my-server", "MY_VAR")
+		assert.Len(t, key, 12, "hash should be 12 hex characters (6 bytes)")
+		assert.Regexp(t, `^[0-9a-f]{12}$`, key)
+	})
+
+	t.Run("should be deterministic", func(t *testing.T) {
+		k1 := mcpAnnotationKey("server", "VAR")
+		k2 := mcpAnnotationKey("server", "VAR")
+		assert.Equal(t, k1, k2)
+	})
+
+	t.Run("should differ for different inputs", func(t *testing.T) {
+		k1 := mcpAnnotationKey("server-a", "VAR")
+		k2 := mcpAnnotationKey("server-b", "VAR")
+		assert.NotEqual(t, k1, k2)
+	})
+
+	t.Run("should handle special characters safely", func(t *testing.T) {
+		key := mcpAnnotationKey("server/with:special.chars!", "ENV_WITH_UNDERSCORES")
+		assert.Regexp(t, `^[0-9a-f]{12}$`, key, "should only contain valid hex chars regardless of input")
 	})
 }
