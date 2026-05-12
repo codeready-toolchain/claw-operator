@@ -355,7 +355,8 @@ spec:
 | `internal/controller/claw_proxy.go` | Extend `generateProxyConfig` to accept `*WebSearchSpec` and emit search domain routes; extend `stampSecretVersionAnnotation` to also stamp `spec.webSearch.secretRef` |
 | `internal/controller/claw_resource_controller.go` | Wire validation into reconcile loop, call `configureProxyForWebSearch` in `configureDeployments`, call `injectWebSearchIntoConfigMap` in `enrichConfigAndNetworkPolicy`, pass `webSearch` to `generateProxyConfig` |
 | New: `internal/controller/claw_web_search_test.go` | Tests for validation, ConfigMap injection, proxy route generation, proxy deployment mounting |
-| `docs/provider-setup.md` | User-facing documentation for web search and web fetch setup |
+| `internal/assets/manifests/claw/configmap.yaml` | Add "Web Search & Web Fetch" section to `PLATFORM.md` skill (how it works, operator-managed config, what NOT to do); update skill `description` frontmatter to mention web search |
+| `docs/provider-setup.md` | New "Web Search" section with per-provider setup (Brave, Tavily, DuckDuckGo, Gemini) and "Web Fetch" section |
 
 ### Steps
 
@@ -365,7 +366,8 @@ spec:
 4. Extend `stampSecretVersionAnnotation` to stamp the web search secret's `ResourceVersion`
 5. Wire into reconciler: validation → proxy config (with web search) → deployment mounting → secret stamping → ConfigMap injection → condition
 6. Tests (validation, ConfigMap injection, proxy routes, proxy deployment mounting, secret version stamping)
-7. Documentation
+7. Update `PLATFORM.md` skill in `configmap.yaml` with web search/fetch section (operator-managed config, provider categories, what NOT to do)
+8. Update `docs/provider-setup.md` with per-provider setup guides and web fetch section
 
 ## Future Considerations
 
