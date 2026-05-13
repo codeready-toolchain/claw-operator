@@ -461,7 +461,7 @@ func TestGenerateProxyConfigWithChannelCompanions(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{cred}), nil)
+		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{cred}), nil, nil)
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -484,7 +484,7 @@ func TestGenerateProxyConfigWithChannelCompanions(t *testing.T) {
 			Type:    clawv1alpha1.CredentialTypeNone,
 		}
 
-		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{cred}), nil)
+		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{cred}), nil, nil)
 		require.NoError(t, err)
 
 		var cfg proxyConfig
@@ -513,7 +513,7 @@ func TestGenerateProxyConfigWithChannelCompanions(t *testing.T) {
 			},
 		}
 
-		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{cred}), nil)
+		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{cred}), nil, nil)
 		require.NoError(t, err)
 
 		var cfg proxyConfig

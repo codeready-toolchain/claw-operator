@@ -1,6 +1,6 @@
 # Provider Setup
 
-This guide covers configuring LLM providers, external services, messaging channels, and MCP servers for use with Claw. Each section walks through creating the necessary Secret and Claw CR configuration.
+This guide covers configuring LLM providers, external services, messaging channels, MCP servers, web search, and web fetch for use with Claw. Each section walks through creating the necessary Secret and Claw CR configuration.
 
 All examples assume you have set your target namespace:
 
@@ -856,3 +856,166 @@ The operator reconciles `spec.mcpServers` into the `mcp.servers` section of `ope
 - **Overwrite mode**: The full config is replaced on every pod start, including MCP servers.
 
 The operator also validates that all `envFrom`-referenced Secrets exist and contain the specified keys. If validation fails, the `McpServersConfigured` condition is set to `False` with a descriptive error message, and `Ready` is set to `False`.
+
+## Web Search
+
+The operator can configure a web search provider for the OpenClaw agent via `spec.webSearch`. Search API keys are injected by the MITM proxy — they never reach the gateway container.
+
+### Brave Search
+
+Uses the [Brave Search API](https://brave.com/search/api/) with an API key injected via the `X-Subscription-Token` header.
+
+**1. Get an API key** from [Brave Search API](https://brave.com/search/api/).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic brave-search-key \
+  --from-literal=api-key=YOUR_BRAVE_API_KEY \
+  -n $NS
+```
+
+**3. Add to your Claw CR:**
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials: []  # your existing credentials
+  webSearch:
+    provider: brave
+    secretRef:
+      name: brave-search-key
+      key: api-key
+EOF
+```
+
+### Tavily
+
+Uses the [Tavily API](https://tavily.com/) with a bearer token.
+
+**1. Get an API key** from [Tavily](https://app.tavily.com/).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic tavily-key \
+  --from-literal=api-key=YOUR_TAVILY_API_KEY \
+  -n $NS
+```
+
+**3. Add to your Claw CR:**
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials: []  # your existing credentials
+  webSearch:
+    provider: tavily
+    secretRef:
+      name: tavily-key
+      key: api-key
+EOF
+```
+
+You can pass provider-specific configuration via `spec.webSearch.config`:
+
+```yaml
+webSearch:
+  provider: tavily
+  secretRef:
+    name: tavily-key
+    key: api-key
+  config:
+    maxResults: 10
+```
+
+### DuckDuckGo
+
+Key-free search — no API key or Secret needed.
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials: []  # your existing credentials
+  webSearch:
+    provider: duckduckgo
+EOF
+```
+
+### Gemini (Search Grounding)
+
+Uses Google's Gemini search grounding, which sends a regular Gemini API call with `tools: [{ google_search }]`. This reuses your existing `google` provider credential — no additional Secret is needed.
+
+**Prerequisite:** You must have a `google` provider credential in `spec.credentials`.
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials:
+    - name: google
+      provider: google
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+  webSearch:
+    provider: gemini
+EOF
+```
+
+### How It Works
+
+The operator sets `tools.web.search.provider` in `operator.json` and, for API-keyed providers, adds a proxy route for the search domain with credential injection. A placeholder API key is set in the config so OpenClaw makes the HTTP call; the proxy strips it and injects the real key.
+
+The `WebSearchConfigured` condition tracks the status:
+- `True` — provider validated and config injected
+- `False` — validation failed (missing secret, missing google credential for gemini, unknown provider)
+
+## Web Fetch
+
+The `web_fetch` tool allows the agent to fetch arbitrary URLs. Enable it via `spec.webFetch`:
+
+```yaml
+spec:
+  webFetch:
+    enabled: true
+```
+
+Fetched URLs are gated by the proxy allowlist. Only domains already permitted by credentials, search providers, or builtin passthroughs are reachable. To allow additional domains for fetching, add `type: none` credential entries:
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials:
+    - name: docs-site
+      type: none
+      domain: docs.python.org
+  webFetch:
+    enabled: true
+EOF
+```

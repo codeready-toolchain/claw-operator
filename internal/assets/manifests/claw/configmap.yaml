@@ -138,7 +138,7 @@ data:
   PLATFORM.md: |
     ---
     name: platform
-    description: "Platform overview, proxy architecture, LLM provider model management, messaging channel integration, and MCP server configuration."
+    description: "Platform overview, proxy architecture, LLM provider model management, messaging channel integration, MCP server configuration, and web search/fetch."
     ---
 
     # Platform Overview
@@ -557,6 +557,83 @@ data:
 
     User-managed MCP servers (added via `openclaw mcp set` inside the pod) coexist
     fine with operator-managed ones as long as names don't collide.
+
+    # Web Search & Web Fetch
+
+    The operator can configure a web search provider via `spec.webSearch` in the Claw
+    CR. This sets up the search tool without you needing to manually edit config files.
+
+    ## Provider categories
+
+    | Provider | Category | How auth works |
+    |----------|----------|----------------|
+    | Brave | Standalone API | Proxy injects API key via `X-Subscription-Token` header |
+    | Tavily | Standalone API | Proxy injects API key via `Authorization: Bearer` header |
+    | DuckDuckGo | Key-free | No API key needed — passthrough route |
+    | Gemini | LLM-as-search | Reuses existing `google` provider credential |
+
+    For API-keyed providers (Brave, Tavily), the search API key is mounted on the
+    **proxy** container — the gateway never sees it. The operator sets a placeholder
+    key in the config; the proxy strips it and injects the real key on outbound requests.
+
+    ## Examples
+
+    **Brave** (API-keyed — requires a Secret):
+    ```yaml
+    spec:
+      webSearch:
+        provider: brave
+        secretRef:
+          name: brave-search-key
+          key: api-key
+    ```
+
+    **DuckDuckGo** (key-free — no Secret needed):
+    ```yaml
+    spec:
+      webSearch:
+        provider: duckduckgo
+    ```
+
+    **Gemini** (LLM-as-search — reuses existing `google` credential):
+    ```yaml
+    spec:
+      credentials:
+        - name: google
+          provider: google
+          # ...
+      webSearch:
+        provider: gemini
+    ```
+
+    **Web fetch + web search together:**
+    ```yaml
+    spec:
+      webSearch:
+        provider: tavily
+        secretRef:
+          name: tavily-key
+          key: api-key
+      webFetch:
+        enabled: true
+    ```
+
+    ## Web Fetch
+
+    When `spec.webFetch.enabled: true` is set, the `web_fetch` tool lets you fetch
+    arbitrary URLs. However, only domains already allowed by the proxy (LLM providers,
+    search APIs, builtin passthroughs, `type: none` entries) are reachable. The proxy
+    blocks all other domains.
+
+    ## What NOT to do
+
+    **Do NOT** manually configure `tools.web.search` or `tools.web.fetch` in
+    `openclaw.json` or via config patches. The operator manages these settings —
+    manual changes will be overwritten on the next pod restart.
+
+    **Do NOT** set search API keys as environment variables (`BRAVE_API_KEY`,
+    `TAVILY_API_KEY`, etc.) on the gateway container. The operator uses proxy-based
+    credential injection to keep secrets off the gateway.
 
     # Custom Domains
 
