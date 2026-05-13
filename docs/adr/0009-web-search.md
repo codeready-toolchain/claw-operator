@@ -1,8 +1,7 @@
-# Web Search and Web Fetch Support
+# ADR-0009: Web Search and Web Fetch Support
 
-**Status:** Final
+**Status:** Implemented
 **Date:** 2026-05-12
-**Decisions:** [web-search-questions.md](web-search-questions.md)
 
 ## Overview
 
@@ -17,6 +16,20 @@ This feature enables users to declare a web search provider and/or enable web fe
 2. **Thin operator, smart app:** The operator sets `tools.web.search.provider`, maps secrets to proxy routes, and injects a placeholder API key into the config. It does *not* replicate OpenClaw's plugin config schemas. Provider-specific tuning uses an opaque `config` field, keeping the operator decoupled from upstream changes.
 
 3. **Consistent patterns:** Follow the same reconciliation, ConfigMap injection, proxy route, and condition patterns as credentials, channels, and MCP servers.
+
+## Decisions
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | How should search API keys be delivered to the gateway? | Proxy credential injection (secret stays on proxy) | All target providers use header-based auth compatible with existing `api_key` and `bearer` injectors. Keeps secrets off the gateway, consistent with the operator's core security model. LLM-as-search providers need no new secret handling. |
+| 2 | Which providers should the operator support in phase 1? | Brave + Tavily + DuckDuckGo + Gemini | Covers standalone APIs, key-free, and LLM-as-search categories. Additional providers are trivial to add later — one table entry each. |
+| 3 | Should search domains get proxy passthrough or credential injection? | Credential injection for API-keyed, passthrough for key-free, no new route for LLM-as-search | Direct consequence of Q1. Proxy acts as both L7 domain gate and credential injector — single enforcement point. |
+| 4 | Single web search provider or allow a list? | Single provider struct (`spec.webSearch`) | Matches OpenClaw's one-active-provider model. Deterministic: the user declares a provider and that's what gets used. |
+| 5 | Dedicated status condition or reuse existing? | New `WebSearchConfigured` condition | Follows established pattern. Only present when the feature is configured, so no noise for non-users. |
+| 6 | Should the operator validate LLM-as-search providers have a matching credential? | Validate and fail with `WebSearchConfigured=False` | Fail-fast with a clear message. Per-category: `secretRef` existence for API-keyed, LLM credential cross-reference for LLM-as-search, none for key-free. |
+| 7 | How should `web.fetch` be handled? | Separate `spec.webFetch` field | Clean separation of concerns. Each has distinct security characteristics. Users can enable fetch without search and vice versa. |
+| 8 | What should `spec.webFetch` look like? | Simple boolean toggle | Proxy allowlist already controls reachable domains. Users add passthrough domains via `spec.credentials` with `type: none`. |
+| 9 | How should the placeholder API key work? | Static placeholder `"ah-ah-ah-you-didnt-say-the-magic-word"` | Same pattern as LLM providers. Proxy strips and replaces regardless of placeholder format. |
 
 ## Architecture
 
@@ -76,7 +89,7 @@ Phase 1 supports four providers across three categories:
 
 1. The user's Secret is mounted as a `secretKeyRef` env var on the **proxy** container (not the gateway), using `credEnvVarName("websearch")` → `CRED_WEBSEARCH`
 2. The operator adds a proxy route for the search domain with the appropriate injector (`api_key` or `bearer`) referencing that env var
-3. The operator sets a static placeholder API key (`"ah-ah-ah-you-didnt-say-the-magic-word"`) in the gateway config via `plugins.entries.<provider>.config.webSearch.apiKey`
+3. The operator sets a static placeholder API key in the gateway config via `plugins.entries.<provider>.config.webSearch.apiKey`
 4. OpenClaw sees a non-empty key and makes the HTTP call through the proxy
 5. The MITM proxy intercepts the request, strips the placeholder auth header, and injects the real credential from `CRED_WEBSEARCH`
 6. The request reaches the upstream with the real key
@@ -134,59 +147,16 @@ Claw CR spec.webSearch / spec.webFetch
 
 ### New Fields on ClawSpec
 
-```go
-type ClawSpec struct {
-    ConfigMode  ConfigMode            `json:"configMode,omitempty"`
-    Credentials []CredentialSpec      `json:"credentials,omitempty"`
-    McpServers  map[string]McpServerSpec `json:"mcpServers,omitempty"`
-
-    // WebSearch configures the web search provider for the OpenClaw agent.
-    // +optional
-    WebSearch *WebSearchSpec `json:"webSearch,omitempty"`
-
-    // WebFetch enables the web_fetch tool for arbitrary URL fetching.
-    // Fetched URLs are gated by the proxy allowlist — only domains
-    // permitted by credentials, search providers, or builtins are reachable.
-    // +optional
-    WebFetch *WebFetchSpec `json:"webFetch,omitempty"`
-}
-```
-
-### WebSearchSpec
-
-```go
-// WebSearchSpec configures the operator-managed web search provider.
-type WebSearchSpec struct {
-    // Provider selects the web search provider.
-    // Known values: brave, tavily, duckduckgo, gemini.
-    // +kubebuilder:validation:MinLength=1
-    Provider string `json:"provider"`
-
-    // SecretRef references a Secret key holding the search API key.
-    // Required for API-keyed providers (brave, tavily).
-    // Not needed for key-free (duckduckgo) or LLM-as-search (gemini).
-    // +optional
-    SecretRef *SecretRefEntry `json:"secretRef,omitempty"`
-
-    // Config is provider-specific configuration merged into
-    // plugins.entries.<provider>.config.webSearch in operator.json.
-    // Use for provider-specific tuning (mode, maxResults, etc.).
-    // +kubebuilder:pruning:PreserveUnknownFields
-    // +optional
-    Config *runtime.RawExtension `json:"config,omitempty"`
-}
-```
-
-### WebFetchSpec
-
-```go
-// WebFetchSpec configures the web_fetch tool.
-type WebFetchSpec struct {
-    // Enabled activates the web_fetch tool. Fetched URLs are gated by
-    // the proxy allowlist.
-    // +kubebuilder:default=true
-    Enabled bool `json:"enabled"`
-}
+```yaml
+spec:
+  webSearch:
+    provider: brave           # required; known: brave, tavily, duckduckgo, gemini
+    secretRef:                # required for API-keyed providers (brave, tavily)
+      name: brave-search-key
+      key: api-key
+    config: {}                # optional; provider-specific tuning (merged into plugins.entries)
+  webFetch:
+    enabled: true             # activates web_fetch tool; gated by proxy allowlist
 ```
 
 ### CEL Validation
@@ -194,11 +164,7 @@ type WebFetchSpec struct {
 On `WebSearchSpec`:
 - `secretRef` is required when `provider` is `brave` or `tavily`
 
-```go
-// +kubebuilder:validation:XValidation:rule="self.provider in ['duckduckgo','gemini'] || has(self.secretRef)",message="secretRef is required for API-keyed search providers"
-```
-
-Note: we intentionally do *not* reject `secretRef` on key-free/LLM-as-search providers. The operator ignores it for those providers, but refusing it at admission time would mean hard-coding the provider categorization into the CEL rule, making it fragile when adding new providers. The reconciler validation (below) already handles the semantics per category.
+The operator intentionally does *not* reject `secretRef` on key-free/LLM-as-search providers. Hard-coding provider categorization into CEL rules would be fragile when adding new providers. The reconciler validation handles the semantics per category.
 
 ### Reconciler Validation
 
@@ -209,32 +175,16 @@ Note: we intentionally do *not* reject `secretRef` on key-free/LLM-as-search pro
 
 ## Proxy Configuration
 
-For API-keyed providers, the operator adds the search domain as a credential injection route in the proxy config. This is handled alongside existing credential routes in `generateProxyConfig`.
+For API-keyed providers, the operator adds the search domain as a credential injection route in the proxy config. Known provider mapping:
 
-```go
-var knownSearchProviders = map[string]searchProviderInfo{
-    "brave": {
-        Domain:   "api.search.brave.com",
-        Injector: "api_key",
-        Header:   "X-Subscription-Token",
-    },
-    "tavily": {
-        Domain:   "api.tavily.com",
-        Injector: "bearer",
-    },
-    "duckduckgo": {
-        Domain:   "html.duckduckgo.com",
-        Injector: "none",
-    },
-    // gemini: no entry — reuses existing google provider credential route
-}
-```
+| Provider | Domain | Injector | Header |
+|----------|--------|----------|--------|
+| Brave | `api.search.brave.com` | `api_key` | `X-Subscription-Token` |
+| Tavily | `api.tavily.com` | `bearer` | — |
+| DuckDuckGo | `html.duckduckgo.com` | `none` | — |
+| Gemini | *(no entry — reuses existing google route)* | — | — |
 
-**Proxy deployment changes:** The search secret is mounted on the proxy container (not the gateway) as a `secretKeyRef` env var named `CRED_WEBSEARCH` (using the existing `credEnvVarName` helper with `"websearch"` as the credential name). The proxy reads this env var at runtime to inject the real credential. This is done by a new `configureProxyForWebSearch` function, following the same pattern as `configureProxyForCredentials`.
-
-**Secret version stamping:** `stampSecretVersionAnnotation` must also stamp the web search secret's `ResourceVersion` on the proxy pod template, so that Secret changes trigger a proxy rollout. This requires extending the function to also check `spec.webSearch.secretRef` alongside `spec.credentials`.
-
-**`generateProxyConfig` signature:** The function currently takes `(credentials []resolvedCredential, mcpServers map[string]McpServerSpec)`. It needs to also accept `webSearch *WebSearchSpec` (or the full `ClawSpec`) to emit the search domain routes. The search provider route is appended to the routes list alongside credential routes, using the `knownSearchProviders` mapping table above.
+The search secret is mounted on the proxy container as a `secretKeyRef` env var named `CRED_WEBSEARCH`. `stampSecretVersionAnnotation` also stamps the web search secret's `ResourceVersion` on the proxy pod template to trigger rollouts on Secret changes.
 
 ## ConfigMap Injection
 
@@ -249,14 +199,12 @@ var knownSearchProviders = map[string]searchProviderInfo{
    ```json
    { "apiKey": "ah-ah-ah-you-didnt-say-the-magic-word" }
    ```
-   Only injected for Brave and Tavily. User-provided `spec.webSearch.config` is deep-merged into this block. For **DuckDuckGo**, no plugin entry is needed (key-free). For **Gemini**, no `apiKey` is injected — the Gemini search provider falls back to `models.providers.google.apiKey` which the operator already sets for the google LLM provider. If the user provides `spec.webSearch.config` for Gemini, it is merged into `plugins.entries.google.config.webSearch` (OpenClaw's google extension id) for provider-specific tuning (model, baseUrl, etc.).
+   Only injected for Brave and Tavily. User-provided `spec.webSearch.config` is deep-merged. For DuckDuckGo, no plugin entry is needed. For Gemini, no `apiKey` is injected — the Gemini search provider falls back to `models.providers.google.apiKey` already set for the google LLM provider. User-provided config for Gemini is merged into `plugins.entries.google.config.webSearch`.
 
 3. **`tools.web.fetch`** — when `spec.webFetch` is set:
    ```json
    { "enabled": true }
    ```
-
-This follows the same pattern as `injectChannelsIntoConfigMap`, which sets both `channels` and `plugins.entries`.
 
 ## Status Condition
 
@@ -341,33 +289,6 @@ spec:
   webFetch:
     enabled: true
 ```
-
-## Implementation Plan
-
-### Files to Change
-
-| File | Change |
-|------|--------|
-| `api/v1alpha1/claw_types.go` | Add `WebSearchSpec`, `WebFetchSpec`, new fields on `ClawSpec`, `WebSearchConfigured` condition constant, CEL validation |
-| `api/v1alpha1/zz_generated.deepcopy.go` | Regenerated (`make generate`) |
-| `config/crd/bases/` | Regenerated CRD YAML (`make manifests`) |
-| New: `internal/controller/claw_web_search.go` | `validateWebSearchConfig`, `injectWebSearchIntoConfigMap`, `configureProxyForWebSearch` (mount search secret on proxy), known provider mapping table (`knownSearchProviders`) |
-| `internal/controller/claw_proxy.go` | Extend `generateProxyConfig` to accept `*WebSearchSpec` and emit search domain routes; extend `stampSecretVersionAnnotation` to also stamp `spec.webSearch.secretRef` |
-| `internal/controller/claw_resource_controller.go` | Wire validation into reconcile loop, call `configureProxyForWebSearch` in `configureDeployments`, call `injectWebSearchIntoConfigMap` in `enrichConfigAndNetworkPolicy`, pass `webSearch` to `generateProxyConfig` |
-| New: `internal/controller/claw_web_search_test.go` | Tests for validation, ConfigMap injection, proxy route generation, proxy deployment mounting |
-| `internal/assets/manifests/claw/configmap.yaml` | Add "Web Search & Web Fetch" section to `PLATFORM.md` skill (how it works, operator-managed config, what NOT to do); update skill `description` frontmatter to mention web search |
-| `docs/provider-setup.md` | New "Web Search" section with per-provider setup (Brave, Tavily, DuckDuckGo, Gemini) and "Web Fetch" section |
-
-### Steps
-
-1. Add CRD types (`WebSearchSpec`, `WebFetchSpec`, condition constant, CEL rule) and run `make manifests generate`
-2. Create `claw_web_search.go` with `knownSearchProviders` mapping, `validateWebSearchConfig`, `configureProxyForWebSearch`, and `injectWebSearchIntoConfigMap`
-3. Extend `generateProxyConfig` to accept `*WebSearchSpec` and emit search domain routes
-4. Extend `stampSecretVersionAnnotation` to stamp the web search secret's `ResourceVersion`
-5. Wire into reconciler: validation → proxy config (with web search) → deployment mounting → secret stamping → ConfigMap injection → condition
-6. Tests (validation, ConfigMap injection, proxy routes, proxy deployment mounting, secret version stamping)
-7. Update `PLATFORM.md` skill in `configmap.yaml` with web search/fetch section (operator-managed config, provider categories, what NOT to do)
-8. Update `docs/provider-setup.md` with per-provider setup guides and web fetch section
 
 ## Future Considerations
 
