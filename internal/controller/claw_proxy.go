@@ -123,6 +123,14 @@ func generateProxyConfig(
 		}
 	}
 
+	if wsRoute, ok := webSearchRoute(webSearch); ok {
+		wsDomain := strings.ToLower(wsRoute.Domain)
+		if !domainCovered(wsDomain, coveredDomains) {
+			coveredDomains[wsDomain] = true
+			exact = append(exact, wsRoute)
+		}
+	}
+
 	exact = append(exact, mcpPassthroughRoutes(mcpServers, coveredDomains)...)
 
 	for _, rc := range credentials {
@@ -215,10 +223,6 @@ func generateProxyConfig(
 				exact = append(exact, companion)
 			}
 		}
-	}
-
-	if route, ok := webSearchRoute(webSearch); ok {
-		exact = append(exact, route)
 	}
 
 	// Stable ordering: exact before suffix, alphabetical within each group.

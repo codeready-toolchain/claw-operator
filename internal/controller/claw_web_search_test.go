@@ -465,6 +465,57 @@ func TestGenerateProxyConfigWithWebSearch(t *testing.T) {
 			assert.NotEqual(t, "html.duckduckgo.com", route.Domain)
 		}
 	})
+
+	t.Run("skips web search route when credential already covers domain", func(t *testing.T) {
+		creds := []resolvedCredential{{
+			CredentialSpec: clawv1alpha1.CredentialSpec{
+				Name:   "brave-cred",
+				Domain: "api.search.brave.com",
+				Type:   clawv1alpha1.CredentialTypeBearer,
+			},
+		}}
+		ws := &clawv1alpha1.WebSearchSpec{
+			Provider:  "brave",
+			SecretRef: &clawv1alpha1.SecretRefEntry{Name: "s", Key: "k"},
+		}
+		data, err := generateProxyConfig(creds, nil, ws)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		var count int
+		for _, route := range cfg.Routes {
+			if route.Domain == "api.search.brave.com" {
+				count++
+			}
+		}
+		assert.Equal(t, 1, count, "domain should appear exactly once (from credential, not web search)")
+	})
+
+	t.Run("skips web search route when suffix credential covers domain", func(t *testing.T) {
+		creds := []resolvedCredential{{
+			CredentialSpec: clawv1alpha1.CredentialSpec{
+				Name:   "brave-wildcard",
+				Domain: ".brave.com",
+				Type:   clawv1alpha1.CredentialTypeBearer,
+			},
+		}}
+		ws := &clawv1alpha1.WebSearchSpec{
+			Provider:  "brave",
+			SecretRef: &clawv1alpha1.SecretRefEntry{Name: "s", Key: "k"},
+		}
+		data, err := generateProxyConfig(creds, nil, ws)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		for _, route := range cfg.Routes {
+			assert.NotEqual(t, "api.search.brave.com", route.Domain,
+				"web search route should be skipped when suffix credential covers the domain")
+		}
+	})
 }
 
 func TestConfigureProxyForWebSearch(t *testing.T) {
