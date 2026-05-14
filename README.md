@@ -14,7 +14,79 @@ The operator applies multiple layers of defense:
 - **Gateway authentication** -- a cryptographically random 256-bit token is auto-generated per instance and required for all gateway access.
 - **Device pairing** -- remote browser connections require a one-time approval via CLI before they can interact with the instance.
 
-## Quick Start
+## Installation (OLM)
+
+The recommended way to install the operator on an OpenShift cluster with OLM.
+
+### 1. Create the Operator Namespace
+
+```sh
+oc create namespace claw-operator
+```
+
+### 2. Create a CatalogSource
+
+```sh
+oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: claw-operator-catalog
+  namespace: openshift-marketplace
+spec:
+  sourceType: grpc
+  image: quay.io/codeready-toolchain/claw-operator-catalog:latest
+  displayName: Claw Operator
+  publisher: Red Hat
+  updateStrategy:
+    registryPoll:
+      interval: 15m
+EOF
+```
+
+### 3. Create an OperatorGroup
+
+```sh
+oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: claw-operator
+  namespace: claw-operator
+spec:
+  targetNamespaces:
+    - claw-operator
+EOF
+```
+
+### 4. Create a Subscription
+
+```sh
+oc apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: claw-operator
+  namespace: claw-operator
+spec:
+  channel: staging
+  name: claw-operator
+  source: claw-operator-catalog
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+```
+
+### 5. Verify the Operator Is Running
+
+```sh
+oc get csv -n claw-operator
+oc get pods -n claw-operator
+```
+
+Once the CSV phase shows `Succeeded` and the controller pod is running, proceed to [Set Up Your Namespace](#2-set-up-your-namespace) to create a Claw instance.
+
+## Development Quick Start
 
 ### Prerequisites
 
