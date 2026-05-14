@@ -349,9 +349,7 @@ OPM_CATALOG_BASE_IMG ?= quay.io/operator-framework/opm:$(OPM_VERSION)
 # Commit-count based versioning (lazily evaluated, only computed when CD targets run)
 GIT_COMMIT_COUNT = $(shell git rev-list --count HEAD)
 GIT_SHORT_SHA = $(shell git rev-parse --short HEAD)
-GIT_PREVIOUS_SHORT_SHA = $(shell git rev-parse --short HEAD~1)
 CD_VERSION = 0.0.$(GIT_COMMIT_COUNT)-commit-$(GIT_SHORT_SHA)
-CD_PREVIOUS_VERSION = 0.0.$(shell expr $(GIT_COMMIT_COUNT) - 1)-commit-$(GIT_PREVIOUS_SHORT_SHA)
 
 .PHONY: push-to-quay-staging
 push-to-quay-staging: generate-cd-release-manifests ## Build and push bundle + catalog images for staging channel.
@@ -371,7 +369,6 @@ generate-cd-release-manifests: opm ## Generate bundle with CD version, images, a
 	sed -i 's|REPLACE_PROXY_IMAGE|$(PROXY_REPO):$(GIT_SHORT_SHA)|g' $(BUNDLE_CSV)
 	sed -i 's|REPLACE_KUBECTL_IMAGE|$(KUBECTL_IMG)|g' $(BUNDLE_CSV)
 	sed -i 's|REPLACE_CREATED_AT|$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")|' $(BUNDLE_CSV)
-	sed -i 's|^  version: \(.*\)|  replaces: claw-operator.v$(CD_PREVIOUS_VERSION)\n  version: \1|' $(BUNDLE_CSV)
 	sed -i '/^    createdAt:/a\    olm.skipRange: ">=0.0.0 <$(CD_VERSION)"' $(BUNDLE_CSV)
 
 .PHONY: build-and-push-catalog
