@@ -326,6 +326,8 @@ spec:
                       not HTTP (url)
                     rule: '!has(self.url) || !has(self.envFrom) || size(self.envFrom)
                       == 0'
+                  - message: transport is only allowed for HTTP MCP servers (url)
+                    rule: '!has(self.transport) || has(self.url)'
                 description: |-
                   McpServers declares MCP servers injected into OpenClaw's config.
                   Map keys are server names as they appear in the mcp.servers config.

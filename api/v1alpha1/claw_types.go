@@ -230,6 +230,7 @@ type CredentialSpec struct {
 // +kubebuilder:validation:XValidation:rule="has(self.command) || has(self.url)",message="either command (stdio) or url (HTTP) must be set"
 // +kubebuilder:validation:XValidation:rule="!has(self.command) || !has(self.url)",message="command and url are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="!has(self.url) || !has(self.envFrom) || size(self.envFrom) == 0",message="envFrom is only allowed for stdio MCP servers (command), not HTTP (url)"
+// +kubebuilder:validation:XValidation:rule="!has(self.transport) || has(self.url)",message="transport is only allowed for HTTP MCP servers (url)"
 type McpServerSpec struct {
 	// Command is the executable for a stdio MCP server.
 	// +optional

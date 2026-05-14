@@ -970,4 +970,23 @@ func TestMcpServerCELValidation(t *testing.T) {
 		err := k8sClient.Create(ctx, instance)
 		require.NoError(t, err, "valid HTTP MCP server should be accepted")
 	})
+
+	t.Run("should reject stdio MCP server with transport set", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"bad": {
+						Command:   "npx",
+						Transport: clawv1alpha1.McpTransportSSE,
+					},
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "CEL should reject stdio MCP server with transport set")
+		assert.Contains(t, err.Error(), "transport is only allowed for HTTP MCP servers (url)")
+	})
 }
