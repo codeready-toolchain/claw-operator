@@ -129,10 +129,10 @@ spec:
                 - /manager
                 env:
                 - name: PROXY_IMAGE
-                  value: claw-proxy:latest
+                  value: REPLACE_PROXY_IMAGE
                 - name: KUBECTL_IMAGE
-                  value: quay.io/openshift/origin-cli:4.21
-                image: claw-operator:latest
+                  value: REPLACE_KUBECTL_IMAGE
+                image: REPLACE_IMAGE
                 imagePullPolicy: IfNotPresent
                 livenessProbe:
                   httpGet:

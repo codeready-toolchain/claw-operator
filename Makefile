@@ -318,6 +318,9 @@ bundle: manifests kustomize operator-sdk ## Generate OLM bundle manifests and va
 	trap 'rm -rf config/.bundle' EXIT; \
 		$(KUSTOMIZE) build config/.bundle | $(OPERATOR_SDK) generate bundle -q --overwrite \
 			--version $(VERSION) $(BUNDLE_METADATA_OPTS)
+	sed -i 's|image: $(IMG)|image: REPLACE_IMAGE|' $(BUNDLE_CSV)
+	sed -i 's|value: $(PROXY_IMG)|value: REPLACE_PROXY_IMAGE|' $(BUNDLE_CSV)
+	sed -i 's|value: $(KUBECTL_IMG)|value: REPLACE_KUBECTL_IMAGE|' $(BUNDLE_CSV)
 	sed -i 's|^    createdAt: .*|    createdAt: "REPLACE_CREATED_AT"|' $(BUNDLE_CSV)
 	sed -i 's|^  version: \(.*\)|  relatedImages:\n  - image: REPLACE_IMAGE\n    name: manager\n  - image: REPLACE_PROXY_IMAGE\n    name: proxy\n  - image: REPLACE_KUBECTL_IMAGE\n    name: kubectl\n  version: \1|' $(BUNDLE_CSV)
 	$(OPERATOR_SDK) bundle validate ./bundle
