@@ -76,106 +76,9 @@ spec:
       clusterPermissions:
       - rules:
         - apiGroups:
-          - ""
-          resources:
-          - configmaps
-          - persistentvolumeclaims
-          - secrets
-          - serviceaccounts
-          verbs:
-          - create
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - ""
-          resources:
-          - pods
-          verbs:
-          - list
-        - apiGroups:
-          - ""
-          resources:
-          - pods/exec
-          verbs:
-          - create
-        - apiGroups:
-          - ""
-          resources:
-          - services
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - apps
-          resources:
-          - deployments
-          verbs:
-          - create
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - claw.sandbox.redhat.com
-          resources:
-          - clawdevicepairingrequests
-          verbs:
-          - create
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - claw.sandbox.redhat.com
-          resources:
-          - clawdevicepairingrequests/finalizers
-          - claws/finalizers
-          verbs:
-          - update
-        - apiGroups:
-          - claw.sandbox.redhat.com
-          resources:
-          - clawdevicepairingrequests/status
-          - claws/status
-          verbs:
-          - get
-          - patch
-          - update
-        - apiGroups:
-          - claw.sandbox.redhat.com
-          resources:
-          - claws
-          verbs:
-          - get
-          - list
-          - watch
-        - apiGroups:
-          - networking.k8s.io
-          resources:
-          - networkpolicies
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
           - rbac.authorization.k8s.io
           resources:
           - clusterroles
-          - rolebindings
           verbs:
           - create
           - get
@@ -183,25 +86,6 @@ spec:
           - patch
           - update
           - watch
-        - apiGroups:
-          - route.openshift.io
-          resources:
-          - routes
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - route.openshift.io
-          resources:
-          - routes/custom-host
-          verbs:
-          - create
-          - update
         - apiGroups:
           - authentication.k8s.io
           resources:
@@ -314,6 +198,132 @@ spec:
           verbs:
           - create
           - patch
+        - apiGroups:
+          - ""
+          resources:
+          - configmaps
+          - persistentvolumeclaims
+          - secrets
+          - serviceaccounts
+          verbs:
+          - create
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - pods
+          verbs:
+          - list
+        - apiGroups:
+          - ""
+          resources:
+          - pods/exec
+          verbs:
+          - create
+        - apiGroups:
+          - ""
+          resources:
+          - services
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - apps
+          resources:
+          - deployments
+          verbs:
+          - create
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - claw.sandbox.redhat.com
+          resources:
+          - clawdevicepairingrequests
+          verbs:
+          - create
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - claw.sandbox.redhat.com
+          resources:
+          - clawdevicepairingrequests/finalizers
+          - claws/finalizers
+          verbs:
+          - update
+        - apiGroups:
+          - claw.sandbox.redhat.com
+          resources:
+          - clawdevicepairingrequests/status
+          - claws/status
+          verbs:
+          - get
+          - patch
+          - update
+        - apiGroups:
+          - claw.sandbox.redhat.com
+          resources:
+          - claws
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - networking.k8s.io
+          resources:
+          - networkpolicies
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - rbac.authorization.k8s.io
+          resources:
+          - rolebindings
+          verbs:
+          - create
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - route.openshift.io
+          resources:
+          - routes
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - route.openshift.io
+          resources:
+          - routes/custom-host
+          verbs:
+          - create
+          - update
         serviceAccountName: claw-operator-controller-manager
     strategy: deployment
   installModes:
