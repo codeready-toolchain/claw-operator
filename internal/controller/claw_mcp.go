@@ -135,7 +135,7 @@ func buildMcpServerConfig(spec clawv1alpha1.McpServerSpec) map[string]any {
 	} else {
 		entry["url"] = spec.URL
 		if spec.Transport != "" {
-			entry["transport"] = spec.Transport
+			entry["transport"] = string(spec.Transport)
 		}
 	}
 

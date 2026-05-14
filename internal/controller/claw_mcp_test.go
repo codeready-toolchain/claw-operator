@@ -66,7 +66,7 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"context7": {
 				URL:       "https://mcp.context7.com/mcp",
-				Transport: "streamable-http",
+				Transport: clawv1alpha1.McpTransportStreamableHTTP,
 			},
 		})
 
@@ -115,7 +115,7 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"context7": {
 				URL:       "https://mcp.context7.com/mcp",
-				Transport: "streamable-http",
+				Transport: clawv1alpha1.McpTransportStreamableHTTP,
 			},
 			"github": {
 				Command: "npx",
@@ -294,7 +294,7 @@ func TestBuildMcpServerConfig(t *testing.T) {
 	t.Run("should not include envFrom for HTTP servers", func(t *testing.T) {
 		spec := clawv1alpha1.McpServerSpec{
 			URL:       "https://example.com/mcp",
-			Transport: "streamable-http",
+			Transport: clawv1alpha1.McpTransportStreamableHTTP,
 		}
 
 		config := buildMcpServerConfig(spec)
@@ -374,7 +374,7 @@ func TestMcpServersIntegration(t *testing.T) {
 				McpServers: map[string]clawv1alpha1.McpServerSpec{
 					"context7": {
 						URL:       "https://mcp.context7.com/mcp",
-						Transport: "streamable-http",
+						Transport: clawv1alpha1.McpTransportStreamableHTTP,
 					},
 				},
 			},
@@ -962,7 +962,7 @@ func TestMcpServerCELValidation(t *testing.T) {
 				McpServers: map[string]clawv1alpha1.McpServerSpec{
 					"context7": {
 						URL:       "https://mcp.context7.com/mcp",
-						Transport: "streamable-http",
+						Transport: clawv1alpha1.McpTransportStreamableHTTP,
 					},
 				},
 			},

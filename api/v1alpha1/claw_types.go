@@ -45,6 +45,15 @@ const (
 	ConfigModeOverwrite ConfigMode = "overwrite"
 )
 
+// McpTransport selects the HTTP transport type for remote MCP servers.
+// +kubebuilder:validation:Enum=streamable-http;sse
+type McpTransport string
+
+const (
+	McpTransportStreamableHTTP McpTransport = "streamable-http"
+	McpTransportSSE            McpTransport = "sse"
+)
+
 // Condition types for Claw status.
 const (
 	ConditionTypeReady                   = "Ready"
@@ -237,7 +246,7 @@ type McpServerSpec struct {
 	// Transport selects the HTTP transport type ("streamable-http" or "sse").
 	// Only valid when url is set.
 	// +optional
-	Transport string `json:"transport,omitempty"`
+	Transport McpTransport `json:"transport,omitempty"`
 
 	// Env are plain environment variables passed to the stdio server process
 	// and written into the MCP server config in operator.json.

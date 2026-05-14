@@ -1288,7 +1288,7 @@ func TestGenerateProxyConfigKubernetes(t *testing.T) {
 func TestMcpServerDomainExtraction(t *testing.T) {
 	t.Run("should auto-extract HTTP MCP URL domain as passthrough route", func(t *testing.T) {
 		mcpServers := map[string]clawv1alpha1.McpServerSpec{
-			"context7": {URL: "https://mcp.context7.com/mcp", Transport: "streamable-http"},
+			"context7": {URL: "https://mcp.context7.com/mcp", Transport: clawv1alpha1.McpTransportStreamableHTTP},
 		}
 
 		data, err := generateProxyConfig(nil, mcpServers)

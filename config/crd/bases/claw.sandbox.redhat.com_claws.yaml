@@ -309,6 +309,9 @@ spec:
                       description: |-
                         Transport selects the HTTP transport type ("streamable-http" or "sse").
                         Only valid when url is set.
+                      enum:
+                      - streamable-http
+                      - sse
                       type: string
                     url:
                       description: URL is the endpoint for an HTTP MCP server.
