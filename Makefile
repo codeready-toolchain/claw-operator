@@ -478,7 +478,7 @@ define download-tool
 @[ -f "$(1)-$(2)" ] || { \
 set -e; \
 echo "Downloading $(1) $(2)"; \
-curl -sSLo $(1)-$(2) $(3); \
+curl --silent --show-error --location --fail --retry 3 --output $(1)-$(2) $(3); \
 chmod +x $(1)-$(2); \
 }; \
 ln -sf $(1)-$(2) $(1)
