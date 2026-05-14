@@ -5,6 +5,43 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - list
+- apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
+- apiGroups:
+  - claw.sandbox.redhat.com
+  resources:
+  - clawdevicepairingrequests
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - claw.sandbox.redhat.com
+  resources:
+  - clawdevicepairingrequests/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - claw.sandbox.redhat.com
+  resources:
+  - clawdevicepairingrequests/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - clusterroles
@@ -39,18 +76,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - pods
-  verbs:
-  - list
-- apiGroups:
-  - ""
-  resources:
-  - pods/exec
-  verbs:
-  - create
-- apiGroups:
-  - ""
-  resources:
   - services
   verbs:
   - create
@@ -74,38 +99,25 @@ rules:
 - apiGroups:
   - claw.sandbox.redhat.com
   resources:
-  - clawdevicepairingrequests
+  - claws
   verbs:
-  - create
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - claw.sandbox.redhat.com
   resources:
-  - clawdevicepairingrequests/finalizers
   - claws/finalizers
   verbs:
   - update
 - apiGroups:
   - claw.sandbox.redhat.com
   resources:
-  - clawdevicepairingrequests/status
   - claws/status
   verbs:
   - get
   - patch
   - update
-- apiGroups:
-  - claw.sandbox.redhat.com
-  resources:
-  - claws
-  verbs:
-  - get
-  - list
-  - watch
 - apiGroups:
   - networking.k8s.io
   resources:
