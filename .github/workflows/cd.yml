@@ -44,10 +44,8 @@ jobs:
         continue-on-error: true
         id: kind
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind create cluster --name scorecard
+          make kind
+          bin/kind create cluster --name scorecard
 
       - name: Run scorecard tests
         if: steps.kind.outcome == 'success'
@@ -60,4 +58,4 @@ jobs:
 
       - name: Cleanup Kind cluster
         if: always() && steps.kind.outcome == 'success'
-        run: kind delete cluster --name scorecard
+        run: bin/kind delete cluster --name scorecard
