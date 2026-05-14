@@ -389,7 +389,7 @@ type ClawResourceReconciler struct {
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,namespace=system,resources=rolebindings,verbs=get;list;watch;create;update;patch
 
 // Reconcile manages the complete lifecycle of resources for Claw instances
-func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) { //nolint:gocyclo
 	logger := log.FromContext(ctx)
 	logger.Info("Reconciling Claw", "name", req.Name, "namespace", req.Namespace)
 
@@ -426,6 +426,15 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after MCP secret validation failure")
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Validate web search configuration (secret existence, credential cross-refs)
+	if err := r.validateWebSearchConfig(ctx, instance); err != nil {
+		logger.Error(err, "Web search validation failed")
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after web search validation failure")
 		}
 		return ctrl.Result{}, err
 	}
@@ -625,6 +634,9 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	if err := injectMcpServersIntoConfigMap(objects, instance); err != nil {
 		return fmt.Errorf("failed to inject MCP servers into ConfigMap: %w", err)
 	}
+	if err := injectWebSearchIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject web search config into ConfigMap: %w", err)
+	}
 	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
 	}
@@ -652,6 +664,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if err := configureProxyForCredentials(objects, instance, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
 	}
+	if err := configureProxyForWebSearch(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure proxy for web search: %w", err)
+	}
 	if err := configureClawDeploymentForVertex(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Vertex AI: %w", err)
 	}
@@ -677,7 +692,7 @@ func (r *ClawResourceReconciler) configureDeployments(
 func (r *ClawResourceReconciler) applyProxyResources(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) ([]byte, error) {
 	logger := log.FromContext(ctx)
 
-	proxyConfigJSON, err := generateProxyConfig(resolvedCreds, instance.Spec.McpServers)
+	proxyConfigJSON, err := generateProxyConfig(resolvedCreds, instance.Spec.McpServers, instance.Spec.WebSearch)
 	if err != nil {
 		logger.Error(err, "Failed to generate proxy config")
 		setCondition(instance, clawv1alpha1.ConditionTypeProxyConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonConfigFailed, err.Error())
@@ -1326,6 +1341,11 @@ func clawReferencesSecret(instance clawv1alpha1.Claw, secretName string) bool {
 			if ef.SecretRef.Name == secretName {
 				return true
 			}
+		}
+	}
+	if instance.Spec.WebSearch != nil && instance.Spec.WebSearch.SecretRef != nil {
+		if instance.Spec.WebSearch.SecretRef.Name == secretName {
+			return true
 		}
 	}
 	return false

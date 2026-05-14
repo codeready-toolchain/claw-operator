@@ -61,6 +61,7 @@ const (
 	ConditionTypeProxyConfigured         = "ProxyConfigured"
 	ConditionTypeDevicePairingConfigured = "DevicePairingConfigured"
 	ConditionTypeMcpServersConfigured    = "McpServersConfigured"
+	ConditionTypeWebSearchConfigured     = "WebSearchConfigured"
 )
 
 // Annotation keys used on pod templates to trigger rollouts on config changes.
@@ -273,6 +274,36 @@ type McpEnvFromSecret struct {
 	SecretRef SecretRefEntry `json:"secretRef"`
 }
 
+// WebSearchSpec configures the operator-managed web search provider.
+// +kubebuilder:validation:XValidation:rule="self.provider in ['duckduckgo','gemini'] || has(self.secretRef)",message="secretRef is required for API-keyed search providers"
+type WebSearchSpec struct {
+	// Provider selects the web search provider.
+	// Known values: brave, tavily, duckduckgo, gemini.
+	// +kubebuilder:validation:MinLength=1
+	Provider string `json:"provider"`
+
+	// SecretRef references a Secret key holding the search API key.
+	// Required for API-keyed providers (brave, tavily).
+	// Not needed for key-free (duckduckgo) or LLM-as-search (gemini).
+	// +optional
+	SecretRef *SecretRefEntry `json:"secretRef,omitempty"`
+
+	// Config is provider-specific configuration merged into
+	// plugins.entries.<provider>.config.webSearch in operator.json.
+	// Use for provider-specific tuning (mode, maxResults, etc.).
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +optional
+	Config *runtime.RawExtension `json:"config,omitempty"`
+}
+
+// WebFetchSpec configures the web_fetch tool.
+type WebFetchSpec struct {
+	// Enabled activates the web_fetch tool. Fetched URLs are gated by
+	// the proxy allowlist.
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled"`
+}
+
 // ClawSpec defines the desired state of Claw
 type ClawSpec struct {
 	// ConfigMode controls how operator config is applied on pod start.
@@ -291,6 +322,16 @@ type ClawSpec struct {
 	// Map keys are server names as they appear in the mcp.servers config.
 	// +optional
 	McpServers map[string]McpServerSpec `json:"mcpServers,omitempty"`
+
+	// WebSearch configures the web search provider for the OpenClaw agent.
+	// +optional
+	WebSearch *WebSearchSpec `json:"webSearch,omitempty"`
+
+	// WebFetch enables the web_fetch tool for arbitrary URL fetching.
+	// Fetched URLs are gated by the proxy allowlist — only domains
+	// permitted by credentials, search providers, or builtins are reachable.
+	// +optional
+	WebFetch *WebFetchSpec `json:"webFetch,omitempty"`
 }
 
 // ClawStatus defines the observed state of Claw

@@ -107,6 +107,7 @@ var builtinPassthroughDomains = []builtinPassthrough{
 func generateProxyConfig(
 	credentials []resolvedCredential,
 	mcpServers map[string]clawv1alpha1.McpServerSpec,
+	webSearch *clawv1alpha1.WebSearchSpec,
 ) ([]byte, error) {
 	var exact, suffix []proxyRoute
 
@@ -119,6 +120,14 @@ func generateProxyConfig(
 		if !coveredDomains[bp.Domain] {
 			coveredDomains[bp.Domain] = true
 			exact = append(exact, proxyRoute{Domain: bp.Domain, Injector: "none", AllowedPaths: bp.AllowedPaths})
+		}
+	}
+
+	if wsRoute, ok := webSearchRoute(webSearch); ok {
+		wsDomain := strings.ToLower(wsRoute.Domain)
+		if !domainCovered(wsDomain, coveredDomains) {
+			coveredDomains[wsDomain] = true
+			exact = append(exact, wsRoute)
 		}
 	}
 
@@ -230,6 +239,30 @@ func generateProxyConfig(
 
 	cfg := proxyConfig{Routes: append(exact, suffix...)}
 	return json.Marshal(cfg)
+}
+
+// webSearchRoute builds a proxy route for the web search provider, if applicable.
+// Returns false for LLM-as-search providers (e.g., gemini) and unknown providers.
+func webSearchRoute(webSearch *clawv1alpha1.WebSearchSpec) (proxyRoute, bool) {
+	if webSearch == nil {
+		return proxyRoute{}, false
+	}
+	info, ok := knownSearchProviders[webSearch.Provider]
+	if !ok {
+		return proxyRoute{}, false
+	}
+	route := proxyRoute{
+		Domain:   info.Domain,
+		Injector: info.Injector,
+	}
+	switch info.Injector {
+	case "api_key":
+		route.EnvVar = credEnvVarName(webSearchCredPrefix)
+		route.Header = info.Header
+	case "bearer":
+		route.EnvVar = credEnvVarName(webSearchCredPrefix)
+	}
+	return route, true
 }
 
 // mcpPassthroughRoutes extracts domains from HTTP MCP server URLs and returns
@@ -509,6 +542,17 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 			}
 			versions[key] = secret.ResourceVersion
 		}
+	}
+
+	if ws := instance.Spec.WebSearch; ws != nil && ws.SecretRef != nil {
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, client.ObjectKey{
+			Namespace: instance.Namespace,
+			Name:      ws.SecretRef.Name,
+		}, secret); err != nil {
+			return fmt.Errorf("failed to get Secret %q for web search: %w", ws.SecretRef.Name, err)
+		}
+		versions[webSearchCredPrefix] = secret.ResourceVersion
 	}
 
 	if len(versions) == 0 {

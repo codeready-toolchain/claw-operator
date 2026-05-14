@@ -1,6 +1,6 @@
 # Provider Setup
 
-This guide covers configuring LLM providers, external services, and messaging channels for use with Claw. Each section walks through creating the necessary Secret and Claw CR configuration.
+This guide covers configuring LLM providers, external services, messaging channels, MCP servers, web search, and web fetch for use with Claw. Each section walks through creating the necessary Secret and Claw CR configuration.
 
 All examples assume you have set your target namespace:
 
@@ -654,3 +654,368 @@ EOF
 The proxy intercepts requests to `api.github.com` and injects `Authorization: Bearer <real PAT>`. Skills that use `curl` with the GitHub REST API (like the built-in `gh-issues` skill) work through the proxy — they use a placeholder token that the proxy replaces transparently.
 
 > **`gh` CLI vs curl:** The `gh` CLI manages its own credentials via `gh auth login` (interactive OAuth). It doesn't use the `Authorization` header in the same way as `curl`-based skills, so proxy-based credential injection is less reliable with `gh`. For best results, use skills that call the GitHub REST API with `curl` directly.
+
+## MCP Servers
+
+MCP (Model Context Protocol) servers extend the AI assistant's capabilities by providing structured tool access to external services (GitHub API, filesystems, databases, etc.). The operator manages MCP server configuration declaratively via `spec.mcpServers` in the Claw CR, injecting the config into `operator.json` at reconciliation time.
+
+The operator uses a three-tier security model for MCP server credentials:
+
+| Tier | Transport | Secret handling | Secrets on gateway? |
+|------|-----------|-----------------|---------------------|
+| 1. HTTP/SSE (preferred) | HTTP URL | Proxy `credentials` entry for the domain | No |
+| 2. Stdio + proxy placeholder | Subprocess | Placeholder env var + proxy `credentials` entry | No |
+| 3. Stdio + real secret (escape hatch) | Subprocess | `envFrom` with `secretKeyRef` on gateway | Yes |
+
+**Tier 1** is the recommended path — traffic goes through the MITM proxy, and credentials are injected transparently. **Tier 2** keeps secrets off the gateway for stdio MCP servers whose target domain and auth type are known. **Tier 3** is an explicit escape hatch for cases where tiers 1–2 are not viable.
+
+### Tier 1: HTTP/SSE MCP (No Auth)
+
+The simplest case — an unauthenticated HTTP MCP server. The domain is auto-extracted from the URL and added as a passthrough route in the proxy. No secret or credential entry needed.
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  mcpServers:
+    context7:
+      url: https://mcp.context7.com/mcp
+      transport: streamable-http
+EOF
+```
+
+### Tier 1: HTTP/SSE MCP (With Auth)
+
+An HTTP MCP server that requires authentication. Add both the MCP server entry and a `credentials` entry for the domain. The proxy injects the auth header — no secrets reach the gateway.
+
+**1. Create the Secret:**
+
+```sh
+oc create secret generic mcp-api-key \
+  --from-literal=api-key=YOUR_API_KEY \
+  -n $NS
+```
+
+**2. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: my-mcp-service
+      type: bearer
+      domain: api.example.com
+      secretRef:
+        - name: mcp-api-key
+          key: api-key
+
+  mcpServers:
+    my-service:
+      url: https://api.example.com/mcp
+      transport: streamable-http
+EOF
+```
+
+The proxy intercepts requests to `api.example.com` and injects `Authorization: Bearer <real key>`. The MCP server itself never sees credentials in its configuration.
+
+### Tier 2: Stdio MCP with Proxy Placeholder (GitHub)
+
+For stdio MCP servers where you know which domain is called and what auth type it uses. The env var is set to a placeholder value — the proxy intercepts outbound requests and replaces the placeholder with the real credential.
+
+**1. Create the Secret:**
+
+```sh
+oc create secret generic github-pat-secret \
+  --from-literal=token=YOUR_GITHUB_PAT \
+  -n $NS
+```
+
+**2. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: github
+      type: bearer
+      domain: api.github.com
+      secretRef:
+        - name: github-pat-secret
+          key: token
+
+  mcpServers:
+    github:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: placeholder
+EOF
+```
+
+How it works: The GitHub MCP server subprocess inherits `HTTP_PROXY`/`HTTPS_PROXY` from the gateway container, so its outbound HTTPS calls to `api.github.com` go through the MITM proxy. The server sends `Authorization: Bearer placeholder` (from the env var), and the proxy strips it and injects the real PAT from the Secret. The real token never reaches the gateway.
+
+> **Reusing credentials:** If you already have a `credentials` entry for `api.github.com` (e.g., for GitHub REST API access via skills), the same entry covers the MCP server too — no duplication needed.
+
+### Tier 3: Stdio MCP with Real Secret (Escape Hatch)
+
+When you don't know the MCP server's internals, or it uses the secret for non-HTTP purposes (e.g., a database password), use `envFrom` to mount the real secret as a gateway container environment variable. The subprocess inherits it at runtime.
+
+**1. Create the Secret:**
+
+```sh
+oc create secret generic db-credentials \
+  --from-literal=password=YOUR_DB_PASSWORD \
+  -n $NS
+```
+
+**2. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: db-network
+      type: none
+      domain: postgres.internal
+
+  mcpServers:
+    custom-db:
+      command: node
+      args: ["db-mcp-server.js"]
+      env:
+        DB_HOST: postgres.internal
+      envFrom:
+        - name: DB_PASSWORD
+          secretRef:
+            name: db-credentials
+            key: password
+EOF
+```
+
+> **Security note:** Tier 3 places the real secret on the gateway container. Use this only when tiers 1–2 are not viable. The `credentials` entry with `type: none` is still needed to allowlist the domain through the proxy (even without credential injection).
+
+### Combining MCP Servers with Providers
+
+MCP servers work alongside LLM provider credentials and other integrations in the same Claw instance:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: anthropic
+      type: apiKey
+      secretRef:
+        - name: anthropic-api-key
+          key: api-key
+      provider: anthropic
+
+    - name: github
+      type: bearer
+      domain: api.github.com
+      secretRef:
+        - name: github-pat-secret
+          key: token
+
+  mcpServers:
+    context7:
+      url: https://mcp.context7.com/mcp
+      transport: streamable-http
+
+    github:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: placeholder
+EOF
+```
+
+### How It Works
+
+The operator reconciles `spec.mcpServers` into the `mcp.servers` section of `operator.json`. At pod startup, the init-config script deep-merges `operator.json` into the user's `openclaw.json`:
+
+- **Merge mode** (default): Operator-managed MCP servers merge alongside any user-managed servers added via `openclaw mcp set` inside the pod. On collision (same server name), the operator-managed entry wins.
+- **Overwrite mode**: The full config is replaced on every pod start, including MCP servers.
+
+The operator also validates that all `envFrom`-referenced Secrets exist and contain the specified keys. If validation fails, the `McpServersConfigured` condition is set to `False` with a descriptive error message, and `Ready` is set to `False`.
+
+## Web Search
+
+The operator can configure a web search provider for the OpenClaw agent via `spec.webSearch`. Search API keys are injected by the MITM proxy — they never reach the gateway container.
+
+### Brave Search
+
+Uses the [Brave Search API](https://brave.com/search/api/) with an API key injected via the `X-Subscription-Token` header.
+
+**1. Get an API key** from [Brave Search API](https://brave.com/search/api/).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic brave-search-key \
+  --from-literal=api-key=YOUR_BRAVE_API_KEY \
+  -n $NS
+```
+
+**3. Add to your Claw CR:**
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials: []  # your existing credentials
+  webSearch:
+    provider: brave
+    secretRef:
+      name: brave-search-key
+      key: api-key
+EOF
+```
+
+### Tavily
+
+Uses the [Tavily API](https://tavily.com/) with a bearer token.
+
+**1. Get an API key** from [Tavily](https://app.tavily.com/).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic tavily-key \
+  --from-literal=api-key=YOUR_TAVILY_API_KEY \
+  -n $NS
+```
+
+**3. Add to your Claw CR:**
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials: []  # your existing credentials
+  webSearch:
+    provider: tavily
+    secretRef:
+      name: tavily-key
+      key: api-key
+EOF
+```
+
+You can pass provider-specific configuration via `spec.webSearch.config`:
+
+```yaml
+webSearch:
+  provider: tavily
+  secretRef:
+    name: tavily-key
+    key: api-key
+  config:
+    maxResults: 10
+```
+
+### DuckDuckGo
+
+Key-free search — no API key or Secret needed.
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials: []  # your existing credentials
+  webSearch:
+    provider: duckduckgo
+EOF
+```
+
+### Gemini (Search Grounding)
+
+Uses Google's Gemini search grounding, which sends a regular Gemini API call with `tools: [{ google_search }]`. This reuses your existing `google` provider credential — no additional Secret is needed.
+
+**Prerequisite:** You must have a `google` provider credential in `spec.credentials`.
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials:
+    - name: google
+      provider: google
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+  webSearch:
+    provider: gemini
+EOF
+```
+
+### How It Works
+
+The operator sets `tools.web.search.provider` in `operator.json` and, for API-keyed providers, adds a proxy route for the search domain with credential injection. A placeholder API key is set in the config so OpenClaw makes the HTTP call; the proxy strips it and injects the real key.
+
+The `WebSearchConfigured` condition tracks the status:
+- `True` — provider validated and config injected
+- `False` — validation failed (missing secret, missing google credential for gemini, unknown provider)
+
+## Web Fetch
+
+The `web_fetch` tool allows the agent to fetch arbitrary URLs. Enable it via `spec.webFetch`:
+
+```yaml
+spec:
+  webFetch:
+    enabled: true
+```
+
+Fetched URLs are gated by the proxy allowlist. Only domains already permitted by credentials, search providers, or builtin passthroughs are reachable. To allow additional domains for fetching, add `type: none` credential entries:
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials:
+    - name: docs-site
+      type: none
+      domain: docs.python.org
+  webFetch:
+    enabled: true
+EOF
+```
