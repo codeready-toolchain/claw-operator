@@ -28,7 +28,11 @@ go.work
 *~
 tmp
 
-# Generated deploy overlay (created by make deploy/build-installer)
+# Generated overlays (created by make deploy/bundle)
 config/.deploy/
+config/.bundle/
+
+# Ephemeral catalog directory (created by CD pipeline)
+catalog/
 
 .claude/settings.local.json

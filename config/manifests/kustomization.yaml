@@ -3,6 +3,7 @@
 resources:
 - bases/claw-operator.clusterserviceversion.yaml
 - ../default
+- ../crd
 - ../samples
 - ../scorecard
 

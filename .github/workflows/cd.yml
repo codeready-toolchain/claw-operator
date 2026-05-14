@@ -1,0 +1,63 @@
+name: CD
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  cd:
+    name: Build and Publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Login to Quay.io
+        run: |
+          mkdir -p $HOME/.docker
+          echo "${{ secrets.QUAY_TOKEN }}" | base64 -d > $HOME/.docker/config.json
+
+      - name: Build and push operator image
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          make container-build IMG=quay.io/codeready-toolchain/claw-operator:${SHA}
+          make container-push IMG=quay.io/codeready-toolchain/claw-operator:${SHA}
+
+      - name: Build and push proxy image
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          make container-build-proxy PROXY_IMG=quay.io/codeready-toolchain/claw-proxy:${SHA}
+          make container-push-proxy PROXY_IMG=quay.io/codeready-toolchain/claw-proxy:${SHA}
+
+      - name: Publish staging bundle and catalog
+        run: make push-to-quay-staging
+
+      - name: Create Kind cluster for scorecard
+        continue-on-error: true
+        id: kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind create cluster --name scorecard
+
+      - name: Run scorecard tests
+        if: steps.kind.outcome == 'success'
+        continue-on-error: true
+        run: |
+          bin/operator-sdk scorecard ./bundle \
+            --kubeconfig=$HOME/.kube/config \
+            --wait-time=120s \
+            --output=text || echo "::warning::Scorecard tests failed (non-blocking)"
+
+      - name: Cleanup Kind cluster
+        if: always() && steps.kind.outcome == 'success'
+        run: kind delete cluster --name scorecard

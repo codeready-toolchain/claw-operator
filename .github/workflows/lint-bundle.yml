@@ -1,0 +1,31 @@
+name: Lint Bundle
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  lint-bundle:
+    name: Bundle Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generate bundle
+        run: make bundle
+
+      - name: Validate bundle
+        run: bin/operator-sdk bundle validate ./bundle
+
+      - name: Check bundle consistency
+        run: git diff --exit-code bundle/

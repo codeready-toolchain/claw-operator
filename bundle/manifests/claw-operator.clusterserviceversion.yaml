@@ -1,0 +1,351 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: |-
+      [
+        {
+          "apiVersion": "claw.sandbox.redhat.com/v1alpha1",
+          "kind": "Claw",
+          "metadata": {
+            "name": "instance"
+          },
+          "spec": {
+            "credentials": [
+              {
+                "name": "gemini",
+                "provider": "google",
+                "secretRef": [
+                  {
+                    "key": "api-key",
+                    "name": "gemini-api-key"
+                  }
+                ],
+                "type": "apiKey"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "claw.sandbox.redhat.com/v1alpha1",
+          "kind": "ClawDevicePairingRequest",
+          "metadata": {
+            "name": "example-pairing"
+          },
+          "spec": {
+            "requestID": "example-request-id",
+            "selector": {
+              "matchLabels": {
+                "app.kubernetes.io/name": "claw"
+              }
+            }
+          }
+        }
+      ]
+    capabilities: Basic Install
+    createdAt: "REPLACE_CREATED_AT"
+    operators.operatorframework.io/builder: operator-sdk-v1.42.0
+    operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
+  name: claw-operator.v0.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: ClawDevicePairingRequest is the Schema for the clawdevicepairingrequests
+        API
+      displayName: Claw Device Pairing Request
+      kind: ClawDevicePairingRequest
+      name: clawdevicepairingrequests.claw.sandbox.redhat.com
+      version: v1alpha1
+    - description: Claw is the Schema for the claws API
+      displayName: Claw
+      kind: Claw
+      name: claws.claw.sandbox.redhat.com
+      version: v1alpha1
+  description: |-
+    Kubernetes operator that manages OpenClaw instances on OpenShift/Kubernetes.
+    Handles deployment, credential injection via MITM proxy, LLM provider routing,
+    and messaging channel integrations.
+  displayName: Claw Operator
+  icon:
+  - base64data: ""
+    mediatype: image/png
+  install:
+    spec:
+      clusterPermissions:
+      - rules:
+        - apiGroups:
+          - ""
+          resources:
+          - configmaps
+          - persistentvolumeclaims
+          - secrets
+          - serviceaccounts
+          verbs:
+          - create
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - pods
+          verbs:
+          - list
+        - apiGroups:
+          - ""
+          resources:
+          - pods/exec
+          verbs:
+          - create
+        - apiGroups:
+          - ""
+          resources:
+          - services
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - apps
+          resources:
+          - deployments
+          verbs:
+          - create
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - claw.sandbox.redhat.com
+          resources:
+          - clawdevicepairingrequests
+          verbs:
+          - create
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - claw.sandbox.redhat.com
+          resources:
+          - clawdevicepairingrequests/finalizers
+          - claws/finalizers
+          verbs:
+          - update
+        - apiGroups:
+          - claw.sandbox.redhat.com
+          resources:
+          - clawdevicepairingrequests/status
+          - claws/status
+          verbs:
+          - get
+          - patch
+          - update
+        - apiGroups:
+          - claw.sandbox.redhat.com
+          resources:
+          - claws
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - networking.k8s.io
+          resources:
+          - networkpolicies
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - rbac.authorization.k8s.io
+          resources:
+          - clusterroles
+          - rolebindings
+          verbs:
+          - create
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - route.openshift.io
+          resources:
+          - routes
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - route.openshift.io
+          resources:
+          - routes/custom-host
+          verbs:
+          - create
+          - update
+        - apiGroups:
+          - authentication.k8s.io
+          resources:
+          - tokenreviews
+          verbs:
+          - create
+        - apiGroups:
+          - authorization.k8s.io
+          resources:
+          - subjectaccessreviews
+          verbs:
+          - create
+        serviceAccountName: claw-operator-controller-manager
+      deployments:
+      - label:
+          app.kubernetes.io/managed-by: kustomize
+          app.kubernetes.io/name: claw-operator
+          control-plane: controller-manager
+        name: claw-operator-controller-manager
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: claw-operator
+              control-plane: controller-manager
+          strategy: {}
+          template:
+            metadata:
+              annotations:
+                kubectl.kubernetes.io/default-container: manager
+              labels:
+                app.kubernetes.io/name: claw-operator
+                control-plane: controller-manager
+            spec:
+              containers:
+              - args:
+                - --metrics-bind-address=:8443
+                - --leader-elect
+                - --health-probe-bind-address=:8081
+                command:
+                - /manager
+                env:
+                - name: PROXY_IMAGE
+                  value: claw-proxy:latest
+                - name: KUBECTL_IMAGE
+                  value: quay.io/openshift/origin-cli:4.21
+                image: claw-operator:latest
+                imagePullPolicy: IfNotPresent
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8081
+                  initialDelaySeconds: 15
+                  periodSeconds: 20
+                name: manager
+                readinessProbe:
+                  httpGet:
+                    path: /readyz
+                    port: 8081
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                resources:
+                  limits:
+                    cpu: 500m
+                    memory: 128Mi
+                  requests:
+                    cpu: 10m
+                    memory: 64Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+              securityContext:
+                runAsNonRoot: true
+                seccompProfile:
+                  type: RuntimeDefault
+              serviceAccountName: claw-operator-controller-manager
+              terminationGracePeriodSeconds: 10
+      permissions:
+      - rules:
+        - apiGroups:
+          - ""
+          resources:
+          - configmaps
+          verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - coordination.k8s.io
+          resources:
+          - leases
+          verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+          - patch
+        serviceAccountName: claw-operator-controller-manager
+    strategy: deployment
+  installModes:
+  - supported: true
+    type: OwnNamespace
+  - supported: true
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: false
+    type: AllNamespaces
+  keywords:
+  - ai
+  - llm
+  - openclaw
+  - developer-sandbox
+  links:
+  - name: Claw Operator
+    url: https://github.com/codeready-toolchain/claw-operator
+  maintainers:
+  - email: devsandbox@redhat.com
+    name: Developer Sandbox Team
+  maturity: alpha
+  minKubeVersion: 1.28.0
+  provider:
+    name: Red Hat
+    url: https://developers.redhat.com
+  relatedImages:
+  - image: REPLACE_IMAGE
+    name: manager
+  - image: REPLACE_PROXY_IMAGE
+    name: proxy
+  - image: REPLACE_KUBECTL_IMAGE
+    name: kubectl
+  version: 0.0.0

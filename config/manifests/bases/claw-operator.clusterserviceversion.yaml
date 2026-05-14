@@ -1,0 +1,71 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: '[]'
+    capabilities: Basic Install
+    createdAt: REPLACE_CREATED_AT
+    operators.operatorframework.io/builder: operator-sdk-v1.42.0
+    operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
+  name: claw-operator.v0.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: Claw is the Schema for the claws API
+      displayName: Claw
+      kind: Claw
+      name: claws.claw.sandbox.redhat.com
+      version: v1alpha1
+    - description: ClawDevicePairingRequest is the Schema for the clawdevicepairingrequests
+        API
+      displayName: Claw Device Pairing Request
+      kind: ClawDevicePairingRequest
+      name: clawdevicepairingrequests.claw.sandbox.redhat.com
+      version: v1alpha1
+  description: |-
+    Kubernetes operator that manages OpenClaw instances on OpenShift/Kubernetes.
+    Handles deployment, credential injection via MITM proxy, LLM provider routing,
+    and messaging channel integrations.
+  displayName: Claw Operator
+  icon:
+  - base64data: ""
+    mediatype: image/png
+  install:
+    spec:
+      deployments: []
+    strategy: deployment
+  installModes:
+  - supported: true
+    type: OwnNamespace
+  - supported: true
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: false
+    type: AllNamespaces
+  keywords:
+  - ai
+  - llm
+  - openclaw
+  - developer-sandbox
+  links:
+  - name: Claw Operator
+    url: https://github.com/codeready-toolchain/claw-operator
+  maintainers:
+  - email: devsandbox@redhat.com
+    name: Developer Sandbox Team
+  maturity: alpha
+  minKubeVersion: 1.28.0
+  provider:
+    name: Red Hat
+    url: https://developers.redhat.com
+  relatedImages:
+  - image: REPLACE_IMAGE
+    name: manager
+  - image: REPLACE_PROXY_IMAGE
+    name: proxy
+  - image: REPLACE_KUBECTL_IMAGE
+    name: kubectl
+  version: 0.0.0

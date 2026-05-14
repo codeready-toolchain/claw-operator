@@ -1,0 +1,9 @@
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: ClawDevicePairingRequest
+metadata:
+  name: example-pairing
+spec:
+  requestID: example-request-id
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: claw
