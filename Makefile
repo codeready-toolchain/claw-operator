@@ -380,17 +380,17 @@ build-and-push-catalog: opm ## Validate, build, and push FBC catalog image from 
 	rm -rf catalog/
 
 .PHONY: publish-current-bundle
-publish-current-bundle: opm ## One-shot publish for testing OLM install (alpha channel, no replaces).
+publish-current-bundle: opm ## One-shot publish for testing OLM install (alpha channel, no replaces). Requires IMG and PROXY_IMG.
 	$(MAKE) bundle VERSION=$(CD_VERSION) CHANNELS=alpha DEFAULT_CHANNEL=alpha
 	@echo "Patching CSV for alpha release $(CD_VERSION)..."
 	sed -i 's|REPLACE_IMAGE|$(IMG)|g' $(BUNDLE_CSV)
 	sed -i 's|REPLACE_PROXY_IMAGE|$(PROXY_IMG)|g' $(BUNDLE_CSV)
 	sed -i 's|REPLACE_KUBECTL_IMAGE|$(KUBECTL_IMG)|g' $(BUNDLE_CSV)
 	sed -i 's|REPLACE_CREATED_AT|$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")|' $(BUNDLE_CSV)
-	$(MAKE) bundle-build
-	$(MAKE) bundle-push
+	$(MAKE) bundle-build BUNDLE_IMG=$(BUNDLE_REPO):v$(CD_VERSION)
+	$(MAKE) bundle-push BUNDLE_IMG=$(BUNDLE_REPO):v$(CD_VERSION)
 	rm -rf catalog/ && mkdir -p catalog/claw-operator
-	$(OPM) render $(BUNDLE_IMG) -o yaml > catalog/claw-operator/bundle.yaml
+	$(OPM) render $(BUNDLE_REPO):v$(CD_VERSION) -o yaml > catalog/claw-operator/bundle.yaml
 	@printf -- '---\nschema: olm.package\nname: claw-operator\ndefaultChannel: alpha\n---\nschema: olm.channel\npackage: claw-operator\nname: alpha\nentries:\n- name: claw-operator.v$(CD_VERSION)\n' \
 		> catalog/claw-operator/index.yaml
 	$(MAKE) build-and-push-catalog
