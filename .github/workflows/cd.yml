@@ -59,8 +59,16 @@ jobs:
           make kind
           bin/kind create cluster --name scorecard
 
-      - name: Run scorecard tests
+      - name: Wait for cluster ready
+        id: cluster_ready
         if: steps.kind.outcome == 'success'
+        continue-on-error: true
+        run: |
+          kubectl wait --for=condition=Ready nodes --all --timeout=60s
+          kubectl -n default wait --for=jsonpath='{.metadata.name}'=default serviceaccount/default --timeout=60s
+
+      - name: Run scorecard tests
+        if: steps.kind.outcome == 'success' && steps.cluster_ready.outcome == 'success'
         continue-on-error: true
         run: |
           bin/operator-sdk scorecard ./bundle \
