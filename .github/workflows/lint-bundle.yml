@@ -26,6 +26,3 @@ jobs:
 
       - name: Validate bundle
         run: bin/operator-sdk bundle validate ./bundle
-
-      - name: Check bundle consistency
-        run: git diff --exit-code bundle/

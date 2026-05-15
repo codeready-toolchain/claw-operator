@@ -32,6 +32,9 @@ tmp
 config/.deploy/
 config/.bundle/
 
+# Generated OLM bundle (created by make bundle)
+bundle/
+
 # Ephemeral catalog directory (created by CD pipeline)
 catalog/
 
