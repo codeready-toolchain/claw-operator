@@ -20,21 +20,32 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Login to Quay.io
-        run: |
-          mkdir -p $HOME/.docker
-          echo "${{ secrets.QUAY_TOKEN }}" | base64 -d > $HOME/.docker/config.json
-
-      - name: Build and push operator image
+      - name: Build operator image
         run: |
           SHA=$(git rev-parse --short HEAD)
           make container-build IMG=quay.io/codeready-toolchain/claw-operator:${SHA}
-          make container-push IMG=quay.io/codeready-toolchain/claw-operator:${SHA}
 
-      - name: Build and push proxy image
+      - name: Build proxy image
         run: |
           SHA=$(git rev-parse --short HEAD)
           make container-build-proxy PROXY_IMG=quay.io/codeready-toolchain/claw-proxy:${SHA}
+
+      - name: Login to Quay.io
+        run: |
+          set -e
+          export XDG_RUNTIME_DIR=/run/user/${UID}
+          mkdir -p ${XDG_RUNTIME_DIR}/containers || true
+          echo '{"auths":{"quay.io":{"auth":"${{ secrets.QUAY_TOKEN }}"}}}' > ${XDG_RUNTIME_DIR}/containers/auth.json
+          podman login --get-login quay.io
+
+      - name: Push operator image
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          make container-push IMG=quay.io/codeready-toolchain/claw-operator:${SHA}
+
+      - name: Push proxy image
+        run: |
+          SHA=$(git rev-parse --short HEAD)
           make container-push-proxy PROXY_IMG=quay.io/codeready-toolchain/claw-proxy:${SHA}
 
       - name: Publish staging bundle and catalog
