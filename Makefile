@@ -374,7 +374,11 @@ generate-cd-release-manifests: opm ## Generate bundle with CD version, images, a
 .PHONY: build-and-push-catalog
 build-and-push-catalog: opm ## Validate, build, and push FBC catalog image from catalog/ directory.
 	$(OPM) validate catalog/
-	printf 'FROM $(OPM_CATALOG_BASE_IMG)\nCOPY catalog /configs\nLABEL operators.operatorframework.io.index.configs.v1=/configs\nENTRYPOINT ["/bin/opm"]\nCMD ["serve", "/configs", "--cache-dir=/tmp/cache"]\n' | \
+	# Build a catalog image from the FBC configs using opm as the base.
+	# --cache-enforce-integrity=false works around an opm bug where the pogreb
+	# cache backend fails its integrity check on first startup because the
+	# digest file hasn't been written yet, causing the container to crash-loop.
+	printf 'FROM $(OPM_CATALOG_BASE_IMG)\nCOPY catalog /configs\nLABEL operators.operatorframework.io.index.configs.v1=/configs\nENTRYPOINT ["/bin/opm"]\nCMD ["serve", "/configs", "--cache-dir=/tmp/cache", "--cache-enforce-integrity=false"]\n' | \
 		$(CONTAINER_TOOL) build -f - -t $(CATALOG_IMG) .
 	$(CONTAINER_TOOL) push $(CATALOG_IMG)
 	rm -rf catalog/
