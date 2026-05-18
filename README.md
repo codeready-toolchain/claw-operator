@@ -1,5 +1,7 @@
 # Claw Operator
 
+[![Build](https://github.com/codeready-toolchain/claw-operator/actions/workflows/cd.yml/badge.svg)](https://github.com/codeready-toolchain/claw-operator/actions/workflows/cd.yml)
+
 An OpenShift-oriented Kubernetes operator that manages [OpenClaw](https://github.com/openclaw/openclaw) instances. It handles deployment, credential injection for LLM providers, HTTPS routing, and gateway authentication through a single `Claw` custom resource. While the operator can run on vanilla Kubernetes, it is designed for OpenShift where the restricted Security Context Constraint (SCC) provides the primary pod security boundary -- non-root UID enforcement, SELinux confinement, seccomp filtering, and privilege escalation prevention are all handled by the platform.
 
 ## Security

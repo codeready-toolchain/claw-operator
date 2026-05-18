@@ -87,6 +87,9 @@ spec:
           image: ghcr.io/openclaw/openclaw:slim
           imagePullPolicy: IfNotPresent
           command:
+            - tini
+            - -s
+            - --
             - node
             - /app/dist/index.js
             - gateway
