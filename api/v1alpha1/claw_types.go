@@ -316,8 +316,8 @@ const (
 // AuthSpec configures gateway authentication.
 // +kubebuilder:validation:XValidation:rule="self.mode != 'password' || has(self.passwordSecretRef)",message="passwordSecretRef is required when mode is password"
 type AuthSpec struct {
-	// Mode selects the authentication mechanism: "token" (default) requires
-	// device pairing, "password" uses a shared password for browser access.
+	// Mode selects the authentication mechanism: "token" (default) uses an
+	// auto-generated token, "password" uses a shared password from a Secret.
 	// +optional
 	// +kubebuilder:default=token
 	Mode AuthMode `json:"mode,omitempty"`
@@ -326,6 +326,12 @@ type AuthSpec struct {
 	// Required when mode is "password".
 	// +optional
 	PasswordSecretRef *SecretRefEntry `json:"passwordSecretRef,omitempty"`
+
+	// DisableDevicePairing disables browser device identity checks
+	// (maps to gateway.controlUi.dangerouslyDisableDeviceAuth upstream).
+	// Defaults to true when mode is "password", false when mode is "token".
+	// +optional
+	DisableDevicePairing *bool `json:"disableDevicePairing,omitempty"`
 }
 
 // ClawSpec defines the desired state of Claw
@@ -340,7 +346,7 @@ type ClawSpec struct {
 
 	// Auth configures gateway authentication. Defaults to token-based
 	// authentication with device pairing. Set mode to "password" for
-	// shared-password access (e.g., classroom/workshop environments).
+	// shared-password access without per-device identity.
 	// +optional
 	Auth *AuthSpec `json:"auth,omitempty"`
 

@@ -959,6 +959,134 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "DevicePairingConfigured did not become True within %v", defaultTimeout)
 		})
 
+		t.Run("should reject Claw CR with password mode but no passwordSecretRef", func(t *testing.T) {
+			t.Cleanup(func() { collectDebugInfo(t) })
+
+			crYAML := `apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  auth:
+    mode: password
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      domain: ".googleapis.com"
+      apiKey:
+        header: x-goog-api-key
+`
+			crFile := filepath.Join("/tmp", "claw-e2e-invalid-auth.yaml")
+			err := os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
+			require.NoError(t, err)
+
+			cmd := exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			output, err := utils.Run(t, cmd)
+			require.Error(t, err, "CR with password mode but no passwordSecretRef should be rejected")
+			assert.Contains(t, output+err.Error(), "passwordSecretRef is required when mode is password",
+				"error should mention the missing passwordSecretRef")
+		})
+
+		t.Run("should inject password auth into ConfigMap when mode is password", func(t *testing.T) {
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "workshop-pw", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value",
+				"-n", userNamespace)
+			_, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create credential Secret")
+
+			t.Log("creating the password Secret")
+			cmd = exec.Command("kubectl", "delete", "secret", "workshop-pw",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "workshop-pw",
+				"--from-literal=password=classroom-pass-e2e",
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create password Secret")
+
+			t.Log("applying Claw CR with password auth mode")
+			crYAML := `apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  auth:
+    mode: password
+    passwordSecretRef:
+      name: workshop-pw
+      key: password
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      provider: google
+`
+			crFile := filepath.Join("/tmp", "claw-e2e-password-auth.yaml")
+			err = os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
+			require.NoError(t, err)
+
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR with password auth")
+
+			t.Log("waiting for Claw ProxyConfigured condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw ProxyConfigured did not become True")
+
+			t.Log("verifying operator.json has password auth mode")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
+				"-o", "jsonpath={.data.operator\\.json}",
+				"-n", userNamespace)
+			operatorJSON, err := utils.Run(t, cmd)
+			require.NoError(t, err, "config ConfigMap should exist with operator.json")
+
+			var operatorConfig map[string]any
+			require.NoError(t, json.Unmarshal([]byte(operatorJSON), &operatorConfig),
+				"operator.json should be valid JSON")
+
+			gateway, ok := operatorConfig["gateway"].(map[string]any)
+			require.True(t, ok, "operator.json should contain gateway section")
+
+			auth, ok := gateway["auth"].(map[string]any)
+			require.True(t, ok, "gateway should contain auth section")
+			assert.Equal(t, "password", auth["mode"], "auth mode should be password")
+			assert.Equal(t, "classroom-pass-e2e", auth["password"],
+				"auth password should match the Secret value")
+
+			controlUI, ok := gateway["controlUi"].(map[string]any)
+			require.True(t, ok, "gateway should contain controlUi section")
+			assert.Equal(t, true, controlUI["dangerouslyDisableDeviceAuth"],
+				"device auth should be disabled in password mode")
+		})
+
 		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {
 			const (
 				kubeWorkspace = "e2e-kube-workspace"

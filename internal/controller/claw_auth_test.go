@@ -34,6 +34,50 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+// --- shouldDisableDevicePairing unit tests ---
+
+func TestShouldDisableDevicePairing(t *testing.T) {
+	boolPtr := func(v bool) *bool { return &v }
+
+	t.Run("should return false when auth is nil", func(t *testing.T) {
+		assert.False(t, shouldDisableDevicePairing(nil))
+	})
+
+	t.Run("should return false for token mode with nil override", func(t *testing.T) {
+		auth := &clawv1alpha1.AuthSpec{Mode: clawv1alpha1.AuthModeToken}
+		assert.False(t, shouldDisableDevicePairing(auth))
+	})
+
+	t.Run("should return true for password mode with nil override", func(t *testing.T) {
+		auth := &clawv1alpha1.AuthSpec{Mode: clawv1alpha1.AuthModePassword}
+		assert.True(t, shouldDisableDevicePairing(auth))
+	})
+
+	t.Run("should respect explicit true override in token mode", func(t *testing.T) {
+		auth := &clawv1alpha1.AuthSpec{
+			Mode:                 clawv1alpha1.AuthModeToken,
+			DisableDevicePairing: boolPtr(true),
+		}
+		assert.True(t, shouldDisableDevicePairing(auth))
+	})
+
+	t.Run("should respect explicit false override in password mode", func(t *testing.T) {
+		auth := &clawv1alpha1.AuthSpec{
+			Mode:                 clawv1alpha1.AuthModePassword,
+			DisableDevicePairing: boolPtr(false),
+		}
+		assert.False(t, shouldDisableDevicePairing(auth))
+	})
+
+	t.Run("should respect explicit true override in password mode", func(t *testing.T) {
+		auth := &clawv1alpha1.AuthSpec{
+			Mode:                 clawv1alpha1.AuthModePassword,
+			DisableDevicePairing: boolPtr(true),
+		}
+		assert.True(t, shouldDisableDevicePairing(auth))
+	})
+}
+
 // --- injectAuthModeIntoConfigMap unit tests ---
 
 func TestInjectAuthModeIntoConfigMap(t *testing.T) {
@@ -207,6 +251,81 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 		err := injectAuthModeIntoConfigMap(objects, instance, "pw123")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found in manifests")
+	})
+
+	t.Run("should not set dangerouslyDisableDeviceAuth when password mode with disableDevicePairing=false", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		disablePairing := false
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Auth: &clawv1alpha1.AuthSpec{
+					Mode:                 clawv1alpha1.AuthModePassword,
+					PasswordSecretRef:    &clawv1alpha1.SecretRefEntry{Name: "pw-secret", Key: "password"},
+					DisableDevicePairing: &disablePairing,
+				},
+			},
+		}
+
+		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance, "pw123"))
+
+		config := getConfig(t, objects)
+		gateway := config["gateway"].(map[string]any)
+		auth := gateway["auth"].(map[string]any)
+		assert.Equal(t, "password", auth["mode"], "password auth should still be injected")
+		controlUI, hasControlUI := gateway["controlUi"].(map[string]any)
+		if hasControlUI {
+			_, hasDisableAuth := controlUI["dangerouslyDisableDeviceAuth"]
+			assert.False(t, hasDisableAuth, "dangerouslyDisableDeviceAuth should not be set")
+		}
+	})
+
+	t.Run("should set dangerouslyDisableDeviceAuth when token mode with disableDevicePairing=true", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		disablePairing := true
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Auth: &clawv1alpha1.AuthSpec{
+					Mode:                 clawv1alpha1.AuthModeToken,
+					DisableDevicePairing: &disablePairing,
+				},
+			},
+		}
+
+		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance, ""))
+
+		config := getConfig(t, objects)
+		gateway := config["gateway"].(map[string]any)
+		auth := gateway["auth"].(map[string]any)
+		assert.Equal(t, "token", auth["mode"], "auth mode should remain token")
+		controlUI := gateway["controlUi"].(map[string]any)
+		assert.Equal(t, true, controlUI["dangerouslyDisableDeviceAuth"],
+			"dangerouslyDisableDeviceAuth should be set when explicitly requested")
+	})
+
+	t.Run("should set dangerouslyDisableDeviceAuth when password mode with explicit disableDevicePairing=true", func(t *testing.T) {
+		objects := makeConfigMap(baseJSON)
+		disablePairing := true
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Auth: &clawv1alpha1.AuthSpec{
+					Mode:                 clawv1alpha1.AuthModePassword,
+					PasswordSecretRef:    &clawv1alpha1.SecretRefEntry{Name: "pw-secret", Key: "password"},
+					DisableDevicePairing: &disablePairing,
+				},
+			},
+		}
+
+		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance, "pw123"))
+
+		config := getConfig(t, objects)
+		gateway := config["gateway"].(map[string]any)
+		auth := gateway["auth"].(map[string]any)
+		assert.Equal(t, "password", auth["mode"])
+		controlUI := gateway["controlUi"].(map[string]any)
+		assert.Equal(t, true, controlUI["dangerouslyDisableDeviceAuth"])
 	})
 }
 

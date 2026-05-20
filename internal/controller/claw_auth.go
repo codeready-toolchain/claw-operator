@@ -55,13 +55,27 @@ func (r *ClawResourceReconciler) resolveAuthPassword(ctx context.Context, instan
 	return string(val), nil
 }
 
-// injectAuthModeIntoConfigMap updates the gateway.auth block in operator.json
-// based on spec.auth. When mode is "password", it sets the password and disables
-// device pairing auth. When mode is "token" (or auth is nil), the template default
-// ("token") is left in place.
+// shouldDisableDevicePairing returns whether device identity checks should be
+// disabled based on the auth spec. When DisableDevicePairing is explicitly set,
+// that value is used. Otherwise it defaults to true for password mode and false
+// for token mode.
+func shouldDisableDevicePairing(auth *clawv1alpha1.AuthSpec) bool {
+	if auth != nil && auth.DisableDevicePairing != nil {
+		return *auth.DisableDevicePairing
+	}
+	return auth != nil && auth.Mode == clawv1alpha1.AuthModePassword
+}
+
+// injectAuthModeIntoConfigMap updates the gateway config in operator.json based
+// on spec.auth. Password injection and device pairing are handled independently:
+// password mode sets gateway.auth, and shouldDisableDevicePairing controls
+// gateway.controlUi.dangerouslyDisableDeviceAuth.
 func injectAuthModeIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, password string) error {
-	if instance.Spec.Auth == nil || instance.Spec.Auth.Mode == clawv1alpha1.AuthModeToken {
-		return nil // template default is "token" — nothing to change
+	needsPasswordInjection := instance.Spec.Auth != nil && instance.Spec.Auth.Mode == clawv1alpha1.AuthModePassword
+	disablePairing := shouldDisableDevicePairing(instance.Spec.Auth)
+
+	if !needsPasswordInjection && !disablePairing {
+		return nil
 	}
 
 	configMapName := getConfigMapName(instance.Name)
@@ -88,19 +102,21 @@ func injectAuthModeIntoConfigMap(objects []*unstructured.Unstructured, instance 
 			gateway = map[string]any{}
 		}
 
-		// Set password auth mode
-		gateway["auth"] = map[string]any{
-			"mode":     "password",
-			"password": password,
+		if needsPasswordInjection {
+			gateway["auth"] = map[string]any{
+				"mode":     "password",
+				"password": password,
+			}
 		}
 
-		// Disable device pairing when using password auth
-		controlUI, _ := gateway["controlUi"].(map[string]any)
-		if controlUI == nil {
-			controlUI = map[string]any{}
+		if disablePairing {
+			controlUI, _ := gateway["controlUi"].(map[string]any)
+			if controlUI == nil {
+				controlUI = map[string]any{}
+			}
+			controlUI["dangerouslyDisableDeviceAuth"] = true
+			gateway["controlUi"] = controlUI
 		}
-		controlUI["dangerouslyDisableDeviceAuth"] = true
-		gateway["controlUi"] = controlUI
 
 		config["gateway"] = gateway
 

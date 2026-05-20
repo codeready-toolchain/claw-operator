@@ -13,8 +13,8 @@ The operator applies multiple layers of defense:
 - **External secret management** -- credential Secrets are user-managed and fully compatible with [External Secrets Operator](https://external-secrets.io/), Sealed Secrets, or HashiCorp Vault. Using an external secret manager is recommended for production.
 - **Network isolation** -- OpenClaw pods cannot reach the internet directly; all outbound traffic is forced through the credential proxy via NetworkPolicy. The proxy only allows HTTPS (port 443) egress and rejects any domain not explicitly configured.
 - **Ingress restriction** -- only the OpenShift router namespace can reach the gateway port (NetworkPolicy on ingress).
-- **Gateway authentication** -- a cryptographically random 256-bit token is auto-generated per instance and required for all gateway access.
-- **Device pairing** -- remote browser connections require a one-time approval via CLI before they can interact with the instance.
+- **Gateway authentication** -- two modes: `token` (default) auto-generates a 256-bit token per instance; `password` uses a shared password from a Kubernetes Secret. See `spec.auth` in the [CRD reference](docs/adr/0011-password-auth-mode.md).
+- **Device pairing** -- in token mode, remote browser connections require a one-time approval via CLI before they can interact with the instance. Can be independently disabled via `spec.auth.disableDevicePairing`.
 
 ## Installation (OLM)
 
@@ -185,6 +185,8 @@ oc port-forward svc/instance 18789:18789 -n $NS
 # Replace "instance" with your Claw CR name if different
 ```
 
+**Password mode:** If you prefer shared password access (useful for workshops, demos, or shared team instances), create a Secret with the password and set `spec.auth.mode: password` on the Claw CR. Users enter the password in the browser instead of using a token. See [ADR-0011](docs/adr/0011-password-auth-mode.md) for details.
+
 ### 6. Pair Your Device
 
 On first connection you'll see "pairing required". With the browser tab open, approve the request:
@@ -198,6 +200,8 @@ make approve-pairing NS=$NS
 This picks the first pending request and asks for confirmation.
 
 Refresh the browser after approval. The device is remembered across sessions.
+
+> **Note:** Device pairing is only required in token mode (the default). In password mode, device pairing is disabled by default. You can control this independently via `spec.auth.disableDevicePairing`.
 
 ## Makefile Targets
 

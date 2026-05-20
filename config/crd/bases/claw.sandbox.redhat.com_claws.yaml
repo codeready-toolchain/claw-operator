@@ -50,13 +50,19 @@ spec:
                 description: |-
                   Auth configures gateway authentication. Defaults to token-based
                   authentication with device pairing. Set mode to "password" for
-                  shared-password access (e.g., classroom/workshop environments).
+                  shared-password access without per-device identity.
                 properties:
+                  disableDevicePairing:
+                    description: |-
+                      DisableDevicePairing disables browser device identity checks
+                      (maps to gateway.controlUi.dangerouslyDisableDeviceAuth upstream).
+                      Defaults to true when mode is "password", false when mode is "token".
+                    type: boolean
                   mode:
                     default: token
                     description: |-
-                      Mode selects the authentication mechanism: "token" (default) requires
-                      device pairing, "password" uses a shared password for browser access.
+                      Mode selects the authentication mechanism: "token" (default) uses an
+                      auto-generated token, "password" uses a shared password from a Secret.
                     enum:
                     - token
                     - password
