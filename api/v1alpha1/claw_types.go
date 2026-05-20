@@ -304,6 +304,36 @@ type WebFetchSpec struct {
 	Enabled bool `json:"enabled"`
 }
 
+// AuthMode selects the gateway authentication mechanism.
+// +kubebuilder:validation:Enum=token;password
+type AuthMode string
+
+const (
+	AuthModeToken    AuthMode = "token"
+	AuthModePassword AuthMode = "password"
+)
+
+// AuthSpec configures gateway authentication.
+// +kubebuilder:validation:XValidation:rule="self.mode != 'password' || has(self.passwordSecretRef)",message="passwordSecretRef is required when mode is password"
+type AuthSpec struct {
+	// Mode selects the authentication mechanism: "token" (default) uses an
+	// auto-generated token, "password" uses a shared password from a Secret.
+	// +optional
+	// +kubebuilder:default=token
+	Mode AuthMode `json:"mode,omitempty"`
+
+	// PasswordSecretRef references a Secret key holding the shared password.
+	// Required when mode is "password".
+	// +optional
+	PasswordSecretRef *SecretRefEntry `json:"passwordSecretRef,omitempty"`
+
+	// DisableDevicePairing disables browser device identity checks
+	// (maps to gateway.controlUi.dangerouslyDisableDeviceAuth upstream).
+	// Defaults to true when mode is "password", false when mode is "token".
+	// +optional
+	DisableDevicePairing *bool `json:"disableDevicePairing,omitempty"`
+}
+
 // ClawSpec defines the desired state of Claw
 type ClawSpec struct {
 	// ConfigMode controls how operator config is applied on pod start.
@@ -313,6 +343,12 @@ type ClawSpec struct {
 	// +optional
 	// +kubebuilder:default=merge
 	ConfigMode ConfigMode `json:"configMode,omitempty"`
+
+	// Auth configures gateway authentication. Defaults to token-based
+	// authentication with device pairing. Set mode to "password" for
+	// shared-password access without per-device identity.
+	// +optional
+	Auth *AuthSpec `json:"auth,omitempty"`
 
 	// Credentials configures proxy credential injection per domain.
 	// +optional

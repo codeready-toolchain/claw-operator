@@ -46,6 +46,54 @@ spec:
           spec:
             description: ClawSpec defines the desired state of Claw
             properties:
+              auth:
+                description: |-
+                  Auth configures gateway authentication. Defaults to token-based
+                  authentication with device pairing. Set mode to "password" for
+                  shared-password access without per-device identity.
+                properties:
+                  disableDevicePairing:
+                    description: |-
+                      DisableDevicePairing disables browser device identity checks
+                      (maps to gateway.controlUi.dangerouslyDisableDeviceAuth upstream).
+                      Defaults to true when mode is "password", false when mode is "token".
+                    type: boolean
+                  mode:
+                    default: token
+                    description: |-
+                      Mode selects the authentication mechanism: "token" (default) uses an
+                      auto-generated token, "password" uses a shared password from a Secret.
+                    enum:
+                    - token
+                    - password
+                    type: string
+                  passwordSecretRef:
+                    description: |-
+                      PasswordSecretRef references a Secret key holding the shared password.
+                      Required when mode is "password".
+                    properties:
+                      key:
+                        description: Key is the key in the Secret's data map
+                        minLength: 1
+                        type: string
+                      name:
+                        description: Name is the name of the Secret
+                        minLength: 1
+                        type: string
+                      role:
+                        description: |-
+                          Role distinguishes multiple secrets for the same credential.
+                          Required when multiple secretRef entries are present (e.g., Slack botToken/appToken).
+                        maxLength: 63
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: passwordSecretRef is required when mode is password
+                  rule: self.mode != 'password' || has(self.passwordSecretRef)
               configMode:
                 default: merge
                 description: |-
