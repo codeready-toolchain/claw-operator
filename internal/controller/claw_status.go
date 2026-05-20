@@ -247,8 +247,13 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 			return fmt.Errorf("failed to get Route URL: %w", err)
 		}
 
-		token := r.getGatewayToken(ctx, instance.Namespace, instance.Name)
-		instance.Status.URL = buildClawURL(routeURL, token)
+		// Password mode: URL has no token fragment (password is entered in the UI)
+		if instance.Spec.Auth != nil && instance.Spec.Auth.Mode == clawv1alpha1.AuthModePassword {
+			instance.Status.URL = routeURL
+		} else {
+			token := r.getGatewayToken(ctx, instance.Namespace, instance.Name)
+			instance.Status.URL = buildClawURL(routeURL, token)
+		}
 	} else {
 		// Clear URL when deployments are not ready
 		instance.Status.URL = ""
