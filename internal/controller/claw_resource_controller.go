@@ -505,6 +505,18 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.Info("Route CRD not registered, using localhost fallback for CORS")
 	}
 
+	// Validate auth password Secret (if auth mode is "password")
+	if _, err := r.resolveAuthPassword(ctx, instance); err != nil {
+		logger.Error(err, "Failed to resolve auth password")
+		instance.Status.URL = ""
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after auth password failure")
+		}
+		return ctrl.Result{}, err
+	}
+
 	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
 	if err := r.enrichConfigAndNetworkPolicy(objects, routeHost, instance, resolvedCreds); err != nil {
 		return ctrl.Result{}, err
@@ -611,8 +623,8 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 	return resolvedCreds, nil
 }
 
-// enrichConfigAndNetworkPolicy injects route host, providers, models, channels, and
-// Kubernetes skill into the gateway ConfigMap and updates the egress NetworkPolicy.
+// enrichConfigAndNetworkPolicy injects route host, providers, models, channels,
+// auth mode, and Kubernetes skill into the gateway ConfigMap and updates the egress NetworkPolicy.
 func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	objects []*unstructured.Unstructured,
 	routeHost string,
@@ -621,6 +633,9 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 ) error {
 	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
+	}
+	if err := injectAuthModeIntoConfigMap(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject auth mode into ConfigMap: %w", err)
 	}
 	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
 		return fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
@@ -682,6 +697,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	}
 	if err := configureGatewayForMcpServers(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure gateway for MCP servers: %w", err)
+	}
+	if err := configureClawDeploymentForAuth(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure gateway for auth: %w", err)
 	}
 	return nil
 }
@@ -1345,6 +1363,11 @@ func clawReferencesSecret(instance clawv1alpha1.Claw, secretName string) bool {
 	}
 	if instance.Spec.WebSearch != nil && instance.Spec.WebSearch.SecretRef != nil {
 		if instance.Spec.WebSearch.SecretRef.Name == secretName {
+			return true
+		}
+	}
+	if instance.Spec.Auth != nil && instance.Spec.Auth.PasswordSecretRef != nil {
+		if instance.Spec.Auth.PasswordSecretRef.Name == secretName {
 			return true
 		}
 	}
