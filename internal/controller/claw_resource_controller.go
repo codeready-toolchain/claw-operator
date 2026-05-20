@@ -509,6 +509,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	authPassword, err := r.resolveAuthPassword(ctx, instance)
 	if err != nil {
 		logger.Error(err, "Failed to resolve auth password")
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after auth password failure")
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -1356,6 +1361,11 @@ func clawReferencesSecret(instance clawv1alpha1.Claw, secretName string) bool {
 	}
 	if instance.Spec.WebSearch != nil && instance.Spec.WebSearch.SecretRef != nil {
 		if instance.Spec.WebSearch.SecretRef.Name == secretName {
+			return true
+		}
+	}
+	if instance.Spec.Auth != nil && instance.Spec.Auth.PasswordSecretRef != nil {
+		if instance.Spec.Auth.PasswordSecretRef.Name == secretName {
 			return true
 		}
 	}

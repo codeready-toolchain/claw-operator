@@ -314,6 +314,7 @@ const (
 )
 
 // AuthSpec configures gateway authentication.
+// +kubebuilder:validation:XValidation:rule="self.mode != 'password' || has(self.passwordSecretRef)",message="passwordSecretRef is required when mode is password"
 type AuthSpec struct {
 	// Mode selects the authentication mechanism: "token" (default) requires
 	// device pairing, "password" uses a shared password for browser access.

@@ -85,6 +85,9 @@ spec:
                     - name
                     type: object
                 type: object
+                x-kubernetes-validations:
+                - message: passwordSecretRef is required when mode is password
+                  rule: self.mode != 'password' || has(self.passwordSecretRef)
               configMode:
                 default: merge
                 description: |-
