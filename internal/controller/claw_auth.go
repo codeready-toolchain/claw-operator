@@ -67,14 +67,14 @@ func shouldDisableDevicePairing(auth *clawv1alpha1.AuthSpec) bool {
 }
 
 // injectAuthModeIntoConfigMap updates the gateway config in operator.json based
-// on spec.auth. Password injection and device pairing are handled independently:
-// password mode sets gateway.auth, and shouldDisableDevicePairing controls
-// gateway.controlUi.dangerouslyDisableDeviceAuth.
-func injectAuthModeIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, password string) error {
-	needsPasswordInjection := instance.Spec.Auth != nil && instance.Spec.Auth.Mode == clawv1alpha1.AuthModePassword
+// on spec.auth. Only non-sensitive metadata is written: auth mode and device
+// pairing flag. The actual password is delivered via OPENCLAW_GATEWAY_PASSWORD
+// env var (see configureClawDeploymentForAuth).
+func injectAuthModeIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	needsPasswordMode := instance.Spec.Auth != nil && instance.Spec.Auth.Mode == clawv1alpha1.AuthModePassword
 	disablePairing := shouldDisableDevicePairing(instance.Spec.Auth)
 
-	if !needsPasswordInjection && !disablePairing {
+	if !needsPasswordMode && !disablePairing {
 		return nil
 	}
 
@@ -102,10 +102,9 @@ func injectAuthModeIntoConfigMap(objects []*unstructured.Unstructured, instance 
 			gateway = map[string]any{}
 		}
 
-		if needsPasswordInjection {
+		if needsPasswordMode {
 			gateway["auth"] = map[string]any{
-				"mode":     "password",
-				"password": password,
+				"mode": "password",
 			}
 		}
 
@@ -132,4 +131,70 @@ func injectAuthModeIntoConfigMap(objects []*unstructured.Unstructured, instance 
 	}
 
 	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+}
+
+// configureClawDeploymentForAuth adds the OPENCLAW_GATEWAY_PASSWORD env var to the
+// gateway container, sourced from the password Secret via secretKeyRef. OpenClaw
+// reads this env var as a fallback when gateway.auth.password is not in the config.
+func configureClawDeploymentForAuth(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	if instance.Spec.Auth == nil || instance.Spec.Auth.Mode != clawv1alpha1.AuthModePassword {
+		return nil
+	}
+	ref := instance.Spec.Auth.PasswordSecretRef
+	if ref == nil {
+		return nil
+	}
+
+	gatewayName := getClawDeploymentName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from claw deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in claw deployment")
+		}
+
+		containerIdx := -1
+		var container map[string]any
+		for i, c := range containers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawGatewayContainerName {
+				containerIdx = i
+				container = cm
+				break
+			}
+		}
+		if containerIdx < 0 {
+			return fmt.Errorf("container %q not found in claw deployment", ClawGatewayContainerName)
+		}
+
+		envVars, _, _ := unstructured.NestedSlice(container, "env")
+		envVars = append(envVars, map[string]any{
+			"name": "OPENCLAW_GATEWAY_PASSWORD",
+			"valueFrom": map[string]any{
+				"secretKeyRef": map[string]any{
+					"name": ref.Name,
+					"key":  ref.Key,
+				},
+			},
+		})
+
+		if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
+			return fmt.Errorf("failed to set env vars on claw deployment: %w", err)
+		}
+		containers[containerIdx] = container
+		if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+			return fmt.Errorf("failed to set containers on claw deployment: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
 }

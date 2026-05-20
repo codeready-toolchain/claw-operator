@@ -505,10 +505,10 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.Info("Route CRD not registered, using localhost fallback for CORS")
 	}
 
-	// Resolve auth password (if auth mode is "password")
-	authPassword, err := r.resolveAuthPassword(ctx, instance)
-	if err != nil {
+	// Validate auth password Secret (if auth mode is "password")
+	if _, err := r.resolveAuthPassword(ctx, instance); err != nil {
 		logger.Error(err, "Failed to resolve auth password")
+		instance.Status.URL = ""
 		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
 			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
@@ -518,7 +518,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Phase 3: Inject Route host into ConfigMap and apply remaining resources
-	if err := r.enrichConfigAndNetworkPolicy(objects, routeHost, instance, resolvedCreds, authPassword); err != nil {
+	if err := r.enrichConfigAndNetworkPolicy(objects, routeHost, instance, resolvedCreds); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -630,12 +630,11 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	routeHost string,
 	instance *clawv1alpha1.Claw,
 	resolvedCreds []resolvedCredential,
-	authPassword string,
 ) error {
 	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
 	}
-	if err := injectAuthModeIntoConfigMap(objects, instance, authPassword); err != nil {
+	if err := injectAuthModeIntoConfigMap(objects, instance); err != nil {
 		return fmt.Errorf("failed to inject auth mode into ConfigMap: %w", err)
 	}
 	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
@@ -698,6 +697,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	}
 	if err := configureGatewayForMcpServers(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure gateway for MCP servers: %w", err)
+	}
+	if err := configureClawDeploymentForAuth(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure gateway for auth: %w", err)
 	}
 	return nil
 }

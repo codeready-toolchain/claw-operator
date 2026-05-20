@@ -33,20 +33,25 @@ The `spec.auth` field provides three controls:
 Claw CR spec.auth
        │
        ▼
- resolveAuthPassword()          ◄── read password from Secret
+ resolveAuthPassword()          ◄── validate password Secret exists
        │                             return "" for nil/token mode
-       │                             error → Ready=False + ValidationFailed
+       │                             error → Ready=False + ValidationFailed + clear URL
        │
        ▼
  enrichConfigAndNetworkPolicy()
        ├─► injectAuthModeIntoConfigMap()
-       │     ├── password injection (mode == password):
+       │     ├── mode metadata only (mode == password):
        │     │     gateway.auth.mode = "password"
-       │     │     gateway.auth.password = <secret value>
+       │     │     (no password value — delivered via env var)
        │     ├── device pairing (shouldDisableDevicePairing()):
        │     │     explicit disableDevicePairing overrides mode default
        │     │     gateway.controlUi.dangerouslyDisableDeviceAuth = true
        │     └── no-op when both are unnecessary
+       │
+ configureDeployments()
+       └─► configureClawDeploymentForAuth()
+             └── OPENCLAW_GATEWAY_PASSWORD env var from secretKeyRef
+                 (password never written to ConfigMap)
        │
        ▼
  updateStatus()
@@ -82,20 +87,17 @@ On `AuthSpec`:
 - Secret referenced by `passwordSecretRef` must exist and contain the specified key with a non-empty value
 - Failures set `Ready=False` with reason `ValidationFailed`
 
-## ConfigMap Injection
+## ConfigMap and Deployment Injection
 
-`injectAuthModeIntoConfigMap` handles two independent concerns:
+Auth configuration is split between the ConfigMap (non-sensitive metadata) and the Deployment (secret-backed env var):
 
-1. **Password injection** (when `mode` is `password`): replaces the `gateway.auth` block:
-   ```json
-   { "mode": "password", "password": "<secret value>" }
-   ```
+**ConfigMap** (`injectAuthModeIntoConfigMap`): writes only `gateway.auth.mode` and `gateway.controlUi.dangerouslyDisableDeviceAuth`. No password value is stored in the ConfigMap. This follows the same pattern as the gateway token, which is delivered via `OPENCLAW_GATEWAY_TOKEN` env var rather than the config file.
 
-2. **Device pairing** (when `shouldDisableDevicePairing()` returns true): sets `gateway.controlUi.dangerouslyDisableDeviceAuth` to `true`, merged alongside existing `controlUi` settings.
+**Deployment** (`configureClawDeploymentForAuth`): adds `OPENCLAW_GATEWAY_PASSWORD` as an env var sourced from the password Secret via `secretKeyRef`. OpenClaw reads this env var as a fallback when `gateway.auth.password` is not in the config (see `auth-surface-resolution.ts` in upstream OpenClaw).
 
 The `shouldDisableDevicePairing` helper resolves the effective value: if `disableDevicePairing` is explicitly set, that value is used; otherwise it defaults to `true` for password mode and `false` for token mode.
 
-When neither concern applies (auth is nil, mode is token, no explicit override), the function is a no-op.
+When neither concern applies (auth is nil, mode is token, no explicit override), both functions are no-ops.
 
 ## Examples
 

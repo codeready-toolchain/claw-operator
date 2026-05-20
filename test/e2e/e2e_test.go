@@ -990,7 +990,7 @@ spec:
 				"error should mention the missing passwordSecretRef")
 		})
 
-		t.Run("should inject password auth into ConfigMap when mode is password", func(t *testing.T) {
+		t.Run("should configure password auth mode via env var, not ConfigMap", func(t *testing.T) {
 			t.Cleanup(func() {
 				collectDebugInfo(t)
 				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
@@ -1049,19 +1049,31 @@ spec:
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR with password auth")
 
-			t.Log("waiting for Claw ProxyConfigured condition")
+			t.Log("waiting for operator.json auth mode to be set")
 			ctx := context.Background()
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {
-					cmd := exec.Command("kubectl", "get", "claw", "instance",
-						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+					cmd := exec.Command("kubectl", "get", "configmap", configMapName,
+						"-o", "jsonpath={.data.operator\\.json}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
-					return err == nil && output == conditionTrue, nil
+					if err != nil {
+						return false, nil
+					}
+					var config map[string]any
+					if json.Unmarshal([]byte(output), &config) != nil {
+						return false, nil
+					}
+					gw, _ := config["gateway"].(map[string]any)
+					if gw == nil {
+						return false, nil
+					}
+					auth, _ := gw["auth"].(map[string]any)
+					return auth != nil && auth["mode"] == "password", nil
 				})
-			require.NoError(t, err, "Claw ProxyConfigured did not become True")
+			require.NoError(t, err, "operator.json auth mode did not become password")
 
-			t.Log("verifying operator.json has password auth mode")
+			t.Log("verifying operator.json has no plaintext password")
 			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
 				"-o", "jsonpath={.data.operator\\.json}",
 				"-n", userNamespace)
@@ -1069,22 +1081,36 @@ spec:
 			require.NoError(t, err, "config ConfigMap should exist with operator.json")
 
 			var operatorConfig map[string]any
-			require.NoError(t, json.Unmarshal([]byte(operatorJSON), &operatorConfig),
-				"operator.json should be valid JSON")
+			require.NoError(t, json.Unmarshal([]byte(operatorJSON), &operatorConfig))
 
-			gateway, ok := operatorConfig["gateway"].(map[string]any)
-			require.True(t, ok, "operator.json should contain gateway section")
-
-			auth, ok := gateway["auth"].(map[string]any)
-			require.True(t, ok, "gateway should contain auth section")
-			assert.Equal(t, "password", auth["mode"], "auth mode should be password")
-			assert.Equal(t, "classroom-pass-e2e", auth["password"],
-				"auth password should match the Secret value")
+			gateway := operatorConfig["gateway"].(map[string]any)
+			auth := gateway["auth"].(map[string]any)
+			assert.Equal(t, "password", auth["mode"])
+			_, hasPassword := auth["password"]
+			assert.False(t, hasPassword, "password must not be in ConfigMap")
 
 			controlUI, ok := gateway["controlUi"].(map[string]any)
 			require.True(t, ok, "gateway should contain controlUi section")
-			assert.Equal(t, true, controlUI["dangerouslyDisableDeviceAuth"],
-				"device auth should be disabled in password mode")
+			assert.Equal(t, true, controlUI["dangerouslyDisableDeviceAuth"])
+
+			t.Log("verifying gateway deployment has OPENCLAW_GATEWAY_PASSWORD env var from Secret")
+			gwEnvPath := ".spec.template.spec.containers[?(@.name=='gateway')]" +
+				".env[?(@.name=='OPENCLAW_GATEWAY_PASSWORD')]"
+			cmd = exec.Command("kubectl", "get", "deployment", "instance",
+				"-o", "jsonpath={"+gwEnvPath+".valueFrom.secretKeyRef.name}",
+				"-n", userNamespace)
+			secretName, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "workshop-pw", secretName,
+				"OPENCLAW_GATEWAY_PASSWORD should reference the password Secret")
+
+			cmd = exec.Command("kubectl", "get", "deployment", "instance",
+				"-o", "jsonpath={"+gwEnvPath+".valueFrom.secretKeyRef.key}",
+				"-n", userNamespace)
+			secretKey, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "password", secretKey,
+				"OPENCLAW_GATEWAY_PASSWORD should reference the correct key")
 		})
 
 		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {
