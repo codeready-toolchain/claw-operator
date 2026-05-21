@@ -1,6 +1,7 @@
-# Claw Instance Idling
+# ADR-0012: Claw Instance Idling
 
-**Status:** Final
+**Status:** Implemented
+**Date:** 2026-05-20
 
 ## Overview
 
@@ -27,7 +28,16 @@ scales deployments to zero would be immediately reverted on the next reconcile.
 5. **Fast unidle** — Unidling should be as fast as a normal cold start; no
    special warm-up procedures are needed beyond the standard init containers.
 
-## Architecture / How It Works
+## Decisions
+
+| # | Decision | Choice | Rationale |
+|---|----------|--------|-----------|
+| 1 | Reconcile behavior when idled | Short-circuit early — only manage deployment scale and status | Fast and cheap reconcile when idled; won't fail on unrelated issues (missing secrets, Route not ready). Spec changes while idled are uncommon and the full reconcile runs naturally on unidle. Rejected: full pipeline (wasteful, can fail on unrelated issues) and selective reconcile (most complex, marginal benefit). |
+| 2 | Spec field name | `idle` (bool) | Concise, intuitive for external idling systems, trivial interaction contract. Rejected: `suspended` (implies pause/resume semantics) and `replicas` (over-engineered for single-replica design, invites misuse). |
+| 3 | Status representation | Both — `Idle` condition + `Ready` adjusted | Maximum compatibility. Tools watching Ready see it's not running; tools that understand the Idle condition can distinguish "intentionally stopped" from "broken." Rejected: Idle condition only (tools watching Ready wouldn't know why) and Ready reason only (conflates intentional idle with failures). |
+| 4 | Ready condition when idled | `Ready=False, reason=Idle` | Resolved by decision 3 — the dual-condition approach already specifies this. |
+
+## Architecture
 
 ### Idle Flow
 
@@ -53,28 +63,6 @@ External System            Claw CR              Claw Operator           Deployme
       |                       |<-- status: Ready=True |                       |
 ```
 
-### Integration with External Idlers
-
-The Claw operator creates resources with an ownership chain:
-`Claw CR → Deployment → ReplicaSet → Pod`. External workload idlers (such as
-the DevSandbox member-operator idler) walk this chain from pod to top-level
-owner. For them to idle Claw instances via `spec.idle` rather than directly
-scaling the Deployment, they must add a handler for the `Claw` kind — analogous
-to how `AnsibleAutomationPlatform` is handled today:
-
-```go
-case "Claw":
-    err = i.idleClaw(ctx, ownerWithGVR) // patches spec.idle: true
-```
-
-Without this idler-side change, the idler would match `Deployment` in the chain
-and scale it directly — which the Claw operator would immediately revert on the
-next reconcile. The idler also needs RBAC for
-`claw.sandbox.redhat.com/claws` (get, list, patch).
-
-This change is outside the scope of the claw-operator itself but is a required
-companion change for environments that use workload idling.
-
 ### Reconcile Behavior When Idled
 
 When `spec.idle` is `true`, the controller short-circuits the reconcile loop
@@ -91,38 +79,20 @@ Kustomize, server-side apply — which applies deployments with `replicas: 1`.
 ### What Gets Scaled Down
 
 When idled, the operator sets `replicas: 0` on:
-- The gateway Deployment (`<instance>`)
-- The proxy Deployment (`<instance>-proxy`)
-- The device-pairing Deployment (`<instance>-device-pairing`)
+- The gateway Deployment
+- The proxy Deployment
+- The device-pairing Deployment
 
 ### What Is Preserved
 
-- PVCs (user data on `/home/node/.openclaw`)
+- PVCs (user data)
 - Secrets (gateway token, proxy CA, credential secrets)
 - ConfigMaps (operator config, proxy config)
 - Routes (so URLs remain stable for dashboards/bookmarks)
 - Services (for Route→Service referential integrity)
 - NetworkPolicies
 
-## Core Concepts
-
-### The `idle` Spec Field
-
-A boolean field in `ClawSpec` that external systems set to `true` to request
-idling and `false` to request unidling. The operator watches for changes to this
-field and acts accordingly.
-
-```go
-type ClawSpec struct {
-    // ...existing fields...
-
-    // Idle, when set to true, instructs the operator to scale all managed
-    // Deployments to zero replicas. Set to false (or omit) to run normally.
-    // +optional
-    // +kubebuilder:default=false
-    Idle bool `json:"idle,omitempty"`
-}
-```
+## Configuration
 
 External systems interact via a simple patch:
 
@@ -167,44 +137,10 @@ The `Idle` condition is only present when the instance is (or was recently)
 idled. This follows the pattern used by `McpServersConfigured` in this
 operator — conditions are added when relevant and removed when not applicable.
 
-This approach lets:
-- Simple tools check `Ready` to know if the instance is serving traffic.
-- Aware tools check for the presence of `Idle=True` to distinguish
-  "intentionally stopped" from "broken."
-
 ### Constants
 
-```go
-const (
-    ConditionTypeIdle = "Idle"
-
-    ConditionReasonIdle           = "Idle"
-    ConditionReasonIdledByRequest = "IdledByRequest"
-)
-```
-
-## Implementation Plan
-
-Single PR covering API, controller, and tests:
-
-1. Add `Idle` field to `ClawSpec` in `api/v1alpha1/claw_types.go`
-2. Add `ConditionTypeIdle` and related reason constants
-3. Run `make manifests generate` to regenerate CRD YAML and DeepCopy
-4. Add early-return logic at the top of `Reconcile()` that checks `spec.idle`:
-   - When `true`: fetch managed Deployments by name (gateway, proxy,
-     device-pairing); for each that exists with replicas > 0, patch to
-     `replicas: 0`; skip NotFound (handles CR created idle before resources
-     exist); set `Idle` condition to True, `Ready` to False (reason: Idle);
-     clear `status.url`; update status and return
-   - When `false` (default): remove `Idle` condition if present, proceed
-     with the existing full reconcile
-5. Unit tests (envtest):
-   - idle → deployments scaled to 0, status reflects idle
-   - unidle → full reconcile runs, deployments at replicas 1
-   - status transitions (Ready → Idle → Ready)
-   - no-op when already idled (patch idempotency)
-   - idling when deployments don't exist yet (no error)
-6. E2E test (Kind cluster):
-   - Create Claw, wait for Ready
-   - Patch `spec.idle: true`, verify pods terminate and status is Idle
-   - Patch `spec.idle: false`, verify pods come back and status is Ready
+| Constant | Value |
+|----------|-------|
+| `ConditionTypeIdle` | `"Idle"` |
+| `ConditionReasonIdle` | `"Idle"` |
+| `ConditionReasonIdledByRequest` | `"IdledByRequest"` |
