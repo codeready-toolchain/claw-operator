@@ -21,6 +21,53 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        # --- init-volume: PVC subdirectory bootstrap ---
+        #
+        # On OpenShift, the restricted SCC assigns a UID from the namespace
+        # range (e.g. 1001970000) and drops all capabilities. PVC root
+        # directories are created by the storage provisioner as root:<fsGroup>,
+        # so the running user can write files (via group perms + setgid) but
+        # is NOT the owner.
+        #
+        # OpenClaw ≥ 2026.5.12 (commit b971ebaaab, PR #77907) added a
+        # chmodSync(stateDir, 0o700) call in exec-approvals.ts that runs
+        # before every shell command. Linux chmod requires euid == file owner
+        # or CAP_FOWNER — neither holds when the PVC root is owned by root
+        # and the container runs as a namespace-assigned UID. This causes
+        # every exec tool call to fail with EPERM.
+        #
+        # Fix: all containers mount the PVC via subPath ("home") instead of
+        # the raw root. This init container creates that subdirectory — owned
+        # by the running user — so chmod succeeds. Existing PVCs with data at
+        # the root need their PVC deleted and recreated (no auto-migration).
+        # The upstream community operator (openclaw-operator) mounts the PVC
+        # root directly and sets runAsUser/fsGroup to a fixed UID (1000),
+        # which works on vanilla Kubernetes but not on OpenShift where the
+        # SCC overrides the UID.
+        #
+        - name: init-volume
+          image: mirror.gcr.io/library/busybox:1.37
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - sh
+            - -c
+            - mkdir -p /mnt/pvc/home
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 10m
+            limits:
+              memory: 32Mi
+              cpu: 50m
+          volumeMounts:
+            - name: claw-home
+              mountPath: /mnt/pvc
         - name: init-config
           image: ghcr.io/openclaw/openclaw:slim
           imagePullPolicy: IfNotPresent
@@ -45,6 +92,7 @@ spec:
           volumeMounts:
             - name: claw-home
               mountPath: /home/node/.openclaw
+              subPath: home
             - name: config
               mountPath: /config
         - name: wait-for-proxy
@@ -189,15 +237,16 @@ spec:
           volumeMounts:
             - name: claw-home
               mountPath: /home/node/.openclaw
+              subPath: home
             - name: claw-home
               mountPath: /home/node/.local
-              subPath: .local
+              subPath: home/.local
             - name: claw-home
               mountPath: /home/node/.cache
-              subPath: .cache
+              subPath: home/.cache
             - name: claw-home
               mountPath: /home/node/.config
-              subPath: .config
+              subPath: home/.config
             - name: tmp-volume
               mountPath: /tmp
             - name: proxy-ca

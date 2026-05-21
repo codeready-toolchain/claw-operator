@@ -1002,6 +1002,70 @@ func TestConfigureGatewayForMcpServers(t *testing.T) {
 	})
 }
 
+// --- PVC volume mount safety tests ---
+
+func TestClawHomePVCMountsUseSubPath(t *testing.T) {
+	expectedSubPaths := map[string]string{
+		"/home/node/.openclaw": "home",
+		"/home/node/.local":    "home/.local",
+		"/home/node/.cache":    "home/.cache",
+		"/home/node/.config":   "home/.config",
+	}
+
+	reconciler := createClawReconciler()
+	instance := testClawWithCredentials(testCredentials())
+	objects, err := reconciler.buildKustomizedObjects(instance)
+	require.NoError(t, err)
+
+	gatewayName := getClawDeploymentName(testInstanceName)
+	var gatewayDep *unstructured.Unstructured
+	for _, obj := range objects {
+		if obj.GetKind() == DeploymentKind && obj.GetName() == gatewayName {
+			gatewayDep = obj
+			break
+		}
+	}
+	require.NotNil(t, gatewayDep, "gateway deployment should exist in rendered manifests")
+
+	seen := make(map[string]bool)
+	for _, containerPath := range [][]string{
+		{"spec", "template", "spec", "containers"},
+		{"spec", "template", "spec", "initContainers"},
+	} {
+		containers, _, err := unstructured.NestedSlice(gatewayDep.Object, containerPath...)
+		require.NoError(t, err)
+
+		for _, c := range containers {
+			container := c.(map[string]any)
+			name, _, _ := unstructured.NestedString(container, "name")
+			if name == "init-volume" {
+				continue // init-volume intentionally mounts the raw PVC root
+			}
+			mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
+			for _, m := range mounts {
+				mount := m.(map[string]any)
+				if mount["name"] != "claw-home" {
+					continue
+				}
+				mountPath, _ := mount["mountPath"].(string)
+				subPath, _ := mount["subPath"].(string)
+				expected, known := expectedSubPaths[mountPath]
+				require.True(t, known,
+					"container %q: unexpected claw-home mount at %s", name, mountPath)
+				assert.Equal(t, expected, subPath,
+					"container %q: claw-home mount at %s must use correct subPath",
+					name, mountPath)
+				seen[mountPath] = true
+			}
+		}
+	}
+
+	for mountPath := range expectedSubPaths {
+		assert.True(t, seen[mountPath],
+			"expected claw-home mount at %s not found in any container", mountPath)
+	}
+}
+
 func TestMcpAnnotationKey(t *testing.T) {
 	t.Run("should produce valid annotation key segment", func(t *testing.T) {
 		key := mcpAnnotationKey("my-server", "MY_VAR")
