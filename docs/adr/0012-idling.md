@@ -34,8 +34,7 @@ scales deployments to zero would be immediately reverted on the next reconcile.
 |---|----------|--------|-----------|
 | 1 | Reconcile behavior when idled | Short-circuit early — only manage deployment scale and status | Fast and cheap reconcile when idled; won't fail on unrelated issues (missing secrets, Route not ready). Spec changes while idled are uncommon and the full reconcile runs naturally on unidle. Rejected: full pipeline (wasteful, can fail on unrelated issues) and selective reconcile (most complex, marginal benefit). |
 | 2 | Spec field name | `idle` (bool) | Concise, intuitive for external idling systems, trivial interaction contract. Rejected: `suspended` (implies pause/resume semantics) and `replicas` (over-engineered for single-replica design, invites misuse). |
-| 3 | Status representation | Both — `Idle` condition + `Ready` adjusted | Maximum compatibility. Tools watching Ready see it's not running; tools that understand the Idle condition can distinguish "intentionally stopped" from "broken." Rejected: Idle condition only (tools watching Ready wouldn't know why) and Ready reason only (conflates intentional idle with failures). |
-| 4 | Ready condition when idled | `Ready=False, reason=Idle` | Resolved by decision 3 — the dual-condition approach already specifies this. |
+| 3 | Status representation | Both — `Idle` condition + `Ready=False, reason=Idle` | Maximum compatibility. Tools watching Ready see it's not running; tools that understand the Idle condition can distinguish "intentionally stopped" from "broken." Rejected: Idle condition only (tools watching Ready wouldn't know why) and Ready reason only (conflates intentional idle with failures). |
 
 ## Architecture
 
