@@ -61,21 +61,25 @@ func TestMain(m *testing.M) {
 	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
 		kindCluster = v
 	}
+	kindBin := "kind"
+	if v, ok := os.LookupEnv("KIND_BIN"); ok {
+		kindBin = v
+	}
 
 	// Build, save, and load the manager and proxy images into Kind.
 	// Images are saved to tar first because podman and kind do not work well
 	// together when loading from a docker registry.
 	// See https://github.com/kubernetes-sigs/kind/issues/2038
-	if err := buildAndLoadImage("manager", "container-build", "IMG", projectImage, kindCluster); err != nil {
+	if err := buildAndLoadImage("manager", "container-build", "IMG", projectImage, kindBin, kindCluster); err != nil {
 		fmt.Fprintf(os.Stderr, "manager image setup failed: %v\n", err)
 		os.Exit(1)
 	}
-	if err := buildAndLoadImage("proxy", "container-build-proxy", "PROXY_IMG", proxyImage, kindCluster); err != nil {
+	if err := buildAndLoadImage("proxy", "container-build-proxy", "PROXY_IMG", proxyImage, kindBin, kindCluster); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy image setup failed: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := pullAndLoadImage(gatewayImage, kindCluster); err != nil {
+	if err := pullAndLoadImage(gatewayImage, kindBin, kindCluster); err != nil {
 		fmt.Fprintf(os.Stderr, "gateway image setup failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -115,7 +119,7 @@ func TestMain(m *testing.M) {
 // a Kind cluster. label is a human-readable name for log messages, buildTarget
 // is the make target (e.g. "container-build"), imgVar is the make variable that
 // receives the image name (e.g. "IMG" or "PROXY_IMG").
-func buildAndLoadImage(label, buildTarget, imgVar, image, kindCluster string) error {
+func buildAndLoadImage(label, buildTarget, imgVar, image, kindBin, kindCluster string) error {
 	tarFile := fmt.Sprintf("tmp/%s.tar", label)
 
 	fmt.Printf("Building %s image...\n", label)
@@ -129,7 +133,7 @@ func buildAndLoadImage(label, buildTarget, imgVar, image, kindCluster string) er
 		fmt.Sprintf("OUTPUT_FILE=%s", tarFile)); err != nil {
 		return fmt.Errorf("save %s image: %w", label, err)
 	}
-	if err := runStreaming("kind", "load", "image-archive", tarFile,
+	if err := runStreaming(kindBin, "load", "image-archive", tarFile,
 		"--name", kindCluster); err != nil {
 		return fmt.Errorf("load %s image into Kind: %w", label, err)
 	}
@@ -137,7 +141,7 @@ func buildAndLoadImage(label, buildTarget, imgVar, image, kindCluster string) er
 }
 
 // pullAndLoadImage pulls a public container image and loads it into Kind.
-func pullAndLoadImage(image, kindCluster string) error {
+func pullAndLoadImage(image, kindBin, kindCluster string) error {
 	tarFile := fmt.Sprintf("tmp/%s.tar", strings.ReplaceAll(
 		strings.ReplaceAll(image, "/", "_"), ":", "_"))
 
@@ -152,7 +156,7 @@ func pullAndLoadImage(image, kindCluster string) error {
 	if err := runStreaming("podman", "save", "-o", tarFile, image); err != nil {
 		return fmt.Errorf("save %s: %w", image, err)
 	}
-	if err := runStreaming("kind", "load", "image-archive", tarFile,
+	if err := runStreaming(kindBin, "load", "image-archive", tarFile,
 		"--name", kindCluster); err != nil {
 		return fmt.Errorf("load %s into Kind: %w", image, err)
 	}
