@@ -1184,6 +1184,14 @@ spec:
 			require.NoError(t, err)
 			assert.Equal(t, "Idle", readyReason, "Ready reason should be Idle")
 
+			t.Log("verifying status.url is cleared when idled")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.url}",
+				"-n", userNamespace)
+			urlOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Empty(t, urlOutput, "status.url should be empty when idled")
+
 			t.Log("verifying all pods are terminated")
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 				func(ctx context.Context) (bool, error) {

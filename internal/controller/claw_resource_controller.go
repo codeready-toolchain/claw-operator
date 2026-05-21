@@ -409,8 +409,14 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if instance.Spec.Idle {
 		return r.handleIdle(ctx, instance)
 	}
-	// On unidle, remove stale Idle condition before full reconcile
-	meta.RemoveStatusCondition(&instance.Status.Conditions, clawv1alpha1.ConditionTypeIdle)
+	// On unidle, persist Idle condition removal so a partial reconcile failure
+	// cannot leave spec.idle=false with a stale Idle=True condition.
+	if meta.FindStatusCondition(instance.Status.Conditions, clawv1alpha1.ConditionTypeIdle) != nil {
+		meta.RemoveStatusCondition(&instance.Status.Conditions, clawv1alpha1.ConditionTypeIdle)
+		if err := r.Status().Update(ctx, instance); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to persist Idle condition removal: %w", err)
+		}
+	}
 
 	// Create or update the gateway Secret with token
 	if err := r.applyGatewaySecret(ctx, instance); err != nil {

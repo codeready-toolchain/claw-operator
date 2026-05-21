@@ -23,6 +23,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -46,9 +47,20 @@ func (r *ClawResourceReconciler) handleIdle(ctx context.Context, instance *clawv
 	}
 
 	for _, name := range deploymentNames {
-		if err := r.scaleDeploymentToZero(ctx, instance.Namespace, name); err != nil {
+		if err := r.scaleDeploymentToZero(ctx, instance, name); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to scale deployment %s to zero: %w", name, err)
 		}
+	}
+
+	idleCond := meta.FindStatusCondition(instance.Status.Conditions, clawv1alpha1.ConditionTypeIdle)
+	readyCond := meta.FindStatusCondition(instance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
+	alreadyIdled := idleCond != nil && idleCond.Status == metav1.ConditionTrue &&
+		readyCond != nil && readyCond.Status == metav1.ConditionFalse &&
+		readyCond.Reason == clawv1alpha1.ConditionReasonIdle &&
+		instance.Status.URL == ""
+
+	if alreadyIdled {
+		return ctrl.Result{}, nil
 	}
 
 	setCondition(instance, clawv1alpha1.ConditionTypeIdle, metav1.ConditionTrue,
@@ -65,17 +77,23 @@ func (r *ClawResourceReconciler) handleIdle(ctx context.Context, instance *clawv
 }
 
 // scaleDeploymentToZero patches a Deployment's replicas to 0.
-// Returns nil if the Deployment does not exist (NotFound).
-func (r *ClawResourceReconciler) scaleDeploymentToZero(ctx context.Context, namespace, name string) error {
+// Returns nil if the Deployment does not exist (NotFound) or is not owned by
+// the given Claw instance (defensive guard against same-named Deployments).
+func (r *ClawResourceReconciler) scaleDeploymentToZero(ctx context.Context, instance *clawv1alpha1.Claw, name string) error {
 	logger := log.FromContext(ctx)
 
 	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: name}, deployment); err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("Deployment not found during idle, skipping", "name", name)
 			return nil
 		}
 		return fmt.Errorf("failed to get deployment %s: %w", name, err)
+	}
+
+	if !metav1.IsControlledBy(deployment, instance) {
+		logger.Info("Deployment not owned by this Claw instance, skipping", "name", name)
+		return nil
 	}
 
 	if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 {
