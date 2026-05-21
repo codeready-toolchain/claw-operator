@@ -62,6 +62,7 @@ const (
 	ConditionTypeDevicePairingConfigured = "DevicePairingConfigured"
 	ConditionTypeMcpServersConfigured    = "McpServersConfigured"
 	ConditionTypeWebSearchConfigured     = "WebSearchConfigured"
+	ConditionTypeIdle                    = "Idle"
 )
 
 // Annotation keys used on pod templates to trigger rollouts on config changes.
@@ -82,6 +83,8 @@ const (
 	ConditionReasonValidationFailed = "ValidationFailed"
 	ConditionReasonConfigured       = "Configured"
 	ConditionReasonConfigFailed     = "ConfigFailed"
+	ConditionReasonIdle             = "Idle"
+	ConditionReasonIdledByRequest   = "IdledByRequest"
 )
 
 // SecretRefEntry references a specific key in a Secret.
@@ -368,6 +371,12 @@ type ClawSpec struct {
 	// permitted by credentials, search providers, or builtins are reachable.
 	// +optional
 	WebFetch *WebFetchSpec `json:"webFetch,omitempty"`
+
+	// Idle, when set to true, instructs the operator to scale all managed
+	// Deployments to zero replicas. Set to false (or omit) to run normally.
+	// +optional
+	// +kubebuilder:default=false
+	Idle bool `json:"idle,omitempty"`
 }
 
 // ClawStatus defines the observed state of Claw

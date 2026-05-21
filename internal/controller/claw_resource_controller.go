@@ -405,6 +405,13 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	// Short-circuit when idled — scale deployments to zero and return
+	if instance.Spec.Idle {
+		return r.handleIdle(ctx, instance)
+	}
+	// On unidle, remove stale Idle condition before full reconcile
+	meta.RemoveStatusCondition(&instance.Status.Conditions, clawv1alpha1.ConditionTypeIdle)
+
 	// Create or update the gateway Secret with token
 	if err := r.applyGatewaySecret(ctx, instance); err != nil {
 		logger.Error(err, "Failed to apply gateway secret")

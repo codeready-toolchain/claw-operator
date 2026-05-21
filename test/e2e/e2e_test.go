@@ -1113,6 +1113,116 @@ spec:
 				"OPENCLAW_GATEWAY_PASSWORD should reference the correct key")
 		})
 
+		t.Run("should idle and unidle a Claw instance", func(t *testing.T) {
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value",
+				"-n", userNamespace)
+			_, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create Secret")
+
+			t.Log("applying the Claw CR")
+			cmd = exec.Command("kubectl", "apply", "-f",
+				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for Claw Ready=True")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw Ready did not become True within %v", extendedTimeout)
+
+			t.Log("idling the instance via spec.idle patch")
+			cmd = exec.Command("kubectl", "patch", "claw", "instance",
+				"--type=merge", "-p", `{"spec":{"idle":true}}`,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to patch spec.idle to true")
+
+			t.Log("waiting for Idle=True condition")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Idle')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Idle condition did not become True")
+
+			t.Log("verifying Ready=False with reason Idle")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+				"-n", userNamespace)
+			readyStatus, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "False", readyStatus, "Ready should be False when idled")
+
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}",
+				"-n", userNamespace)
+			readyReason, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "Idle", readyReason, "Ready reason should be Idle")
+
+			t.Log("verifying all pods are terminated")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "claw.sandbox.redhat.com/instance=instance",
+						"-o", "jsonpath={.items}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && (output == "[]" || output == ""), nil
+				})
+			require.NoError(t, err, "Pods should be terminated after idling")
+
+			t.Log("unidling the instance")
+			cmd = exec.Command("kubectl", "patch", "claw", "instance",
+				"--type=merge", "-p", `{"spec":{"idle":false}}`,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to patch spec.idle to false")
+
+			t.Log("waiting for Claw Ready=True after unidle")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw Ready did not become True after unidle")
+
+			t.Log("verifying Idle condition is removed")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.conditions[?(@.type=='Idle')].status}",
+				"-n", userNamespace)
+			idleStatus, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Empty(t, idleStatus, "Idle condition should be absent after unidle")
+		})
+
 		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {
 			const (
 				kubeWorkspace = "e2e-kube-workspace"

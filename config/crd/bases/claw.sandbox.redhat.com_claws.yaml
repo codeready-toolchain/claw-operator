@@ -291,6 +291,12 @@ spec:
                       inferred defaults
                     rule: self.type != 'oauth2' || has(self.oauth2) || has(self.channel)
                 type: array
+              idle:
+                default: false
+                description: |-
+                  Idle, when set to true, instructs the operator to scale all managed
+                  Deployments to zero replicas. Set to false (or omit) to run normally.
+                type: boolean
               mcpServers:
                 additionalProperties:
                   description: McpServerSpec defines an MCP server the operator injects
