@@ -40,13 +40,14 @@ spec:
         # the raw root. This init container creates that subdirectory — owned
         # by the running user — so chmod succeeds. Existing PVCs with data at
         # the root need their PVC deleted and recreated (no auto-migration).
-        # The upstream community operator (openclaw-operator) mounts the PVC
-        # root directly and sets runAsUser/fsGroup to a fixed UID (1000),
-        # which works on vanilla Kubernetes but not on OpenShift where the
-        # SCC overrides the UID.
+        #
+        # The init-volume container uses the same OpenClaw image as gateway so
+        # that it runs as the same UID on both OpenShift (namespace-assigned)
+        # and vanilla Kubernetes (image default 1000), keeping the 0700 dir
+        # accessible to all subsequent containers without world-writable bits.
         #
         - name: init-volume
-          image: mirror.gcr.io/library/busybox:1.37
+          image: ghcr.io/openclaw/openclaw:slim
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -57,7 +58,7 @@ spec:
           command:
             - sh
             - -c
-            - mkdir -p -m 0777 /mnt/pvc/home
+            - mkdir -p -m 0700 /mnt/pvc/home
           resources:
             requests:
               memory: 16Mi
