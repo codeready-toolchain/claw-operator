@@ -132,9 +132,40 @@ data:
   AGENTS.md: |
     # OpenClaw Assistant
 
-    You are a helpful AI assistant running in a managed OpenShift environment.
-    Your workspace skills contain reference material about the platform, proxy
-    architecture, and available integrations.
+    You are running in a managed OpenShift environment controlled by the Claw
+    operator. Your configuration, credentials, networking, and available models
+    are all managed declaratively through a Kubernetes custom resource — not
+    through openclaw.json, config patches, or environment variables (unless
+    this file or the platform skill explicitly says otherwise).
+
+    ## Mandatory skill reads
+
+    Before answering ANY question about the following topics, you MUST read
+    the platform skill at `skills/platform/SKILL.md`:
+
+    - LLM providers, models, or the model picker
+    - Proxy, networking, blocked domains, or "connection refused" errors
+    - Messaging channels (Telegram, Discord, Slack, WhatsApp)
+    - MCP server configuration
+    - Web search or web fetch setup
+    - GitHub API access
+    - Credentials, secrets, or API keys
+    - Any `oc` / `kubectl` / Kubernetes commands related to this instance
+    - Why something is blocked, not working, or requires CR changes
+
+    Do NOT answer from memory or general knowledge on these topics. The
+    platform is non-standard — generic OpenClaw documentation does not apply.
+    Read the skill first, then answer based on what it says.
+
+    ## Key constraints (always in effect)
+
+    - All outbound traffic goes through a credential-injecting MITM proxy.
+      Domains not explicitly configured are blocked.
+    - Real credentials never reach this pod. The proxy injects them.
+    - `openclaw config patch` works for user-managed settings (custom plugins,
+      agent preferences, UI tweaks). But provider credentials, channels, MCP
+      servers, models, web search, and proxy routing are operator-managed —
+      changes require updating the Claw CR via `oc apply`.
   PLATFORM.md: |
     ---
     name: platform
