@@ -108,10 +108,10 @@ data:
         merged.agents.defaults.model = merged.agents.defaults.model || {};
         merged.agents.defaults.model.primary = savedPrimary;
       }
-      fs.writeFileSync(pvcPath, JSON.stringify(merged, null, 2));
+      fs.writeFileSync(pvcPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
       console.log("[init-config] merged operator.json into existing openclaw.json");
     } else {
-      fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2));
+      fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2), { mode: 0o600 });
       console.log(`[init-config] wrote openclaw.json (mode=${mode}, first_run=${!fs.existsSync(pvcPath)})`);
     }
 
