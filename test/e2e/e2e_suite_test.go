@@ -74,7 +74,9 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "manager image setup failed: %v\n", err)
 		os.Exit(1)
 	}
-	if err := buildAndLoadImage("proxy", "container-build-proxy", "PROXY_IMG", proxyImage, kindBin, kindCluster); err != nil {
+	err := buildAndLoadImage("proxy", "container-build-proxy",
+		"PROXY_IMG", proxyImage, kindBin, kindCluster)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "proxy image setup failed: %v\n", err)
 		os.Exit(1)
 	}

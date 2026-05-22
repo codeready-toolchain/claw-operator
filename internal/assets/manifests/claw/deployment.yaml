@@ -57,7 +57,7 @@ spec:
           command:
             - sh
             - -c
-            - mkdir -p /mnt/pvc/home
+            - mkdir -p -m 0777 /mnt/pvc/home
           resources:
             requests:
               memory: 16Mi
