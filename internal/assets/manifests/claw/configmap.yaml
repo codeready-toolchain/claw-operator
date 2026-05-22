@@ -22,8 +22,7 @@ data:
       },
       "models": {
         "providers": {}
-      },
-      "cron": { "enabled": false }
+      }
     }
   openclaw.json: |
     {
@@ -184,6 +183,11 @@ data:
       reconciles the CR into Deployments, ConfigMaps, Secrets, NetworkPolicies, and
       Routes. Non-operator-managed config (custom plugins, agent settings, tools) is
       managed separately via `openclaw config patch` on the PVC.
+    - **Do NOT invent Claw CR fields.** Only reference `spec.*` fields that are
+      explicitly documented in this skill. If a setting is not mentioned here, it is
+      not a CR field — do not suggest CR changes for it. When unsure, say you don't
+      know rather than guessing. The operator source is at
+      https://github.com/codeready-toolchain/claw-operator for reference.
     - **Important:** Each `oc apply` of the Claw CR **replaces** the entire `credentials`
       list. The user must include all existing credentials when applying — otherwise they
       will be removed. Retrieve the current state first:
