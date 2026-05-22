@@ -173,10 +173,13 @@ spec:
               value: http://CLAW_INSTANCE_NAME-proxy:8080
             - name: https_proxy
               value: http://CLAW_INSTANCE_NAME-proxy:8080
+            # Cluster-internal traffic bypasses the MITM proxy.
+            # Assumes a NetworkPolicy exists to control which namespaces accept
+            # ingress from this pod (managed outside the operator).
             - name: NO_PROXY
-              value: localhost,127.0.0.1,CLAW_INSTANCE_NAME-proxy
+              value: localhost,127.0.0.1,CLAW_INSTANCE_NAME-proxy,.svc,.svc.cluster.local
             - name: no_proxy
-              value: localhost,127.0.0.1,CLAW_INSTANCE_NAME-proxy
+              value: localhost,127.0.0.1,CLAW_INSTANCE_NAME-proxy,.svc,.svc.cluster.local
             - name: NODE_USE_ENV_PROXY
               value: "1"
             - name: NPM_CONFIG_CACHE
