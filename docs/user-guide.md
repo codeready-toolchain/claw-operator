@@ -1,6 +1,6 @@
-# Provider Setup
+# User Guide
 
-This guide covers configuring LLM providers, external services, messaging channels, MCP servers, web search, and web fetch for use with Claw. Each section walks through creating the necessary Secret and Claw CR configuration.
+This guide covers configuring Claw instances: LLM providers, external services, messaging channels, MCP servers, web search, web fetch, application configuration, and custom domains. Each section walks through creating the necessary Secrets and Claw CR configuration.
 
 All examples assume you have set your target namespace:
 
@@ -1019,3 +1019,91 @@ spec:
     enabled: true
 EOF
 ```
+
+## Application Configuration
+
+The Claw CR supports `spec.config` for declarative OpenClaw application settings — diagnostics, CORS origins, model preferences, agent defaults, and any other `openclaw.json` key that isn't driven by a typed CRD field.
+
+### `spec.config.raw`
+
+Accepts arbitrary JSON that maps directly to `openclaw.json` keys. These values are merged into `operator.json` before the enrichment pipeline runs:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      provider: google
+  config:
+    raw:
+      diagnostics:
+        otel:
+          enabled: true
+          endpoint: http://langfuse.observability.svc:3000/api/public/otel/v1/traces
+          captureContent:
+            inputMessages: true
+            outputMessages: true
+      gateway:
+        controlUi:
+          allowedOrigins:
+            - "https://custom.example.com"
+      agents:
+        defaults:
+          model:
+            primary: google/gemini-3-flash-preview
+          models:
+            openrouter/qwen3-14b:
+              alias: Qwen 3 14B
+      plugins:
+        entries:
+          diagnostics-otel:
+            enabled: true
+EOF
+```
+
+### `spec.config.mergeMode`
+
+Controls how `operator.json` is applied to the PVC config at pod start:
+
+- **`merge`** (default) — deep-merges operator settings into the existing PVC config, preserving runtime changes (primary model choice, plugin installs, UI settings).
+- **`overwrite`** — fully replaces the PVC config on every pod start. Useful for clean-slate deployments.
+
+```yaml
+spec:
+  config:
+    mergeMode: overwrite
+    raw:
+      # ...
+```
+
+### What can and can't be overridden
+
+The operator enforces a three-tier model. Not all config keys are equal:
+
+| Tier | Keys | Behavior |
+|------|------|----------|
+| Always-win | `gateway.mode`, `gateway.bind`, `gateway.port`, `gateway.controlUi.enabled`, `gateway.auth.*`, `models.providers`, `channels.*`, `mcp.servers`, `tools.web.*` | Operator sets unconditionally — `spec.config.raw` cannot override |
+| Append/merge | `gateway.controlUi.allowedOrigins`, `gateway.trustedProxies`, `agents.defaults.models`, `agents.defaults.model.primary` | Operator provides its part, user values are merged or appended |
+| User-only | `diagnostics.*`, `session.*`, `logging.*`, `plugins.*` (non-declared), `skills.*`, `ui.*`, `cron.*`, `hooks.*`, etc. | Operator never touches — full user control |
+
+For the complete enrichment policy, see [ADR-0013](adr/0013-spec-config.md).
+
+### `spec.config.raw` vs `openclaw config patch`
+
+Both methods work for user-managed settings:
+
+| | `spec.config.raw` | `openclaw config patch` |
+|---|---|---|
+| **Persistence** | Declarative in CR — survives CR re-apply | On PVC — survives pod restarts |
+| **GitOps friendly** | Yes — part of the CR manifest | No — requires pod exec |
+| **Precedence** | Wins over PVC for matching keys (except primary model) | Wins only until next reconcile |
+
+For declarative setups managed via GitOps, prefer `spec.config.raw`. For one-off tweaks inside the pod, `openclaw config patch` is fine.
