@@ -31,13 +31,12 @@ var modelCatalog = map[string][]modelEntry{
 	"google": {
 		{Name: "gemini-3-flash-preview", Alias: "Gemini 3 Flash"},
 		{Name: "gemini-3.1-pro-preview", Alias: "Gemini 3.1 Pro"},
-		{Name: "gemini-3.1-flash-lite-preview", Alias: "Gemini 3.1 Flash Lite"},
+		{Name: "gemini-3.1-flash-lite", Alias: "Gemini 3.1 Flash Lite"},
 	},
 	"anthropic": {
 		{Name: "claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
 		{Name: "claude-opus-4-7", Alias: "Claude Opus 4.7"},
 		{Name: "claude-opus-4-6", Alias: "Claude Opus 4.6"},
-		{Name: "claude-haiku-4-5", Alias: "Claude Haiku 4.5"},
 	},
 	"openai": {
 		{Name: "gpt-5.4", Alias: "GPT-5.4"},
