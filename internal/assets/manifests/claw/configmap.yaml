@@ -148,6 +148,7 @@ data:
     - Web search or web fetch setup
     - GitHub API access
     - Credentials, secrets, or API keys
+    - Application configuration, diagnostics, OTEL, or `spec.config`
     - Any `oc` / `kubectl` / Kubernetes commands related to this instance
     - Why something is blocked, not working, or requires CR changes
 
@@ -161,9 +162,11 @@ data:
       Domains not explicitly configured are blocked.
     - Real credentials never reach this pod. The proxy injects them.
     - `openclaw config patch` works for user-managed settings (custom plugins,
-      agent preferences, UI tweaks). But provider credentials, channels, MCP
-      servers, models, web search, and proxy routing are operator-managed —
-      changes require updating the Claw CR via `oc apply`.
+      agent preferences, UI tweaks). For declarative configuration that
+      persists across CR updates, use `spec.config.raw` in the Claw CR.
+    - Provider credentials, channels, MCP servers, web search, and proxy
+      routing are operator-managed — changes require updating the Claw CR
+      via `oc apply`. These settings cannot be overridden via `spec.config.raw`.
   PLATFORM.md: |
     ---
     name: platform
@@ -180,8 +183,9 @@ data:
     - **Claw CR manages infrastructure:** LLM provider credentials, messaging
       channels, proxy domain allowlisting, and Kubernetes API access. The operator
       reconciles the CR into Deployments, ConfigMaps, Secrets, NetworkPolicies, and
-      Routes. Non-operator-managed config (custom plugins, agent settings, tools) is
-      managed separately via `openclaw config patch` on the PVC.
+      Routes. Application settings (diagnostics, CORS origins, model preferences,
+      agent defaults) can be set declaratively via `spec.config.raw` in the CR.
+      Non-operator-managed config can also be managed via `openclaw config patch`.
     - **Do NOT invent Claw CR fields.** Only reference `spec.*` fields that are
       explicitly documented in this skill. If a setting is not mentioned here, it is
       not a CR field — do not suggest CR changes for it. When unsure, say you don't
@@ -267,22 +271,38 @@ data:
 
     ## User customization
 
-    Users can add custom models (e.g., specific OpenRouter models) without conflicting
-    with operator-managed entries:
+    Users can add custom models (e.g., specific OpenRouter models) via the CR or
+    config patches. Both methods work — the CR is preferred for declarative setups:
 
+    **Via `spec.config.raw` (declarative, persists across CR updates):**
+    ```yaml
+    spec:
+      config:
+        raw:
+          agents:
+            defaults:
+              models:
+                openrouter/anthropic/claude-sonnet-4-6:
+                  alias: Claude via OR
+    ```
+
+    **Via config patch (imperative, persists on PVC):**
     ```sh
     openclaw config patch '{"agents":{"defaults":{"models":{"openrouter/anthropic/claude-sonnet-4-6":{"alias":"Claude via OR"}}}}}'
     ```
 
-    User-added model entries persist across pod restarts because deep-merge preserves
-    keys that don't collide with operator-managed ones.
+    User-added model entries are merged with operator-managed catalog models. On key
+    collision, user entries win (e.g., custom alias for a catalog model).
 
     ## Primary model
 
     The primary (default) model is set by the operator on first run based on the first
-    configured provider. After the user changes their primary model (via the UI or
-    `openclaw config patch`), their choice persists across restarts — the operator does
-    not overwrite it.
+    configured provider. Users can override the default primary via:
+
+    1. **`spec.config.raw`** — set `agents.defaults.model.primary` in the CR. This wins
+       over the operator's catalog default.
+    2. **UI or config patch** — runtime changes persist across restarts. The runtime
+       choice wins over both `spec.config.raw` and the catalog default.
 
     # Messaging Channels
 
@@ -661,9 +681,9 @@ data:
 
     ## What NOT to do
 
-    **Do NOT** manually configure `tools.web.search` or `tools.web.fetch` in
-    `openclaw.json` or via config patches. The operator manages these settings —
-    manual changes will be overwritten on the next pod restart.
+    **Do NOT** manually configure `tools.web.search` or `tools.web.fetch` via
+    config patches or `spec.config.raw`. The operator manages these settings
+    (always-win tier) — manual changes will be overwritten on the next reconcile.
 
     **Do NOT** set search API keys as environment variables (`BRAVE_API_KEY`,
     `TAVILY_API_KEY`, etc.) on the gateway container. The operator uses proxy-based
@@ -678,3 +698,84 @@ data:
     If the service requires credential injection (API key, bearer token), use the
     corresponding credential type (`apiKey`, `bearer`, `oauth2`, `pathToken`) with a
     `secretRef` pointing to a Kubernetes Secret containing the credential.
+
+    # Application Configuration (`spec.config`)
+
+    The Claw CR supports `spec.config.raw` for declarative OpenClaw application
+    settings. This is the recommended way to configure settings like diagnostics,
+    CORS origins, model preferences, agent defaults, and any other `openclaw.json`
+    key that isn't driven by a typed CRD field.
+
+    ## Three-tier enrichment model
+
+    Not all configuration keys are equal. The operator enforces a three-tier model:
+
+    **Always-win (operator sets unconditionally — `spec.config.raw` cannot override):**
+    - `gateway.mode`, `gateway.bind`, `gateway.port`, `gateway.controlUi.enabled`
+    - `gateway.auth.*`, `gateway.controlUi.dangerouslyDisableDeviceAuth`
+    - `models.providers` (driven by `spec.credentials`)
+    - `channels.*` (driven by `spec.credentials[].channel`)
+    - `mcp.servers` (driven by `spec.mcpServers`)
+    - `tools.web.*` (driven by `spec.webSearch`/`spec.webFetch`)
+
+    **Append/merge (operator always provides its part, user adds on top):**
+    - `gateway.controlUi.allowedOrigins` — Route host always appended; user entries
+      are additional origins
+    - `gateway.trustedProxies` — RFC1918 ranges always appended; user entries are
+      additional CIDRs
+    - `agents.defaults.models` — catalog models always present; user entries win on
+      key collision
+    - `agents.defaults.model.primary` — user value wins over catalog default
+
+    **User-only (operator never touches — full user control):**
+    - `diagnostics.*`, `session.*`, `logging.*`, `plugins.*` (non-declared),
+      `skills.*`, `ui.*`, `cron.*`, `hooks.*`, `browser.*`, `memory.*`, etc.
+
+    ## Example
+
+    ```yaml
+    spec:
+      config:
+        mergeMode: merge   # default — deep-merge into existing PVC config
+        raw:
+          diagnostics:
+            otel:
+              enabled: true
+              endpoint: http://langfuse.svc:3000/api/public/otel/v1/traces
+          gateway:
+            controlUi:
+              allowedOrigins:
+                - "https://custom.example.com"
+          agents:
+            defaults:
+              model:
+                primary: google/gemini-3-flash-preview
+              models:
+                openrouter/qwen3-14b:
+                  alias: Qwen 3 14B
+          plugins:
+            entries:
+              diagnostics-otel:
+                enabled: true
+    ```
+
+    ## `mergeMode`
+
+    Controls how `operator.json` is applied to the PVC at pod start:
+    - `merge` (default) — deep-merge into existing PVC config, preserving runtime
+      changes (primary model choice, plugin installs, UI settings)
+    - `overwrite` — fully replace PVC config on every pod start (clean slate)
+
+    ## `spec.config.raw` vs `openclaw config patch`
+
+    Both methods work for user-managed settings. Key differences:
+
+    | | `spec.config.raw` | `openclaw config patch` |
+    |---|---|---|
+    | **Persistence** | Declarative in CR — survives CR re-apply | On PVC — survives pod restarts |
+    | **GitOps friendly** | Yes — part of the CR manifest | No — requires pod exec |
+    | **Scope** | Any `openclaw.json` key | Any `openclaw.json` key |
+    | **Precedence** | Wins over PVC for matching keys (except primary model) | Wins only until next reconcile overwrite |
+
+    For one-off tweaks, `openclaw config patch` is fine. For declarative setups
+    managed via GitOps, `spec.config.raw` is preferred.
