@@ -152,73 +152,33 @@ func (r *ClawResourceReconciler) validateWebSearchConfig(
 	return err
 }
 
-// injectWebSearchIntoConfigMap sets tools.web.search, tools.web.fetch, and
-// plugins.entries for the search provider in operator.json.
-func injectWebSearchIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+// injectWebSearch sets tools.web.search, tools.web.fetch, and plugin entries
+// for the search provider. Always-win for operator-declared tools.
+func injectWebSearch(config map[string]any, instance *clawv1alpha1.Claw) error {
 	if instance.Spec.WebSearch == nil && instance.Spec.WebFetch == nil {
 		return nil
 	}
 
-	configMapName := getConfigMapName(instance.Name)
-	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
-			continue
+	web := ensureNestedMap(ensureNestedMap(config, "tools"), "web")
+
+	if ws := instance.Spec.WebSearch; ws != nil {
+		web["search"] = map[string]any{
+			"enabled":  true,
+			"provider": ws.Provider,
 		}
 
-		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
-		if err != nil {
-			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
+		if err := injectSearchPluginEntry(config, ws); err != nil {
+			return err
 		}
-		if !found {
-			return fmt.Errorf("operator.json not found in ConfigMap data")
-		}
-
-		var config map[string]any
-		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse operator.json: %w", err)
-		}
-
-		tools, _ := config["tools"].(map[string]any)
-		if tools == nil {
-			tools = map[string]any{}
-		}
-		web, _ := tools["web"].(map[string]any)
-		if web == nil {
-			web = map[string]any{}
-		}
-
-		if ws := instance.Spec.WebSearch; ws != nil {
-			web["search"] = map[string]any{
-				"enabled":  true,
-				"provider": ws.Provider,
-			}
-
-			if err := injectSearchPluginEntry(config, ws); err != nil {
-				return err
-			}
-		}
-
-		if wf := instance.Spec.WebFetch; wf != nil {
-			web["fetch"] = map[string]any{
-				"enabled": wf.Enabled,
-			}
-		}
-
-		tools["web"] = web
-		config["tools"] = tools
-
-		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal operator.json: %w", err)
-		}
-
-		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
-			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
-		}
-		return nil
 	}
 
-	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+	if wf := instance.Spec.WebFetch; wf != nil {
+		web["fetch"] = map[string]any{
+			"enabled": wf.Enabled,
+		}
+	}
+
+	return nil
 }
 
 // injectSearchPluginEntry adds the plugin entry for the search provider into

@@ -94,17 +94,34 @@ spec:
                 x-kubernetes-validations:
                 - message: passwordSecretRef is required when mode is password
                   rule: self.mode != 'password' || has(self.passwordSecretRef)
-              configMode:
-                default: merge
-                description: |-
-                  ConfigMode controls how operator config is applied on pod start.
-                  "merge" (default) deep-merges operator settings into the existing
-                  user config, preserving user-owned keys. "overwrite" fully replaces
-                  the config on every pod start.
-                enum:
-                - merge
-                - overwrite
-                type: string
+              config:
+                description: Config provides user-supplied OpenClaw configuration
+                  and merge behavior.
+                properties:
+                  mergeMode:
+                    allOf:
+                    - enum:
+                      - merge
+                      - overwrite
+                    - enum:
+                      - merge
+                      - overwrite
+                    default: merge
+                    description: |-
+                      MergeMode controls how operator config is applied on pod start.
+                      "merge" (default) deep-merges operator settings into the existing
+                      user config, preserving user-owned keys. "overwrite" fully replaces
+                      the config on every pod start.
+                    type: string
+                  raw:
+                    description: |-
+                      Raw is inline openclaw.json configuration as arbitrary JSON.
+                      Keys set here are merged into operator.json before the enrichment
+                      pipeline runs. User-set keys take precedence over operator defaults
+                      for non-security-critical settings.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
               credentials:
                 description: Credentials configures proxy credential injection per
                   domain.

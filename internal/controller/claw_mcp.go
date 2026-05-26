@@ -18,13 +18,11 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
@@ -62,12 +60,11 @@ func (r *ClawResourceReconciler) validateMcpServerSecrets(ctx context.Context, i
 	return nil
 }
 
-// injectMcpServersIntoConfigMap injects MCP server configuration into operator.json
-// for all entries in spec.mcpServers. Stdio servers get command/args/env; HTTP servers
-// get url/transport.
-func injectMcpServersIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+// injectMcpServers injects MCP server configuration for all entries in
+// spec.mcpServers. Always-win: operator overwrites mcp.servers unconditionally.
+func injectMcpServers(config map[string]any, instance *clawv1alpha1.Claw) {
 	if len(instance.Spec.McpServers) == 0 {
-		return nil
+		return
 	}
 
 	servers := make(map[string]any, len(instance.Spec.McpServers))
@@ -75,39 +72,7 @@ func injectMcpServersIntoConfigMap(objects []*unstructured.Unstructured, instanc
 		servers[name] = buildMcpServerConfig(spec)
 	}
 
-	configMapName := getConfigMapName(instance.Name)
-	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
-			continue
-		}
-
-		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
-		if err != nil {
-			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
-		}
-		if !found {
-			return fmt.Errorf("operator.json not found in ConfigMap data")
-		}
-
-		var config map[string]any
-		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse operator.json: %w", err)
-		}
-
-		config["mcp"] = map[string]any{"servers": servers}
-
-		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal operator.json: %w", err)
-		}
-
-		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
-			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
-		}
-		return nil
-	}
-
-	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+	config["mcp"] = map[string]any{"servers": servers}
 }
 
 // buildMcpServerConfig builds the JSON-ready config for a single MCP server entry.

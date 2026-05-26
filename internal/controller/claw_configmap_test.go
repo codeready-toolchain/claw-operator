@@ -24,42 +24,29 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+func providersFromConfig(t *testing.T, config map[string]any) map[string]any {
+	t.Helper()
+	modelsVal, ok := config["models"]
+	require.True(t, ok, "config should contain 'models' key")
+	models, ok := modelsVal.(map[string]any)
+	require.True(t, ok, "models should be map[string]any, got %T", modelsVal)
+	providersVal, ok := models["providers"]
+	require.True(t, ok, "models should contain 'providers' key")
+	providers, ok := providersVal.(map[string]any)
+	require.True(t, ok, "providers should be map[string]any, got %T", providersVal)
+	return providers
+}
+
 // --- Provider injection Vertex SDK tests ---
 
 func TestInjectProvidersVertexSDK(t *testing.T) {
-	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
-		cm := &unstructured.Unstructured{}
-		cm.SetKind(ConfigMapKind)
-		cm.SetName(getConfigMapName(testInstanceName))
-		cm.Object["data"] = map[string]any{
-			"operator.json": jsonContent,
-		}
-		return []*unstructured.Unstructured{cm}
-	}
-
-	getConfig := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
-		t.Helper()
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
-		require.NoError(t, err)
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-		return config
-	}
-
-	getProviders := func(t *testing.T, config map[string]any) map[string]any {
-		t.Helper()
-		models := config["models"].(map[string]any)
-		return models["providers"].(map[string]any)
-	}
-
 	t.Run("should map GCP anthropic to anthropic-vertex provider key", func(t *testing.T) {
-		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "anthropic-vertex",
@@ -73,22 +60,20 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
 
-		config := getConfig(t, objects)
-		providers := getProviders(t, config)
-
+		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "anthropic-vertex")
 
 		av := providers["anthropic-vertex"].(map[string]any)
 		assert.Equal(t, "https://us-east5-aiplatform.googleapis.com", av["baseUrl"])
 		assert.Equal(t, "gcp-vertex-credentials", av["apiKey"])
 		assert.Equal(t, "anthropic-messages", av["api"])
-		assert.Equal(t, float64(128000), av["maxTokens"])
+		assert.Equal(t, 128000, av["maxTokens"])
 	})
 
 	t.Run("should use plain hostname for global location", func(t *testing.T) {
-		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "anthropic-vertex",
@@ -102,16 +87,15 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
 
-		config := getConfig(t, objects)
-		providers := getProviders(t, config)
+		providers := providersFromConfig(t, config)
 		av := providers["anthropic-vertex"].(map[string]any)
 		assert.Equal(t, "https://aiplatform.googleapis.com", av["baseUrl"])
 	})
 
 	t.Run("should set maxTokens and no api for non-anthropic vertex provider", func(t *testing.T) {
-		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "meta-vertex",
@@ -125,21 +109,19 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
 
-		config := getConfig(t, objects)
-		providers := getProviders(t, config)
-
+		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "meta-vertex")
 		mv := providers["meta-vertex"].(map[string]any)
 		assert.Equal(t, "https://us-central1-aiplatform.googleapis.com", mv["baseUrl"])
 		assert.Equal(t, "gcp-vertex-credentials", mv["apiKey"])
-		assert.Equal(t, float64(128000), mv["maxTokens"])
+		assert.Equal(t, 128000, mv["maxTokens"])
 		assert.NotContains(t, mv, "api", "meta has no api mapping in vertexProviderAPIMapping")
 	})
 
 	t.Run("should reject duplicate vertex providers", func(t *testing.T) {
-		objects := makeConfigMap(`{"models":{"providers":{}}}`)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "claude-vertex-1", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
@@ -151,40 +133,18 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		err := injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials))
+		err := injectProviders(config, testClawWithCredentials(credentials))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "anthropic-vertex")
 	})
 }
 
-// --- Provider injection into ConfigMap tests ---
+// --- Provider injection tests ---
 
-func TestInjectProvidersIntoConfigMap(t *testing.T) {
-	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
-		cm := &unstructured.Unstructured{}
-		cm.SetKind(ConfigMapKind)
-		cm.SetName(getConfigMapName(testInstanceName))
-		cm.Object["data"] = map[string]any{
-			"operator.json": jsonContent,
-		}
-		return []*unstructured.Unstructured{cm}
-	}
-
-	baseJSON := `{"models":{"providers":{}},"gateway":{"port":18789}}`
-
-	getProviders := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
-		t.Helper()
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
-		require.NoError(t, err)
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-		models := config["models"].(map[string]any)
-		return models["providers"].(map[string]any)
-	}
-
+func TestInjectProviders(t *testing.T) {
 	t.Run("should inject google provider with correct baseUrl", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "gemini",
@@ -194,9 +154,9 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
 
-		providers := getProviders(t, objects)
+		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "google")
 		google := providers["google"].(map[string]any)
 		assert.Equal(t, "https://generativelanguage.googleapis.com/v1beta", google["baseUrl"])
@@ -204,7 +164,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("should inject multiple providers", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "gemini",
@@ -220,9 +180,9 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
 
-		providers := getProviders(t, objects)
+		providers := providersFromConfig(t, config)
 		assert.Contains(t, providers, "google")
 		assert.Contains(t, providers, "anthropic")
 		anthropic := providers["anthropic"].(map[string]any)
@@ -230,7 +190,7 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("should leave providers empty when no provider is set", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:   "telegram",
@@ -239,14 +199,14 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
 
-		providers := getProviders(t, objects)
+		providers := providersFromConfig(t, config)
 		assert.Empty(t, providers)
 	})
 
 	t.Run("should use Vertex AI upstream for google gcp credential", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "vertex",
@@ -260,28 +220,16 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
 
-		providers := getProviders(t, objects)
+		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "google")
 		google := providers["google"].(map[string]any)
 		assert.Equal(t, "https://europe-west1-aiplatform.googleapis.com/v1/projects/my-proj/locations/europe-west1/publishers/google", google["baseUrl"])
 	})
 
-	t.Run("should preserve other config sections", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(nil)))
-
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
-		require.NoError(t, err)
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-		gateway := config["gateway"].(map[string]any)
-		assert.Equal(t, float64(18789), gateway["port"])
-	})
-
 	t.Run("should skip pathToken credentials even with provider set", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name:     "telegram",
@@ -294,20 +242,20 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
 
-		providers := getProviders(t, objects)
+		providers := providersFromConfig(t, config)
 		assert.Empty(t, providers, "pathToken credentials should not generate provider entries")
 	})
 
 	t.Run("should reject duplicate providers", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{Name: "gemini-1", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
 			{Name: "gemini-2", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
 		}
 
-		err := injectProvidersIntoConfigMap(objects, testClawWithCredentials(credentials))
+		err := injectProviders(config, testClawWithCredentials(credentials))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "google")
@@ -316,41 +264,16 @@ func TestInjectProvidersIntoConfigMap(t *testing.T) {
 
 // --- Model catalog injection tests ---
 
-func TestInjectModelCatalogIntoConfigMap(t *testing.T) {
-	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
-		cm := &unstructured.Unstructured{}
-		cm.SetKind(ConfigMapKind)
-		cm.SetName(getConfigMapName(testInstanceName))
-		cm.Object["data"] = map[string]any{
-			"operator.json": jsonContent,
-		}
-		return []*unstructured.Unstructured{cm}
-	}
-
-	baseJSON := `{"models":{"providers":{}},"gateway":{"port":18789}}`
-
-	getConfig := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
-		t.Helper()
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
-		require.NoError(t, err)
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-		return config
-	}
-
+func TestInjectModelCatalog(t *testing.T) {
 	t.Run("single provider google emits correct model entries", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
 		}
 
-		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
-		agents := config["agents"].(map[string]any)
-		defaults := agents["defaults"].(map[string]any)
-		models := defaults["models"].(map[string]any)
-
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
 		assert.Len(t, models, len(modelCatalog["google"]))
 		assert.Contains(t, models, "google/gemini-3-flash-preview")
 		entry := models["google/gemini-3-flash-preview"].(map[string]any)
@@ -358,17 +281,15 @@ func TestInjectModelCatalogIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("multiple providers emit models for each", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
 			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
 		}
 
-		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-
 		expectedCount := len(modelCatalog["google"]) + len(modelCatalog["anthropic"])
 		assert.Len(t, models, expectedCount)
 		assert.Contains(t, models, "google/gemini-3-flash-preview")
@@ -376,7 +297,7 @@ func TestInjectModelCatalogIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("vertex credential emits provider-vertex prefix", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "anthropic-vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
@@ -384,17 +305,15 @@ func TestInjectModelCatalogIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-
 		assert.Contains(t, models, "anthropic-vertex/claude-sonnet-4-6")
 		assert.NotContains(t, models, "anthropic/claude-sonnet-4-6")
 	})
 
 	t.Run("both direct and vertex anthropic coexist", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{Name: "claude-direct", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
 			{
@@ -403,11 +322,9 @@ func TestInjectModelCatalogIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-
 		assert.Contains(t, models, "anthropic/claude-sonnet-4-6")
 		assert.Contains(t, models, "anthropic-vertex/claude-sonnet-4-6")
 		expectedCount := len(modelCatalog["anthropic"]) * 2
@@ -415,48 +332,45 @@ func TestInjectModelCatalogIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("primary set from first providers first model", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
 			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
 		}
 
-		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
 		assert.Equal(t, "google/gemini-3-flash-preview", model["primary"])
 	})
 
 	t.Run("primary set from first provider with catalog", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{Name: "openrouter", Type: clawv1alpha1.CredentialTypeBearer, Provider: "openrouter", Domain: "openrouter.ai"},
 			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
 		}
 
-		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
 		assert.Equal(t, "anthropic/claude-sonnet-4-6", model["primary"])
 	})
 
 	t.Run("no providers means no models or primary", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{Name: "passthrough", Type: clawv1alpha1.CredentialTypeNone, Domain: "example.com"},
 		}
 
-		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
 		_, hasAgents := config["agents"]
 		assert.False(t, hasAgents, "agents section should not exist when no models are emitted")
 	})
 
 	t.Run("pathToken credentials skipped", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "telegram", Type: clawv1alpha1.CredentialTypePathToken, Provider: "telegram",
@@ -464,41 +378,88 @@ func TestInjectModelCatalogIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
 		_, hasAgents := config["agents"]
 		assert.False(t, hasAgents, "pathToken credentials should not generate model entries")
 	})
 
 	t.Run("provider not in catalog silently skipped", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{Name: "openrouter", Type: clawv1alpha1.CredentialTypeBearer, Provider: "openrouter", Domain: "openrouter.ai"},
 		}
 
-		err := injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials))
-		require.NoError(t, err)
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
 		_, hasAgents := config["agents"]
 		assert.False(t, hasAgents, "unknown provider should not generate model entries")
 	})
 
-	t.Run("preserves existing operator.json sections", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+	t.Run("user model entry wins on collision", func(t *testing.T) {
+		config := map[string]any{
+			"agents": map[string]any{
+				"defaults": map[string]any{
+					"models": map[string]any{
+						"google/gemini-3-flash-preview": map[string]any{"alias": "My Custom Alias"},
+					},
+				},
+			},
+		}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
 		}
 
-		require.NoError(t, injectModelCatalogIntoConfigMap(objects, testClawWithCredentials(credentials)))
+		injectModelCatalog(config, testClawWithCredentials(credentials))
 
-		config := getConfig(t, objects)
-		gateway := config["gateway"].(map[string]any)
-		assert.Equal(t, float64(18789), gateway["port"], "gateway config should be preserved")
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+		entry := models["google/gemini-3-flash-preview"].(map[string]any)
+		assert.Equal(t, "My Custom Alias", entry["alias"])
+		assert.Len(t, models, len(modelCatalog["google"]))
+	})
 
-		_, hasModels := config["models"]
-		assert.True(t, hasModels, "models.providers section should be preserved")
+	t.Run("user primary wins over catalog default", func(t *testing.T) {
+		config := map[string]any{
+			"agents": map[string]any{
+				"defaults": map[string]any{
+					"model": map[string]any{
+						"primary": "anthropic/claude-sonnet-4-6",
+					},
+				},
+			},
+		}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+		}
+
+		injectModelCatalog(config, testClawWithCredentials(credentials))
+
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		assert.Equal(t, "anthropic/claude-sonnet-4-6", model["primary"])
+	})
+
+	t.Run("catalog fills gaps when user has some models", func(t *testing.T) {
+		config := map[string]any{
+			"agents": map[string]any{
+				"defaults": map[string]any{
+					"models": map[string]any{
+						"google/gemini-3.1-pro-preview": map[string]any{"alias": "My Pro Override"},
+					},
+				},
+			},
+		}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+		}
+
+		injectModelCatalog(config, testClawWithCredentials(credentials))
+
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+		assert.Len(t, models, len(modelCatalog["google"]))
+		assert.Contains(t, models, "google/gemini-3-flash-preview")
+		assert.Contains(t, models, "google/gemini-3.1-flash-lite")
+		proEntry := models["google/gemini-3.1-pro-preview"].(map[string]any)
+		assert.Equal(t, "My Pro Override", proEntry["alias"])
 	})
 }
 

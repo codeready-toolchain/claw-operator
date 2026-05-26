@@ -163,7 +163,7 @@ spec:
 EOF
 ```
 
-For known providers (`google`, `anthropic`), the operator infers `domain` and `apiKey` automatically. For other LLM providers (Anthropic Claude, Vertex AI, and more), see the [Provider Setup Guide](docs/provider-setup.md).
+For known providers (`google`, `anthropic`), the operator infers `domain` and `apiKey` automatically. For other LLM providers, messaging channels, MCP servers, and more, see the [User Guide](docs/user-guide.md).
 
 Wait for it to become ready and get the URL and gateway token:
 

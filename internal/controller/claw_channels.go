@@ -20,8 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
@@ -222,9 +220,10 @@ func deepMergeMap(dst, src map[string]any) map[string]any {
 	return result
 }
 
-// injectChannelsIntoConfigMap injects channel configuration and plugin entries
-// into operator.json for all credentials that have the channel field set.
-func injectChannelsIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+// injectChannels injects channel configuration and plugin entries for all
+// credentials that have the channel field set. Always-win for declared
+// channels; user-managed plugin entries for non-declared keys are preserved.
+func injectChannels(config map[string]any, instance *clawv1alpha1.Claw) error {
 	channels := map[string]any{}
 	plugins := map[string]any{}
 
@@ -245,51 +244,11 @@ func injectChannelsIntoConfigMap(objects []*unstructured.Unstructured, instance 
 		return nil
 	}
 
-	configMapName := getConfigMapName(instance.Name)
-	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
-			continue
-		}
+	config["channels"] = channels
 
-		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
-		if err != nil {
-			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
-		}
-		if !found {
-			return fmt.Errorf("operator.json not found in ConfigMap data")
-		}
-
-		var config map[string]any
-		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse operator.json: %w", err)
-		}
-
-		config["channels"] = channels
-
-		existingPlugins, _ := config["plugins"].(map[string]any)
-		if existingPlugins == nil {
-			existingPlugins = map[string]any{}
-		}
-		existingEntries, _ := existingPlugins["entries"].(map[string]any)
-		if existingEntries == nil {
-			existingEntries = map[string]any{}
-		}
-		for k, v := range plugins {
-			existingEntries[k] = v
-		}
-		existingPlugins["entries"] = existingEntries
-		config["plugins"] = existingPlugins
-
-		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal operator.json: %w", err)
-		}
-
-		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
-			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
-		}
-		return nil
+	existingEntries := ensureNestedMap(ensureNestedMap(config, "plugins"), "entries")
+	for k, v := range plugins {
+		existingEntries[k] = v
 	}
-
-	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+	return nil
 }

@@ -336,7 +336,7 @@ func TestDeepMergeMap(t *testing.T) {
 	})
 }
 
-func TestInjectChannelsIntoConfigMap(t *testing.T) {
+func TestInjectChannels(t *testing.T) {
 	t.Run("injects single channel into operator.json", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials([]clawv1alpha1.CredentialSpec{
@@ -346,9 +346,9 @@ func TestInjectChannelsIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectChannelsIntoConfigMap(objects, instance))
-
 		operatorJSON := extractOperatorJSON(t, objects, instance.Name)
+		require.NoError(t, injectChannels(operatorJSON, instance))
+
 		channels, ok := operatorJSON["channels"].(map[string]any)
 		require.True(t, ok, "channels should be present in operator.json")
 		tg, ok := channels["telegram"].(map[string]any)
@@ -377,9 +377,9 @@ func TestInjectChannelsIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectChannelsIntoConfigMap(objects, instance))
-
 		operatorJSON := extractOperatorJSON(t, objects, instance.Name)
+		require.NoError(t, injectChannels(operatorJSON, instance))
+
 		channels := operatorJSON["channels"].(map[string]any)
 		assert.Contains(t, channels, "telegram")
 		assert.Contains(t, channels, "whatsapp")
@@ -391,9 +391,9 @@ func TestInjectChannelsIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectChannelsIntoConfigMap(objects, instance))
-
 		operatorJSON := extractOperatorJSON(t, objects, instance.Name)
+		require.NoError(t, injectChannels(operatorJSON, instance))
+
 		_, hasChannels := operatorJSON["channels"]
 		assert.False(t, hasChannels, "channels should not be injected when no channel credentials exist")
 	})
@@ -415,9 +415,9 @@ func TestInjectChannelsIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectChannelsIntoConfigMap(objects, instance))
-
 		operatorJSON := extractOperatorJSON(t, objects, instance.Name)
+		require.NoError(t, injectChannels(operatorJSON, instance))
+
 		channels := operatorJSON["channels"].(map[string]any)
 		tg := channels["telegram"].(map[string]any)
 		assert.Equal(t, true, tg["enabled"])
@@ -442,7 +442,8 @@ func TestInjectChannelsIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		err = injectChannelsIntoConfigMap(objects, instance)
+		operatorJSON := extractOperatorJSON(t, objects, instance.Name)
+		err = injectChannels(operatorJSON, instance)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "operator-managed")
 	})

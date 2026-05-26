@@ -229,7 +229,7 @@ func TestValidateWebSearchConfig(t *testing.T) {
 	})
 }
 
-func TestInjectWebSearchIntoConfigMap(t *testing.T) {
+func TestInjectWebSearch(t *testing.T) {
 	t.Run("brave sets tools.web.search and plugins entry with placeholder", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := &clawv1alpha1.Claw{
@@ -244,9 +244,9 @@ func TestInjectWebSearchIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectWebSearchIntoConfigMap(objects, instance))
-
 		config := extractOperatorJSON(t, objects, instance.Name)
+
+		require.NoError(t, injectWebSearch(config, instance))
 
 		tools, ok := config["tools"].(map[string]any)
 		require.True(t, ok)
@@ -285,9 +285,9 @@ func TestInjectWebSearchIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectWebSearchIntoConfigMap(objects, instance))
-
 		config := extractOperatorJSON(t, objects, instance.Name)
+
+		require.NoError(t, injectWebSearch(config, instance))
 		plugins, ok := config["plugins"].(map[string]any)
 		require.True(t, ok, "plugins should be present")
 		entries, ok := plugins["entries"].(map[string]any)
@@ -315,9 +315,9 @@ func TestInjectWebSearchIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectWebSearchIntoConfigMap(objects, instance))
-
 		config := extractOperatorJSON(t, objects, instance.Name)
+
+		require.NoError(t, injectWebSearch(config, instance))
 		tools, ok := config["tools"].(map[string]any)
 		require.True(t, ok, "tools should be present")
 		web, ok := tools["web"].(map[string]any)
@@ -348,9 +348,9 @@ func TestInjectWebSearchIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectWebSearchIntoConfigMap(objects, instance))
-
 		config := extractOperatorJSON(t, objects, instance.Name)
+
+		require.NoError(t, injectWebSearch(config, instance))
 		tools, ok := config["tools"].(map[string]any)
 		require.True(t, ok, "tools should be present")
 		web, ok := tools["web"].(map[string]any)
@@ -385,9 +385,9 @@ func TestInjectWebSearchIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectWebSearchIntoConfigMap(objects, instance))
-
 		config := extractOperatorJSON(t, objects, instance.Name)
+
+		require.NoError(t, injectWebSearch(config, instance))
 		tools := config["tools"].(map[string]any)
 		web := tools["web"].(map[string]any)
 		fetch := web["fetch"].(map[string]any)
@@ -402,9 +402,9 @@ func TestInjectWebSearchIntoConfigMap(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectWebSearchIntoConfigMap(objects, instance))
-
 		config := extractOperatorJSON(t, objects, instance.Name)
+
+		require.NoError(t, injectWebSearch(config, instance))
 		_, hasTools := config["tools"]
 		assert.False(t, hasTools, "tools should not be added when web search/fetch are nil")
 	})
@@ -849,9 +849,9 @@ func TestInjectWebSearchAndFetchCombined(t *testing.T) {
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
-		require.NoError(t, injectWebSearchIntoConfigMap(objects, instance))
-
 		config := extractOperatorJSON(t, objects, instance.Name)
+
+		require.NoError(t, injectWebSearch(config, instance))
 		tools := config["tools"].(map[string]any)
 		web := tools["web"].(map[string]any)
 

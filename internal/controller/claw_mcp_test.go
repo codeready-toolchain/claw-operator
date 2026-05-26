@@ -27,31 +27,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
-
-func makeMcpConfigMap(jsonContent string) []*unstructured.Unstructured {
-	cm := &unstructured.Unstructured{}
-	cm.SetKind(ConfigMapKind)
-	cm.SetName(getConfigMapName(testInstanceName))
-	cm.Object["data"] = map[string]any{
-		"operator.json": jsonContent,
-	}
-	return []*unstructured.Unstructured{cm}
-}
-
-func getMcpConfig(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
-	t.Helper()
-	raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
-	require.NoError(t, err)
-	var config map[string]any
-	require.NoError(t, json.Unmarshal([]byte(raw), &config))
-	return config
-}
 
 func testClawWithMcpServers(servers map[string]clawv1alpha1.McpServerSpec) *clawv1alpha1.Claw {
 	return &clawv1alpha1.Claw{
@@ -60,9 +40,9 @@ func testClawWithMcpServers(servers map[string]clawv1alpha1.McpServerSpec) *claw
 	}
 }
 
-func TestInjectMcpServersIntoConfigMap(t *testing.T) {
+func TestInjectMcpServers(t *testing.T) {
 	t.Run("should inject HTTP MCP server with url and transport", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{}}`)
+		config := map[string]any{"gateway": map[string]any{}}
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"context7": {
 				URL:       "https://mcp.context7.com/mcp",
@@ -70,9 +50,8 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 			},
 		})
 
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+		injectMcpServers(config, instance)
 
-		config := getMcpConfig(t, objects)
 		mcp := config["mcp"].(map[string]any)
 		servers := mcp["servers"].(map[string]any)
 		server := servers["context7"].(map[string]any)
@@ -85,7 +64,7 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("should inject stdio MCP server with command, args, and env", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{}}`)
+		config := map[string]any{"gateway": map[string]any{}}
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"github": {
 				Command: "npx",
@@ -94,24 +73,23 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 			},
 		})
 
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+		injectMcpServers(config, instance)
 
-		config := getMcpConfig(t, objects)
 		mcp := config["mcp"].(map[string]any)
 		servers := mcp["servers"].(map[string]any)
 		server := servers["github"].(map[string]any)
 
 		assert.Equal(t, "npx", server["command"])
-		args := server["args"].([]any)
-		assert.Equal(t, []any{"-y", "@modelcontextprotocol/server-github"}, args)
-		env := server["env"].(map[string]any)
+		args := server["args"].([]string)
+		assert.Equal(t, []string{"-y", "@modelcontextprotocol/server-github"}, args)
+		env := server["env"].(map[string]string)
 		assert.Equal(t, "placeholder", env["GITHUB_PERSONAL_ACCESS_TOKEN"])
 		assert.NotContains(t, server, "url")
 		assert.NotContains(t, server, "transport")
 	})
 
 	t.Run("should inject mixed HTTP and stdio servers", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{}}`)
+		config := map[string]any{"gateway": map[string]any{}}
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"context7": {
 				URL:       "https://mcp.context7.com/mcp",
@@ -124,9 +102,8 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 			},
 		})
 
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+		injectMcpServers(config, instance)
 
-		config := getMcpConfig(t, objects)
 		mcp := config["mcp"].(map[string]any)
 		servers := mcp["servers"].(map[string]any)
 
@@ -141,24 +118,22 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("should skip injection when mcpServers is empty", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{}}`)
+		config := map[string]any{"gateway": map[string]any{}}
 		instance := testClawWithMcpServers(nil)
 
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+		injectMcpServers(config, instance)
 
-		config := getMcpConfig(t, objects)
 		assert.NotContains(t, config, "mcp")
 	})
 
 	t.Run("should omit args when empty", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{}}`)
+		config := map[string]any{"gateway": map[string]any{}}
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"simple": {Command: "my-server"},
 		})
 
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+		injectMcpServers(config, instance)
 
-		config := getMcpConfig(t, objects)
 		server := config["mcp"].(map[string]any)["servers"].(map[string]any)["simple"].(map[string]any)
 		assert.Equal(t, "my-server", server["command"])
 		assert.NotContains(t, server, "args")
@@ -166,7 +141,7 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("should omit env when empty", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{}}`)
+		config := map[string]any{"gateway": map[string]any{}}
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"tool": {
 				Command: "tool-server",
@@ -174,30 +149,28 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 			},
 		})
 
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+		injectMcpServers(config, instance)
 
-		config := getMcpConfig(t, objects)
 		server := config["mcp"].(map[string]any)["servers"].(map[string]any)["tool"].(map[string]any)
 		assert.Contains(t, server, "args")
 		assert.NotContains(t, server, "env")
 	})
 
 	t.Run("should omit transport when empty for HTTP server", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{}}`)
+		config := map[string]any{"gateway": map[string]any{}}
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"remote": {URL: "https://api.example.com/mcp"},
 		})
 
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+		injectMcpServers(config, instance)
 
-		config := getMcpConfig(t, objects)
 		server := config["mcp"].(map[string]any)["servers"].(map[string]any)["remote"].(map[string]any)
 		assert.Equal(t, "https://api.example.com/mcp", server["url"])
 		assert.NotContains(t, server, "transport")
 	})
 
 	t.Run("should include env but omit args for stdio server with env only", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{}}`)
+		config := map[string]any{"gateway": map[string]any{}}
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"db": {
 				Command: "node",
@@ -205,39 +178,31 @@ func TestInjectMcpServersIntoConfigMap(t *testing.T) {
 			},
 		})
 
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+		injectMcpServers(config, instance)
 
-		config := getMcpConfig(t, objects)
 		server := config["mcp"].(map[string]any)["servers"].(map[string]any)["db"].(map[string]any)
 		assert.Equal(t, "node", server["command"])
 		assert.NotContains(t, server, "args")
 		assert.Contains(t, server, "env")
-		assert.Equal(t, "postgres.internal", server["env"].(map[string]any)["DB_HOST"])
+		assert.Equal(t, "postgres.internal", server["env"].(map[string]string)["DB_HOST"])
 	})
 
-	t.Run("should return error when ConfigMap not found", func(t *testing.T) {
-		objects := []*unstructured.Unstructured{}
+	t.Run("should only set mcp.servers key", func(t *testing.T) {
+		config := map[string]any{
+			"gateway": map[string]any{"port": 18789},
+			"models":  map[string]any{"providers": map[string]any{}},
+		}
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"test": {URL: "https://example.com/mcp"},
 		})
 
-		err := injectMcpServersIntoConfigMap(objects, instance)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not found in manifests")
-	})
+		injectMcpServers(config, instance)
 
-	t.Run("should preserve existing config keys", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{"port":18789},"models":{"providers":{}}}`)
-		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
-			"test": {URL: "https://example.com/mcp"},
-		})
-
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
-
-		config := getMcpConfig(t, objects)
 		assert.Contains(t, config, "gateway")
 		assert.Contains(t, config, "models")
-		assert.Contains(t, config, "mcp")
+		mcp := config["mcp"].(map[string]any)
+		assert.Len(t, mcp, 1)
+		assert.Contains(t, mcp, "servers")
 	})
 }
 
@@ -330,8 +295,8 @@ func TestBuildMcpServerConfig(t *testing.T) {
 }
 
 func TestInjectMcpServersWithEnvFrom(t *testing.T) {
-	t.Run("should inject stdio server with envFrom placeholders into ConfigMap", func(t *testing.T) {
-		objects := makeMcpConfigMap(`{"gateway":{}}`)
+	t.Run("should inject stdio server with envFrom placeholders", func(t *testing.T) {
+		config := map[string]any{"gateway": map[string]any{}}
 		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
 			"custom-db": {
 				Command: "node",
@@ -346,13 +311,12 @@ func TestInjectMcpServersWithEnvFrom(t *testing.T) {
 			},
 		})
 
-		require.NoError(t, injectMcpServersIntoConfigMap(objects, instance))
+		injectMcpServers(config, instance)
 
-		config := getMcpConfig(t, objects)
 		server := config["mcp"].(map[string]any)["servers"].(map[string]any)["custom-db"].(map[string]any)
 
 		assert.Equal(t, "node", server["command"])
-		env := server["env"].(map[string]any)
+		env := server["env"].(map[string]string)
 		assert.Equal(t, "postgres.internal", env["DB_HOST"])
 		assert.Equal(t, "DB_PASSWORD", env["DB_PASSWORD"])
 	})
