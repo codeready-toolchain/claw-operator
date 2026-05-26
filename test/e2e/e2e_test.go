@@ -902,7 +902,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"-n", userNamespace)
 			image, err := utils.Run(t, cmd)
 			require.NoError(t, err)
-			assert.Equal(t, "quay.io/xcoulon/claw-device-pairing:latest", image,
+			assert.Equal(t, "quay.io/codeready-toolchain/claw-device-pairing:latest", image,
 				"device-pairing container should use the correct image")
 
 			t.Log("verifying device-pairing Deployment references its ServiceAccount")

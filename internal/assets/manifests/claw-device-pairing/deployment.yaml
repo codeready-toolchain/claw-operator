@@ -19,7 +19,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: device-pairing
-          image: quay.io/xcoulon/claw-device-pairing:latest
+          image: quay.io/codeready-toolchain/claw-device-pairing:latest
           imagePullPolicy: Always
           env:
             - name: NAMESPACE
@@ -39,6 +39,29 @@ spec:
             limits:
               memory: 256Mi
               cpu: 500m
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 2
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

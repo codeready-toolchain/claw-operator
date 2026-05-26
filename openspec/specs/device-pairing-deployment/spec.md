@@ -29,7 +29,7 @@ All device-pairing resource names SHALL use the `CLAW_INSTANCE_NAME-device-pairi
 - **THEN** the Route SHALL be named `instance-device-pairing`
 
 ### Requirement: Device pairing Deployment uses correct image and security context
-The Deployment SHALL use the `quay.io/xcoulon/claw-device-pairing:latest` image with security hardening matching the operator's conventions.
+The Deployment SHALL use the `quay.io/xcoulon/claw-device-pairing:latest` image with security hardening matching the operator's conventions. All health probes SHALL use explicit timeout and threshold values tuned for a fast-starting backend.
 
 #### Scenario: Container image
 - **WHEN** examining the device-pairing Deployment
@@ -42,6 +42,18 @@ The Deployment SHALL use the `quay.io/xcoulon/claw-device-pairing:latest` image 
 #### Scenario: ServiceAccount reference
 - **WHEN** examining the device-pairing Deployment
 - **THEN** its `spec.template.spec.serviceAccountName` SHALL reference `CLAW_INSTANCE_NAME-device-pairing`
+
+#### Scenario: Liveness probe configuration
+- **WHEN** examining the device-pairing Deployment's liveness probe
+- **THEN** it SHALL use httpGet on path `/healthz` and named port `http` with `initialDelaySeconds: 3`, `periodSeconds: 15`, `timeoutSeconds: 2`, and `failureThreshold: 3`
+
+#### Scenario: Readiness probe configuration
+- **WHEN** examining the device-pairing Deployment's readiness probe
+- **THEN** it SHALL use httpGet on path `/healthz` and named port `http` with `initialDelaySeconds: 2`, `periodSeconds: 10`, `timeoutSeconds: 2`, and `failureThreshold: 2`
+
+#### Scenario: Startup probe configuration
+- **WHEN** examining the device-pairing Deployment's startup probe
+- **THEN** it SHALL use httpGet on path `/healthz` and named port `http` with `periodSeconds: 2`, `timeoutSeconds: 2`, and `failureThreshold: 3`
 
 ### Requirement: Device pairing Service exposes the application
 The Service SHALL expose the device-pairing Deployment on a ClusterIP with an appropriate target port.
