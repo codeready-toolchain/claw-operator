@@ -64,6 +64,15 @@ const (
 	ClawConfigModeEnvVar        = "CLAW_CONFIG_MODE"
 	DefaultKubectlImage         = "quay.io/openshift/origin-cli:4.21"
 
+	// OpenClaw JSON config keys shared across enrichment functions
+	configKeyGateway   = "gateway"
+	configKeyControlUI = "controlUi"
+	operatorJSONKey    = "operator.json"
+
+	// Gateway networking
+	gatewayPort              = 18789
+	gatewayLocalhostFallback = "http://localhost:18789"
+
 	// Kubernetes resource kinds
 	RouteKind                 = "Route"
 	DeploymentKind            = "Deployment"
@@ -636,35 +645,61 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 	return resolvedCreds, nil
 }
 
-// enrichConfigAndNetworkPolicy injects route host, providers, models, channels,
-// auth mode, and Kubernetes skill into the gateway ConfigMap and updates the egress NetworkPolicy.
+// enrichConfigAndNetworkPolicy extracts operator.json from the ConfigMap,
+// merges user config from spec.config.raw, runs the three-tier enrichment
+// pipeline, writes the result back, and updates the NetworkPolicy.
 func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	objects []*unstructured.Unstructured,
 	routeHost string,
 	instance *clawv1alpha1.Claw,
 	resolvedCreds []resolvedCredential,
 ) error {
-	if err := r.injectRouteHostIntoConfigMap(objects, routeHost, instance.Name); err != nil {
-		return fmt.Errorf("failed to inject Route host into ConfigMap: %w", err)
+	configMapName := getConfigMapName(instance.Name)
+	cmObj, err := findObject(objects, ConfigMapKind, configMapName)
+	if err != nil {
+		return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 	}
-	if err := injectAuthModeIntoConfigMap(objects, instance); err != nil {
-		return fmt.Errorf("failed to inject auth mode into ConfigMap: %w", err)
+
+	operatorJSON, found, err := unstructured.NestedString(cmObj.Object, "data", operatorJSONKey)
+	if err != nil || !found {
+		return fmt.Errorf("operator.json not found in ConfigMap data")
 	}
-	if err := injectProvidersIntoConfigMap(objects, instance); err != nil {
-		return fmt.Errorf("failed to inject providers into ConfigMap: %w", err)
+
+	var config map[string]any
+	if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
+		return fmt.Errorf("failed to parse operator.json template: %w", err)
 	}
-	if err := injectModelCatalogIntoConfigMap(objects, instance); err != nil {
-		return fmt.Errorf("failed to inject model catalog into ConfigMap: %w", err)
+
+	userConfig, err := parseUserRawConfig(instance)
+	if err != nil {
+		return err
 	}
-	if err := injectChannelsIntoConfigMap(objects, instance); err != nil {
-		return fmt.Errorf("failed to inject channels into ConfigMap: %w", err)
+	config = deepMerge(config, userConfig)
+
+	enforceInfrastructureKeys(config)
+	enforceTrustedProxies(config)
+	injectRouteHost(config, routeHost)
+	injectAuthMode(config, instance)
+	if err := injectProviders(config, instance); err != nil {
+		return fmt.Errorf("failed to inject providers: %w", err)
 	}
-	if err := injectMcpServersIntoConfigMap(objects, instance); err != nil {
-		return fmt.Errorf("failed to inject MCP servers into ConfigMap: %w", err)
+	injectModelCatalog(config, instance)
+	if err := injectChannels(config, instance); err != nil {
+		return fmt.Errorf("failed to inject channels: %w", err)
 	}
-	if err := injectWebSearchIntoConfigMap(objects, instance); err != nil {
-		return fmt.Errorf("failed to inject web search config into ConfigMap: %w", err)
+	injectMcpServers(config, instance)
+	if err := injectWebSearch(config, instance); err != nil {
+		return fmt.Errorf("failed to inject web search config: %w", err)
 	}
+
+	updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal enriched operator.json: %w", err)
+	}
+	if err := unstructured.SetNestedField(cmObj.Object, string(updatedJSON), "data", operatorJSONKey); err != nil {
+		return fmt.Errorf("failed to write enriched operator.json back to ConfigMap: %w", err)
+	}
+
 	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
 	}
@@ -675,6 +710,16 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
 	}
 	return nil
+}
+
+// findObject locates an unstructured object by kind and name.
+func findObject(objects []*unstructured.Unstructured, kind, name string) (*unstructured.Unstructured, error) {
+	for _, obj := range objects {
+		if obj.GetKind() == kind && obj.GetName() == name {
+			return obj, nil
+		}
+	}
+	return nil, fmt.Errorf("%s %q not found", kind, name)
 }
 
 // configureDeployments applies deployment overrides (proxy image, pull policy, credentials)
@@ -937,51 +982,26 @@ func injectRouteHostIntoDevicePairingRoute(objects []*unstructured.Unstructured,
 	return fmt.Errorf("device-pairing Route %q not found in rendered manifests", routeName)
 }
 
-// injectRouteHostIntoConfigMap replaces OPENCLAW_ROUTE_HOST placeholder in operator.json with actual Route host.
-// If routeHost is empty (vanilla Kubernetes), uses localhost fallback.
-func (r *ClawResourceReconciler) injectRouteHostIntoConfigMap(objects []*unstructured.Unstructured, routeHost, instanceName string) error {
-	replacement := routeHost
-	if replacement == "" {
-		replacement = "http://localhost:18789"
+// injectRouteHost appends the Route host (or localhost fallback) to
+// gateway.controlUi.allowedOrigins, deduplicating entries.
+func injectRouteHost(config map[string]any, routeHost string) {
+	host := routeHost
+	if host == "" {
+		host = gatewayLocalhostFallback
 	}
 
-	configMapName := getConfigMapName(instanceName)
-	for _, obj := range objects {
-		if obj.GetKind() == ConfigMapKind && obj.GetName() == configMapName {
-			operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
-			if err != nil {
-				return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
-			}
-			if !found {
-				return fmt.Errorf("operator.json not found in ConfigMap data")
-			}
-
-			updatedJSON := strings.ReplaceAll(operatorJSON, "OPENCLAW_ROUTE_HOST", replacement)
-
-			if err := unstructured.SetNestedField(obj.Object, updatedJSON, "data", "operator.json"); err != nil {
-				return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
-			}
-
-			return nil
-		}
-	}
-
-	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+	origins := getStringSlice(config, configKeyGateway, configKeyControlUI, "allowedOrigins")
+	origins = appendIfMissing(origins, host)
+	setNestedValue(config, stringsToAny(origins), configKeyGateway, configKeyControlUI, "allowedOrigins")
 }
 
-// injectProvidersIntoConfigMap dynamically builds the models.providers section of operator.json
-// from credentials that have Provider set. Gateway-routed providers get a baseUrl pointing to
-// the proxy. Vertex SDK providers (GCP + non-Google) get the real Vertex AI URL since traffic
-// flows through the MITM proxy which injects GCP credentials transparently.
-// Model catalog (agents.defaults.models) is handled separately by injectModelCatalogIntoConfigMap.
-func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
-	credentials := instance.Spec.Credentials
+// injectProviders dynamically builds the models.providers section from
+// credentials that have Provider set. Always-win: unconditionally overwrites
+// the providers map regardless of user config.
+func injectProviders(config map[string]any, instance *clawv1alpha1.Claw) error {
 	providers := map[string]any{}
-	for _, cred := range credentials {
-		if cred.Provider == "" {
-			continue
-		}
-		if cred.Type == clawv1alpha1.CredentialTypePathToken {
+	for _, cred := range instance.Spec.Credentials {
+		if cred.Provider == "" || cred.Type == clawv1alpha1.CredentialTypePathToken {
 			continue
 		}
 
@@ -1014,60 +1034,20 @@ func injectProvidersIntoConfigMap(objects []*unstructured.Unstructured, instance
 		}
 	}
 
-	configMapName := getConfigMapName(instance.Name)
-	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
-			continue
-		}
-
-		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
-		if err != nil {
-			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
-		}
-		if !found {
-			return fmt.Errorf("operator.json not found in ConfigMap data")
-		}
-
-		var config map[string]any
-		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse operator.json: %w", err)
-		}
-
-		models, _ := config["models"].(map[string]any)
-		if models == nil {
-			models = map[string]any{}
-			config["models"] = models
-		}
-		models["providers"] = providers
-
-		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal operator.json: %w", err)
-		}
-
-		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
-			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
-		}
-		return nil
-	}
-
-	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+	ensureNestedMap(config, "models")["providers"] = providers
+	return nil
 }
 
-// injectModelCatalogIntoConfigMap dynamically builds agents.defaults.models and
-// agents.defaults.model.primary in operator.json from credentials that have Provider set.
-// Uses the same credential filters as injectProvidersIntoConfigMap (skips no-provider and pathToken).
-// The provider key derives from usesVertexSDK; the logical provider name (stripped of -vertex
-// suffix) is used to look up modelCatalog. Providers not in the catalog are silently skipped.
-func injectModelCatalogIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
-	models := map[string]any{}
-	var primary string
+// injectModelCatalog merges the hardcoded model catalog into
+// agents.defaults.models. Catalog entries fill gaps; user entries from
+// spec.config.raw win on collision. For primary: user value wins over
+// catalog default.
+func injectModelCatalog(config map[string]any, instance *clawv1alpha1.Claw) {
+	catalogModels := map[string]any{}
+	var catalogPrimary string
 
 	for _, cred := range instance.Spec.Credentials {
-		if cred.Provider == "" {
-			continue
-		}
-		if cred.Type == clawv1alpha1.CredentialTypePathToken {
+		if cred.Provider == "" || cred.Type == clawv1alpha1.CredentialTypePathToken {
 			continue
 		}
 
@@ -1086,62 +1066,39 @@ func injectModelCatalogIntoConfigMap(objects []*unstructured.Unstructured, insta
 
 		for _, m := range catalog {
 			key := providerKey + "/" + m.Name
-			models[key] = map[string]any{"alias": m.Alias}
+			catalogModels[key] = map[string]any{"alias": m.Alias}
 		}
 
-		if primary == "" {
-			primary = providerKey + "/" + catalog[0].Name
+		if catalogPrimary == "" {
+			catalogPrimary = providerKey + "/" + catalog[0].Name
 		}
 	}
 
-	if len(models) == 0 {
-		return nil
+	if len(catalogModels) == 0 {
+		return
 	}
 
-	configMapName := getConfigMapName(instance.Name)
-	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
-			continue
-		}
-
-		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
-		if err != nil {
-			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
-		}
-		if !found {
-			return fmt.Errorf("operator.json not found in ConfigMap data")
-		}
-
-		var config map[string]any
-		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse operator.json: %w", err)
-		}
-
-		agents, _ := config["agents"].(map[string]any)
-		if agents == nil {
-			agents = map[string]any{}
-			config["agents"] = agents
-		}
-		defaults, _ := agents["defaults"].(map[string]any)
-		if defaults == nil {
-			defaults = map[string]any{}
-			agents["defaults"] = defaults
-		}
-		defaults["models"] = models
-		defaults["model"] = map[string]any{"primary": primary}
-
-		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal operator.json: %w", err)
-		}
-
-		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
-			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
-		}
-		return nil
+	defaults := ensureNestedMap(ensureNestedMap(config, "agents"), "defaults")
+	userModels, _ := defaults["models"].(map[string]any)
+	if userModels == nil {
+		userModels = map[string]any{}
 	}
 
-	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+	for key, entry := range catalogModels {
+		if _, exists := userModels[key]; !exists {
+			userModels[key] = entry
+		}
+	}
+	defaults["models"] = userModels
+
+	modelMap, _ := defaults["model"].(map[string]any)
+	if modelMap == nil {
+		modelMap = map[string]any{}
+	}
+	if existing, _ := modelMap["primary"].(string); existing == "" {
+		modelMap["primary"] = catalogPrimary
+	}
+	defaults["model"] = modelMap
 }
 
 // injectKubePortsIntoNetworkPolicy adds non-443 ports from kubernetes credentials to

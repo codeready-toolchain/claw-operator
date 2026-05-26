@@ -78,46 +78,35 @@ func TestShouldDisableDevicePairing(t *testing.T) {
 	})
 }
 
-// --- injectAuthModeIntoConfigMap unit tests ---
+// --- injectAuthMode unit tests ---
 
-func TestInjectAuthModeIntoConfigMap(t *testing.T) {
-	makeConfigMap := func(jsonContent string) []*unstructured.Unstructured {
-		cm := &unstructured.Unstructured{}
-		cm.SetKind(ConfigMapKind)
-		cm.SetName(getConfigMapName(testInstanceName))
-		cm.Object["data"] = map[string]any{
-			"operator.json": jsonContent,
+func TestInjectAuthMode(t *testing.T) {
+	baseConfig := func() map[string]any {
+		return map[string]any{
+			"gateway": map[string]any{
+				"port": float64(18789),
+				"auth": map[string]any{"mode": "token"},
+			},
 		}
-		return []*unstructured.Unstructured{cm}
 	}
 
-	getConfig := func(t *testing.T, objects []*unstructured.Unstructured) map[string]any {
-		t.Helper()
-		raw, _, err := unstructured.NestedString(objects[0].Object, "data", "operator.json")
-		require.NoError(t, err)
-		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(raw), &config))
-		return config
-	}
-
-	baseJSON := `{"gateway":{"port":18789,"auth":{"mode":"token"}}}`
-
-	t.Run("should be no-op when auth is nil", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+	t.Run("should set token mode and dangerouslyDisableDeviceAuth=false when auth is nil", func(t *testing.T) {
+		config := baseConfig()
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		auth := gateway["auth"].(map[string]any)
 		assert.Equal(t, "token", auth["mode"])
+		controlUI := gateway["controlUi"].(map[string]any)
+		assert.Equal(t, false, controlUI["dangerouslyDisableDeviceAuth"])
 	})
 
-	t.Run("should be no-op when auth.mode is token", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+	t.Run("should set token mode and dangerouslyDisableDeviceAuth=false when auth.mode is token", func(t *testing.T) {
+		config := baseConfig()
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
@@ -125,16 +114,17 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		auth := gateway["auth"].(map[string]any)
 		assert.Equal(t, "token", auth["mode"])
+		controlUI := gateway["controlUi"].(map[string]any)
+		assert.Equal(t, false, controlUI["dangerouslyDisableDeviceAuth"])
 	})
 
 	t.Run("should inject password mode without password value", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := baseConfig()
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
@@ -145,9 +135,8 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		auth := gateway["auth"].(map[string]any)
 		assert.Equal(t, "password", auth["mode"])
@@ -156,7 +145,7 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("should set dangerouslyDisableDeviceAuth when mode is password", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := baseConfig()
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
@@ -167,16 +156,21 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		controlUI := gateway["controlUi"].(map[string]any)
 		assert.Equal(t, true, controlUI["dangerouslyDisableDeviceAuth"])
 	})
 
 	t.Run("should preserve existing gateway config sections", func(t *testing.T) {
-		objects := makeConfigMap(`{"gateway":{"port":18789,"auth":{"mode":"token"},"cors":{"origin":"*"}}}`)
+		config := map[string]any{
+			"gateway": map[string]any{
+				"port": float64(18789),
+				"auth": map[string]any{"mode": "token"},
+				"cors": map[string]any{"origin": "*"},
+			},
+		}
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
@@ -187,9 +181,8 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		assert.Equal(t, float64(18789), gateway["port"])
 		cors := gateway["cors"].(map[string]any)
@@ -197,7 +190,7 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("should create gateway section if absent", func(t *testing.T) {
-		objects := makeConfigMap(`{"models":{}}`)
+		config := map[string]any{"models": map[string]any{}}
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
@@ -208,16 +201,20 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		auth := gateway["auth"].(map[string]any)
 		assert.Equal(t, "password", auth["mode"])
 	})
 
 	t.Run("should preserve existing controlUi settings", func(t *testing.T) {
-		objects := makeConfigMap(`{"gateway":{"controlUi":{"theme":"dark"},"auth":{"mode":"token"}}}`)
+		config := map[string]any{
+			"gateway": map[string]any{
+				"controlUi": map[string]any{"theme": "dark"},
+				"auth":      map[string]any{"mode": "token"},
+			},
+		}
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
@@ -228,34 +225,16 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		controlUI := gateway["controlUi"].(map[string]any)
 		assert.Equal(t, "dark", controlUI["theme"])
 		assert.Equal(t, true, controlUI["dangerouslyDisableDeviceAuth"])
 	})
 
-	t.Run("should return error when ConfigMap not found", func(t *testing.T) {
-		objects := []*unstructured.Unstructured{}
-		instance := &clawv1alpha1.Claw{
-			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
-			Spec: clawv1alpha1.ClawSpec{
-				Auth: &clawv1alpha1.AuthSpec{
-					Mode:              clawv1alpha1.AuthModePassword,
-					PasswordSecretRef: &clawv1alpha1.SecretRefEntry{Name: "pw-secret", Key: "password"},
-				},
-			},
-		}
-
-		err := injectAuthModeIntoConfigMap(objects, instance)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not found in manifests")
-	})
-
 	t.Run("should not set dangerouslyDisableDeviceAuth when password mode with disableDevicePairing=false", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := baseConfig()
 		disablePairing := false
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
@@ -268,21 +247,17 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		auth := gateway["auth"].(map[string]any)
 		assert.Equal(t, "password", auth["mode"], "password auth mode should still be injected")
-		controlUI, hasControlUI := gateway["controlUi"].(map[string]any)
-		if hasControlUI {
-			_, hasDisableAuth := controlUI["dangerouslyDisableDeviceAuth"]
-			assert.False(t, hasDisableAuth, "dangerouslyDisableDeviceAuth should not be set")
-		}
+		controlUI := gateway["controlUi"].(map[string]any)
+		assert.Equal(t, false, controlUI["dangerouslyDisableDeviceAuth"])
 	})
 
 	t.Run("should set dangerouslyDisableDeviceAuth when token mode with disableDevicePairing=true", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := baseConfig()
 		disablePairing := true
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
@@ -294,9 +269,8 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		auth := gateway["auth"].(map[string]any)
 		assert.Equal(t, "token", auth["mode"], "auth mode should remain token")
@@ -306,7 +280,7 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 	})
 
 	t.Run("should set dangerouslyDisableDeviceAuth when password mode with explicit disableDevicePairing=true", func(t *testing.T) {
-		objects := makeConfigMap(baseJSON)
+		config := baseConfig()
 		disablePairing := true
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
@@ -319,14 +293,30 @@ func TestInjectAuthModeIntoConfigMap(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAuthModeIntoConfigMap(objects, instance))
+		injectAuthMode(config, instance)
 
-		config := getConfig(t, objects)
 		gateway := config["gateway"].(map[string]any)
 		auth := gateway["auth"].(map[string]any)
 		assert.Equal(t, "password", auth["mode"])
 		controlUI := gateway["controlUi"].(map[string]any)
 		assert.Equal(t, true, controlUI["dangerouslyDisableDeviceAuth"])
+	})
+
+	t.Run("should override user-set auth mode", func(t *testing.T) {
+		config := map[string]any{
+			"gateway": map[string]any{
+				"auth": map[string]any{"mode": "password"},
+			},
+		}
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+		}
+
+		injectAuthMode(config, instance)
+
+		gateway := config["gateway"].(map[string]any)
+		auth := gateway["auth"].(map[string]any)
+		assert.Equal(t, "token", auth["mode"])
 	})
 }
 
@@ -638,15 +628,10 @@ func TestPasswordAuthModeReconciliation(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
 
 		gateway := config["gateway"].(map[string]any)
-		auth, hasAuth := gateway["auth"].(map[string]any)
-		if hasAuth {
-			assert.NotEqual(t, "password", auth["mode"], "auth mode should not be password in token mode")
-		}
-		controlUI, hasControlUI := gateway["controlUi"].(map[string]any)
-		if hasControlUI {
-			_, hasDisableAuth := controlUI["dangerouslyDisableDeviceAuth"]
-			assert.False(t, hasDisableAuth, "dangerouslyDisableDeviceAuth should not be set in token mode")
-		}
+		auth := gateway["auth"].(map[string]any)
+		assert.Equal(t, "token", auth["mode"], "auth mode should be token by default")
+		controlUI := gateway["controlUi"].(map[string]any)
+		assert.Equal(t, false, controlUI["dangerouslyDisableDeviceAuth"])
 	})
 
 	t.Run("should fail reconciliation and set Ready condition when password Secret is missing", func(t *testing.T) {

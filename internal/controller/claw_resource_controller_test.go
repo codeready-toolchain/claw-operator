@@ -712,79 +712,67 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 	)
 
 	t.Run("ConfigMap injection logic", func(t *testing.T) {
-		t.Run("should replace OPENCLAW_ROUTE_HOST placeholder with Route host", func(t *testing.T) {
-			configMap := &unstructured.Unstructured{}
-			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(getConfigMapName(testInstanceName))
-			configMap.Object["data"] = map[string]any{
-				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
+		t.Run("should append Route host to allowedOrigins", func(t *testing.T) {
+			config := map[string]any{
+				"gateway": map[string]any{
+					"controlUi": map[string]any{},
+				},
 			}
-
-			objects := []*unstructured.Unstructured{configMap}
 			routeHost := "https://example-claw.apps.cluster.com"
 
-			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
-			}
+			injectRouteHost(config, routeHost)
 
-			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
-			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
-
-			operatorJSON, found, err := unstructured.NestedString(configMap.Object, "data", "operator.json")
-			require.NoError(t, err, "failed to get operator.json")
-			assert.True(t, found, "operator.json not found in ConfigMap data")
-			assert.Contains(t, operatorJSON, routeHost)
-			assert.NotContains(t, operatorJSON, "OPENCLAW_ROUTE_HOST")
+			origins := config["gateway"].(map[string]any)["controlUi"].(map[string]any)["allowedOrigins"].([]any)
+			require.Len(t, origins, 1)
+			assert.Equal(t, routeHost, origins[0])
 		})
 
-		t.Run("should replace all occurrences of OPENCLAW_ROUTE_HOST placeholder", func(t *testing.T) {
-			configMap := &unstructured.Unstructured{}
-			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(getConfigMapName(testInstanceName))
-			configMap.Object["data"] = map[string]any{
-				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST","OPENCLAW_ROUTE_HOST"]}}}`,
+		t.Run("should append Route host to existing user origins", func(t *testing.T) {
+			config := map[string]any{
+				"gateway": map[string]any{
+					"controlUi": map[string]any{
+						"allowedOrigins": []any{"https://custom.example.com"},
+					},
+				},
 			}
-
-			objects := []*unstructured.Unstructured{configMap}
 			routeHost := "https://example.com"
 
-			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+			injectRouteHost(config, routeHost)
+
+			origins := config["gateway"].(map[string]any)["controlUi"].(map[string]any)["allowedOrigins"].([]any)
+			require.Len(t, origins, 2)
+			assert.Equal(t, "https://custom.example.com", origins[0])
+			assert.Equal(t, routeHost, origins[1])
+		})
+
+		t.Run("should deduplicate Route host if already present", func(t *testing.T) {
+			routeHost := "https://example.com"
+			config := map[string]any{
+				"gateway": map[string]any{
+					"controlUi": map[string]any{
+						"allowedOrigins": []any{routeHost},
+					},
+				},
 			}
 
-			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
-			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
+			injectRouteHost(config, routeHost)
 
-			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
-			hostCount := strings.Count(operatorJSON, routeHost)
-			assert.Equal(t, 2, hostCount, "expected 2 occurrences of routeHost")
-			assert.NotContains(t, operatorJSON, "OPENCLAW_ROUTE_HOST")
+			origins := config["gateway"].(map[string]any)["controlUi"].(map[string]any)["allowedOrigins"].([]any)
+			assert.Len(t, origins, 1, "should not duplicate existing Route host")
 		})
 
 		t.Run("should use localhost fallback when routeHost is empty", func(t *testing.T) {
-			configMap := &unstructured.Unstructured{}
-			configMap.SetKind(ConfigMapKind)
-			configMap.SetName(getConfigMapName(testInstanceName))
-			configMap.Object["data"] = map[string]any{
-				"operator.json": `{"gateway":{"controlUi":{"allowedOrigins":["OPENCLAW_ROUTE_HOST"]}}}`,
+			config := map[string]any{
+				"gateway": map[string]any{
+					"controlUi": map[string]any{},
+				},
 			}
 
-			objects := []*unstructured.Unstructured{configMap}
-			routeHost := ""
+			injectRouteHost(config, "")
 
-			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
-			}
-
-			err := reconciler.injectRouteHostIntoConfigMap(objects, routeHost, testInstanceName)
-			require.NoError(t, err, "injectRouteHostIntoConfigMap failed")
-
-			operatorJSON, _, _ := unstructured.NestedString(configMap.Object, "data", "operator.json")
-			assert.Contains(t, operatorJSON, "http://localhost:18789")
-			assert.NotContains(t, operatorJSON, "OPENCLAW_ROUTE_HOST")
+			origins := config["gateway"].(map[string]any)["controlUi"].(map[string]any)["allowedOrigins"].([]any)
+			require.Len(t, origins, 1)
+			assert.Equal(t, "http://localhost:18789", origins[0])
 		})
 	})
 

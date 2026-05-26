@@ -289,7 +289,7 @@ func TestStampGatewayConfigHash(t *testing.T) {
 func TestConfigModeIntegration(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("should set CLAW_CONFIG_MODE=overwrite on init-config when spec.configMode is overwrite", func(t *testing.T) {
+	t.Run("should set CLAW_CONFIG_MODE=overwrite on init-config when spec.config.mergeMode is overwrite", func(t *testing.T) {
 		t.Cleanup(func() {
 			deleteAndWaitAllResources(t, namespace)
 		})
@@ -300,7 +300,7 @@ func TestConfigModeIntegration(t *testing.T) {
 		instance := &clawv1alpha1.Claw{}
 		instance.Name = testInstanceName
 		instance.Namespace = namespace
-		instance.Spec.ConfigMode = clawv1alpha1.ConfigModeOverwrite
+		instance.Spec.Config = &clawv1alpha1.ConfigSpec{MergeMode: clawv1alpha1.ConfigModeOverwrite}
 		instance.Spec.Credentials = testCredentials()
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
@@ -326,10 +326,10 @@ func TestConfigModeIntegration(t *testing.T) {
 			}
 		}
 		assert.Equal(t, "overwrite", configModeValue,
-			"init-config should have CLAW_CONFIG_MODE=overwrite from spec.configMode")
+			"init-config should have CLAW_CONFIG_MODE=overwrite from spec.config.mergeMode")
 	})
 
-	t.Run("should default CLAW_CONFIG_MODE=merge when spec.configMode is not set", func(t *testing.T) {
+	t.Run("should default CLAW_CONFIG_MODE=merge when spec.config is not set", func(t *testing.T) {
 		t.Cleanup(func() {
 			deleteAndWaitAllResources(t, namespace)
 		})
@@ -404,7 +404,9 @@ func TestConfigureClawDeploymentConfigMode(t *testing.T) {
 			objects := makeDeployment()
 			instance := &clawv1alpha1.Claw{}
 			instance.Name = testInstanceName
-			instance.Spec.ConfigMode = tt.mode
+			if tt.mode != "" {
+				instance.Spec.Config = &clawv1alpha1.ConfigSpec{MergeMode: tt.mode}
+			}
 
 			require.NoError(t, configureClawDeploymentConfigMode(objects, instance))
 
@@ -447,7 +449,7 @@ func TestConfigureClawDeploymentConfigMode(t *testing.T) {
 		objects := []*unstructured.Unstructured{dep}
 		instance := &clawv1alpha1.Claw{}
 		instance.Name = testInstanceName
-		instance.Spec.ConfigMode = clawv1alpha1.ConfigModeOverwrite
+		instance.Spec.Config = &clawv1alpha1.ConfigSpec{MergeMode: clawv1alpha1.ConfigModeOverwrite}
 
 		require.NoError(t, configureClawDeploymentConfigMode(objects, instance))
 

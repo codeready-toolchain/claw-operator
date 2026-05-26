@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -66,71 +65,20 @@ func shouldDisableDevicePairing(auth *clawv1alpha1.AuthSpec) bool {
 	return auth != nil && auth.Mode == clawv1alpha1.AuthModePassword
 }
 
-// injectAuthModeIntoConfigMap updates the gateway config in operator.json based
-// on spec.auth. Only non-sensitive metadata is written: auth mode and device
-// pairing flag. The actual password is delivered via OPENCLAW_GATEWAY_PASSWORD
-// env var (see configureClawDeploymentForAuth).
-func injectAuthModeIntoConfigMap(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
-	needsPasswordMode := instance.Spec.Auth != nil && instance.Spec.Auth.Mode == clawv1alpha1.AuthModePassword
-	disablePairing := shouldDisableDevicePairing(instance.Spec.Auth)
-
-	if !needsPasswordMode && !disablePairing {
-		return nil
+// injectAuthMode unconditionally sets gateway.auth.mode and
+// gateway.controlUi.dangerouslyDisableDeviceAuth based on spec.auth.
+// Always-win: user config cannot override these values.
+func injectAuthMode(config map[string]any, instance *clawv1alpha1.Claw) {
+	authMode := "token"
+	if instance.Spec.Auth != nil && instance.Spec.Auth.Mode == clawv1alpha1.AuthModePassword {
+		authMode = "password"
 	}
 
-	configMapName := getConfigMapName(instance.Name)
-	for _, obj := range objects {
-		if obj.GetKind() != ConfigMapKind || obj.GetName() != configMapName {
-			continue
-		}
+	gateway := ensureNestedMap(config, configKeyGateway)
+	gateway["auth"] = map[string]any{"mode": authMode}
 
-		operatorJSON, found, err := unstructured.NestedString(obj.Object, "data", "operator.json")
-		if err != nil {
-			return fmt.Errorf("failed to extract operator.json from ConfigMap: %w", err)
-		}
-		if !found {
-			return fmt.Errorf("operator.json not found in ConfigMap data")
-		}
-
-		var config map[string]any
-		if err := json.Unmarshal([]byte(operatorJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse operator.json: %w", err)
-		}
-
-		gateway, _ := config["gateway"].(map[string]any)
-		if gateway == nil {
-			gateway = map[string]any{}
-		}
-
-		if needsPasswordMode {
-			gateway["auth"] = map[string]any{
-				"mode": "password",
-			}
-		}
-
-		if disablePairing {
-			controlUI, _ := gateway["controlUi"].(map[string]any)
-			if controlUI == nil {
-				controlUI = map[string]any{}
-			}
-			controlUI["dangerouslyDisableDeviceAuth"] = true
-			gateway["controlUi"] = controlUI
-		}
-
-		config["gateway"] = gateway
-
-		updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal operator.json: %w", err)
-		}
-
-		if err := unstructured.SetNestedField(obj.Object, string(updatedJSON), "data", "operator.json"); err != nil {
-			return fmt.Errorf("failed to set updated operator.json in ConfigMap: %w", err)
-		}
-		return nil
-	}
-
-	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+	controlUI := ensureNestedMap(gateway, configKeyControlUI)
+	controlUI["dangerouslyDisableDeviceAuth"] = shouldDisableDevicePairing(instance.Spec.Auth)
 }
 
 // configureClawDeploymentForAuth adds the OPENCLAW_GATEWAY_PASSWORD env var to the

@@ -337,15 +337,37 @@ type AuthSpec struct {
 	DisableDevicePairing *bool `json:"disableDevicePairing,omitempty"`
 }
 
-// ClawSpec defines the desired state of Claw
-type ClawSpec struct {
-	// ConfigMode controls how operator config is applied on pod start.
+// ConfigSpec defines user-provided OpenClaw configuration.
+type ConfigSpec struct {
+	// Raw is inline openclaw.json configuration as arbitrary JSON.
+	// Keys set here are merged into operator.json before the enrichment
+	// pipeline runs. User-set keys take precedence over operator defaults
+	// for non-security-critical settings.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +optional
+	Raw *RawConfig `json:"raw,omitempty"`
+
+	// MergeMode controls how operator config is applied on pod start.
 	// "merge" (default) deep-merges operator settings into the existing
 	// user config, preserving user-owned keys. "overwrite" fully replaces
 	// the config on every pod start.
 	// +optional
+	// +kubebuilder:validation:Enum=merge;overwrite
 	// +kubebuilder:default=merge
-	ConfigMode ConfigMode `json:"configMode,omitempty"`
+	MergeMode ConfigMode `json:"mergeMode,omitempty"`
+}
+
+// RawConfig holds arbitrary JSON configuration for openclaw.json.
+// +kubebuilder:pruning:PreserveUnknownFields
+type RawConfig struct {
+	runtime.RawExtension `json:",inline"`
+}
+
+// ClawSpec defines the desired state of Claw
+type ClawSpec struct {
+	// Config provides user-supplied OpenClaw configuration and merge behavior.
+	// +optional
+	Config *ConfigSpec `json:"config,omitempty"`
 
 	// Auth configures gateway authentication. Defaults to token-based
 	// authentication with device pairing. Set mode to "password" for

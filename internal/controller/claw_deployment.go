@@ -350,9 +350,9 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 // whether the merge script deep-merges operator config into the existing user
 // config ("merge") or fully overwrites it ("overwrite").
 func configureClawDeploymentConfigMode(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
-	mode := string(instance.Spec.ConfigMode)
-	if mode == "" {
-		mode = string(clawv1alpha1.ConfigModeMerge)
+	mode := string(clawv1alpha1.ConfigModeMerge)
+	if instance.Spec.Config != nil && instance.Spec.Config.MergeMode != "" {
+		mode = string(instance.Spec.Config.MergeMode)
 	}
 
 	gatewayName := getClawDeploymentName(instance.Name)
