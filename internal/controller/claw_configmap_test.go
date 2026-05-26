@@ -31,8 +31,15 @@ import (
 
 func providersFromConfig(t *testing.T, config map[string]any) map[string]any {
 	t.Helper()
-	models := config["models"].(map[string]any)
-	return models["providers"].(map[string]any)
+	modelsVal, ok := config["models"]
+	require.True(t, ok, "config should contain 'models' key")
+	models, ok := modelsVal.(map[string]any)
+	require.True(t, ok, "models should be map[string]any, got %T", modelsVal)
+	providersVal, ok := models["providers"]
+	require.True(t, ok, "models should contain 'providers' key")
+	providers, ok := providersVal.(map[string]any)
+	require.True(t, ok, "providers should be map[string]any, got %T", providersVal)
+	return providers
 }
 
 // --- Provider injection Vertex SDK tests ---
