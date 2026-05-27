@@ -1249,3 +1249,25 @@ Changing the plugin list triggers a pod rollout (the operator includes the plugi
 ### Limitations
 
 Removing a plugin from `spec.plugins` prevents it from being installed on new pods but does **not** uninstall it from the existing PVC. To fully remove a plugin, either delete the PVC (the operator will recreate it) or manually remove the plugin files.
+
+---
+
+## Operator Resource Limits
+
+The operator controller itself has no resource limits set by default. On OpenShift (OLM installs), configure limits via the `Subscription` CR:
+
+```yaml
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: claw-operator
+spec:
+  config:
+    resources:
+      limits:
+        memory: 256Mi
+        cpu: 500m
+      requests:
+        memory: 128Mi
+        cpu: 50m
+```
