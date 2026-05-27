@@ -95,9 +95,14 @@ MCP URLs are classified by hostname pattern:
 hostname has no dots              → in-cluster, same namespace
 hostname ends .svc.cluster.local  → in-cluster, namespace = 2nd label
 hostname ends .svc                → in-cluster, namespace = 2nd label
-hostname has exactly 2 parts (a.b)→ in-cluster, namespace = 2nd label
-else (3+ non-svc labels, IP, etc.)→ external
+else (2+ labels, IP, etc.)        → external
 ```
+
+Two-label hostnames (e.g., `mcp-server.shared-tools`) are treated as external
+because `NO_PROXY` only bypasses `.svc` and `.svc.cluster.local` suffixes.
+Traffic to bare two-part names flows through the proxy, so users should use the
+`.svc` suffix for cross-namespace in-cluster services
+(e.g., `mcp-server.shared-tools.svc:9001`).
 
 If the extracted namespace matches the Claw instance's own namespace, treat as
 same-namespace (simpler rule).
