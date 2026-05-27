@@ -1,6 +1,6 @@
 # User Guide
 
-This guide covers configuring Claw instances: LLM providers, external services, messaging channels, MCP servers, web search, web fetch, application configuration, and custom domains. Each section walks through creating the necessary Secrets and Claw CR configuration.
+This guide covers configuring Claw instances: LLM providers, external services, messaging channels, MCP servers, web search, web fetch, application configuration, workspace files, skills, and custom domains. Each section walks through creating the necessary Secrets and Claw CR configuration.
 
 All examples assume you have set your target namespace:
 
@@ -1252,6 +1252,146 @@ Removing a plugin from `spec.plugins` prevents it from being installed on new po
 
 ---
 
+## Workspace Files
+
+The `spec.workspace` field seeds files into the OpenClaw workspace directory on first pod start. Workspace files are **user-owned** — they are seeded once (`seedIfMissing`) and user edits via the OpenClaw UI are preserved across restarts.
+
+### Skip Bootstrap
+
+Set `skipBootstrap: true` to suppress the OpenClaw first-run questionnaire. This is useful for demo and onboarding setups where you pre-configure the identity and agents.
+
+### Seeding Files
+
+Use `spec.workspace.files` to provide an inline map of workspace-relative paths to file content. Common use cases include `IDENTITY.md` (user identity), `AGENTS.md` (agent instructions), and custom documentation.
+
+```yaml
+spec:
+  workspace:
+    skipBootstrap: true
+    files:
+      IDENTITY.md: |
+        # Identity
+        - Name: Demo User
+        - Role: Enterprise Developer
+        - Company: FantaCo
+      AGENTS.md: |
+        ## FantaCo Enterprise Assistant
+        You are a FantaCo enterprise assistant with access to
+        internal APIs and compliance guidelines.
+```
+
+### Ownership Semantics
+
+- Files are seeded once — if the file already exists on the PVC (from a previous pod start or user edit), the operator does not overwrite it.
+- If `spec.workspace.files` includes `AGENTS.md`, it overrides the operator's built-in `AGENTS.md` seed. The built-in seed becomes a no-op since the destination already exists.
+- Workspace file changes in the CR trigger a pod rollout automatically (the operator includes all ConfigMap keys in the config hash).
+
+### Path Restrictions
+
+The following paths are rejected by the controller (the CR enters `Ready=False`):
+
+- Empty or absolute paths
+- Paths containing `..` (directory traversal)
+- Paths containing `--` (reserved as the internal slash-encoding delimiter)
+- Paths under `skills/platform/` or `skills/kubernetes/` (operator-managed)
+
+---
+
+## Skills
+
+The `spec.skills` field injects operator-managed skills into the workspace. Unlike workspace files, skills are **always overwritten** on every pod restart (`copyAlways`). Each entry creates `workspace/skills/<name>/SKILL.md`.
+
+```yaml
+spec:
+  skills:
+    quote-builder: |
+      ---
+      name: quote-builder
+      description: Build customer quotes using the pricing API
+      ---
+      # Quote Builder
+      Connect to the pricing MCP server and generate quotes...
+    compliance: |
+      ---
+      name: compliance
+      description: Corporate compliance guidelines
+      ---
+      # Compliance
+      Always follow FantaCo policy...
+```
+
+### Ownership Semantics
+
+- Skills are operator-managed — the content from the CR is written to the PVC on every pod restart, overwriting any changes made inside the pod.
+- This makes skills suitable for enterprise policies, shared tooling instructions, and any content that must stay in sync with the CR.
+
+### Name Restrictions
+
+Skill names are directory components (not paths). The following names are rejected:
+
+- Empty names
+- Names containing `/`
+- Names containing `--` (reserved delimiter)
+- Builtin operator skill names: `platform`, `kubernetes`
+
+### Interaction with Other Features
+
+| Feature | Interaction |
+|---------|-------------|
+| `spec.config.raw` | Independent — workspace files are PVC content, not openclaw.json config |
+| `spec.plugins` | Independent — plugins are npm packages; skills are markdown files |
+| Existing platform/kubernetes skills | Coexist — operator-injected skills use separate ConfigMap keys |
+| Config hash / rollout | Automatic — any workspace or skill change triggers pod restart |
+
+### Full Example
+
+```yaml
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: demo-instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      provider: google
+  config:
+    raw:
+      agents:
+        defaults:
+          model:
+            primary: google/gemini-2.5-pro
+  workspace:
+    skipBootstrap: true
+    files:
+      IDENTITY.md: |
+        # Identity
+        - Name: Demo User
+        - Role: Enterprise Developer
+        - Company: FantaCo
+      AGENTS.md: |
+        ## FantaCo Enterprise Assistant
+        You are a FantaCo enterprise assistant with access to
+        internal APIs and compliance guidelines.
+  skills:
+    quote-builder: |
+      ---
+      name: quote-builder
+      description: Build customer quotes using the pricing API
+      ---
+      # Quote Builder
+      Connect to the pricing MCP server and generate quotes...
+  plugins:
+    - "@openclaw/diagnostics-otel"
+  metrics:
+    enabled: true
+```
+
+---
+
 ## Operator Resource Limits
 
 The operator controller itself has no resource limits set by default. On OpenShift (OLM installs), configure limits via the `Subscription` CR:
@@ -1261,7 +1401,12 @@ apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
   name: claw-operator
+  namespace: openshift-operators
 spec:
+  channel: alpha
+  name: claw-operator
+  source: claw-operator-catalog
+  sourceNamespace: openshift-marketplace
   config:
     resources:
       limits:

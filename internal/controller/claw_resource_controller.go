@@ -700,6 +700,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	}
 
 	injectMetricsConfig(config, instance)
+	injectSkipBootstrap(config, instance)
 
 	updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 	if err != nil {
@@ -709,6 +710,12 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 		return fmt.Errorf("failed to write enriched operator.json back to ConfigMap: %w", err)
 	}
 
+	if err := injectWorkspaceFiles(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject workspace files: %w", err)
+	}
+	if err := injectSkillFiles(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject skill files: %w", err)
+	}
 	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
 	}

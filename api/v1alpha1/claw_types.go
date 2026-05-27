@@ -363,6 +363,20 @@ type RawConfig struct {
 	runtime.RawExtension `json:",inline"`
 }
 
+// WorkspaceSpec configures workspace file seeding.
+type WorkspaceSpec struct {
+	// SkipBootstrap suppresses the OpenClaw first-run questionnaire.
+	// Default: false.
+	// +optional
+	SkipBootstrap bool `json:"skipBootstrap,omitempty"`
+
+	// Files maps workspace-relative paths to file content.
+	// Each file is seeded once (seedIfMissing) — user edits via the
+	// OpenClaw UI are preserved across restarts.
+	// +optional
+	Files map[string]string `json:"files,omitempty"`
+}
+
 // MetricsSpec configures Prometheus metrics collection via an OTel Collector sidecar.
 type MetricsSpec struct {
 	// Enabled activates the OTel Collector sidecar and diagnostics.otel.metrics
@@ -433,6 +447,17 @@ type ClawSpec struct {
 	// The operator runs `openclaw plugins install clawhub:<pkg>` for each entry.
 	// +optional
 	Plugins []string `json:"plugins,omitempty"`
+
+	// Workspace configures workspace file seeding and bootstrap behavior.
+	// Files are seeded once (seedIfMissing) — user edits are preserved.
+	// +optional
+	Workspace *WorkspaceSpec `json:"workspace,omitempty"`
+
+	// Skills maps skill names to SKILL.md content. Each entry creates
+	// workspace/skills/<name>/SKILL.md, overwritten on every pod restart
+	// (operator-managed).
+	// +optional
+	Skills map[string]string `json:"skills,omitempty"`
 
 	// Idle, when set to true, instructs the operator to scale all managed
 	// Deployments to zero replicas. Set to false (or omit) to run normally.

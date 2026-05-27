@@ -443,6 +443,14 @@ spec:
                 items:
                   type: string
                 type: array
+              skills:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Skills maps skill names to SKILL.md content. Each entry creates
+                  workspace/skills/<name>/SKILL.md, overwritten on every pod restart
+                  (operator-managed).
+                type: object
               webFetch:
                 description: |-
                   WebFetch enables the web_fetch tool for arbitrary URL fetching.
@@ -505,6 +513,25 @@ spec:
                 x-kubernetes-validations:
                 - message: secretRef is required for API-keyed search providers
                   rule: self.provider in ['duckduckgo','gemini'] || has(self.secretRef)
+              workspace:
+                description: |-
+                  Workspace configures workspace file seeding and bootstrap behavior.
+                  Files are seeded once (seedIfMissing) — user edits are preserved.
+                properties:
+                  files:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Files maps workspace-relative paths to file content.
+                      Each file is seeded once (seedIfMissing) — user edits via the
+                      OpenClaw UI are preserved across restarts.
+                    type: object
+                  skipBootstrap:
+                    description: |-
+                      SkipBootstrap suppresses the OpenClaw first-run questionnaire.
+                      Default: false.
+                    type: boolean
+                type: object
             type: object
           status:
             description: ClawStatus defines the observed state of Claw

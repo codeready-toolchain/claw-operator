@@ -52,6 +52,7 @@ type mergeTestSetup struct {
 	configMode   string            // CLAW_CONFIG_MODE env (empty = unset, defaults to "merge" in script)
 	withK8sSkill string            // KUBERNETES.md content (empty = not present)
 	pvcFiles     map[string]string // pre-existing files on PVC (relative path -> content)
+	extraConfigs map[string]string // extra files in config dir (e.g., _ws_*, _skill_* keys)
 }
 
 type mergeTestResult struct {
@@ -100,6 +101,10 @@ func runMergeJS(t *testing.T, setup mergeTestSetup) mergeTestResult {
 
 	if setup.withK8sSkill != "" {
 		require.NoError(t, os.WriteFile(filepath.Join(configDir, "KUBERNETES.md"), []byte(setup.withK8sSkill), 0o644))
+	}
+
+	for name, content := range setup.extraConfigs {
+		require.NoError(t, os.WriteFile(filepath.Join(configDir, name), []byte(content), 0o644))
 	}
 
 	if setup.pvcJSON != "" {
@@ -388,5 +393,116 @@ func TestMergeJS(t *testing.T) {
 		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
 		assert.True(t, hasPrimary)
 		assert.Equal(t, "google/gemini-3-flash-preview", primary, "overwrite mode should reset to operator's primary")
+	})
+
+	t.Run("workspace file seeded on first run", func(t *testing.T) {
+		result := runMergeJS(t, mergeTestSetup{
+			extraConfigs: map[string]string{
+				"_ws_IDENTITY.md": "# Identity\nName: Test User",
+			},
+		})
+
+		content, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "IDENTITY.md"))
+		require.NoError(t, err, "workspace file should be seeded")
+		assert.Equal(t, "# Identity\nName: Test User", string(content))
+		assert.Contains(t, result.stdout, "seeded")
+	})
+
+	t.Run("workspace file not overwritten on restart", func(t *testing.T) {
+		existingContent := "user-edited identity"
+		result := runMergeJS(t, mergeTestSetup{
+			extraConfigs: map[string]string{
+				"_ws_IDENTITY.md": "# Identity\nName: Operator Default",
+			},
+			pvcFiles: map[string]string{
+				"workspace/IDENTITY.md": existingContent,
+			},
+		})
+
+		content, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "IDENTITY.md"))
+		require.NoError(t, err)
+		assert.Equal(t, existingContent, string(content), "seedIfMissing should not overwrite existing file")
+	})
+
+	t.Run("workspace file with nested path decoded correctly", func(t *testing.T) {
+		result := runMergeJS(t, mergeTestSetup{
+			extraConfigs: map[string]string{
+				"_ws_docs--README.md": "# Docs README",
+			},
+		})
+
+		content, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "docs", "README.md"))
+		require.NoError(t, err, "nested workspace file should be seeded with decoded path")
+		assert.Equal(t, "# Docs README", string(content))
+	})
+
+	t.Run("skill file copied on first run", func(t *testing.T) {
+		result := runMergeJS(t, mergeTestSetup{
+			extraConfigs: map[string]string{
+				"_skill_quote-builder": "# Quote Builder\nBuild quotes...",
+			},
+		})
+
+		content, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "quote-builder", "SKILL.md"))
+		require.NoError(t, err, "skill should be copied to skills/<name>/SKILL.md")
+		assert.Equal(t, "# Quote Builder\nBuild quotes...", string(content))
+	})
+
+	t.Run("skill file overwritten on restart", func(t *testing.T) {
+		oldContent := "old skill content"
+		newContent := "# Updated Skill\nNew version..."
+		result := runMergeJS(t, mergeTestSetup{
+			extraConfigs: map[string]string{
+				"_skill_quote-builder": newContent,
+			},
+			pvcFiles: map[string]string{
+				"workspace/skills/quote-builder/SKILL.md": oldContent,
+			},
+		})
+
+		content, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "quote-builder", "SKILL.md"))
+		require.NoError(t, err)
+		assert.Equal(t, newContent, string(content), "copyAlways should overwrite existing skill")
+	})
+
+	t.Run("workspace AGENTS.md overrides builtin seed", func(t *testing.T) {
+		customAgents := "# Custom AGENTS\nEnterprise assistant..."
+		result := runMergeJS(t, mergeTestSetup{
+			extraConfigs: map[string]string{
+				"_ws_AGENTS.md": customAgents,
+			},
+		})
+
+		content, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "AGENTS.md"))
+		require.NoError(t, err)
+		assert.Equal(t, customAgents, string(content),
+			"_ws_AGENTS.md should take precedence over builtin AGENTS.md seed")
+	})
+
+	t.Run("multiple workspace files and skills together", func(t *testing.T) {
+		result := runMergeJS(t, mergeTestSetup{
+			extraConfigs: map[string]string{
+				"_ws_IDENTITY.md":   "# Identity",
+				"_ws_AGENTS.md":     "# Custom Agents",
+				"_skill_compliance": "# Compliance\nFollow rules...",
+				"_skill_quotes":     "# Quotes\nBuild quotes...",
+			},
+		})
+
+		identity, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "IDENTITY.md"))
+		require.NoError(t, err)
+		assert.Equal(t, "# Identity", string(identity))
+
+		agents, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "AGENTS.md"))
+		require.NoError(t, err)
+		assert.Equal(t, "# Custom Agents", string(agents))
+
+		compliance, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "compliance", "SKILL.md"))
+		require.NoError(t, err)
+		assert.Equal(t, "# Compliance\nFollow rules...", string(compliance))
+
+		quotes, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "quotes", "SKILL.md"))
+		require.NoError(t, err)
+		assert.Equal(t, "# Quotes\nBuild quotes...", string(quotes))
 	})
 }

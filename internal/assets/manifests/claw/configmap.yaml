@@ -113,7 +113,18 @@ data:
       console.log(`[init-config] wrote openclaw.json (mode=${mode}, first_run=${!fs.existsSync(pvcPath)})`);
     }
 
-    // Seed user-owned files
+    // Seed user-provided workspace files (_ws_* keys) before static seeds
+    // so _ws_AGENTS.md takes precedence over the builtin AGENTS.md
+    for (const f of fs.readdirSync(configDir)) {
+      if (!f.startsWith("_ws_")) continue;
+      const relPath = f.slice(4).replace(/--/g, "/");
+      seedIfMissing(
+        path.join(configDir, f),
+        path.join(workspaceDir, relPath)
+      );
+    }
+
+    // Seed builtin user-owned files (no-op if _ws_AGENTS.md already seeded above)
     seedIfMissing(path.join(configDir, "AGENTS.md"), path.join(workspaceDir, "AGENTS.md"));
 
     // Always copy operator-managed skill files
@@ -126,6 +137,16 @@ data:
     const k8sSkill = path.join(configDir, "KUBERNETES.md");
     if (fs.existsSync(k8sSkill)) {
       copyAlways(k8sSkill, path.join(workspaceDir, "skills", "kubernetes", "SKILL.md"));
+    }
+
+    // Copy operator-managed skills (_skill_* keys)
+    for (const f of fs.readdirSync(configDir)) {
+      if (!f.startsWith("_skill_")) continue;
+      const skillName = f.slice(7);
+      copyAlways(
+        path.join(configDir, f),
+        path.join(workspaceDir, "skills", skillName, "SKILL.md")
+      );
     }
   AGENTS.md: |
     # OpenClaw Assistant
