@@ -194,7 +194,7 @@ type ClawSpec struct {
 
 Each phase is a self-contained PR with types, logic, tests, and docs.
 
-### Phase 1: Prometheus metrics via OTel Collector sidecar
+### Phase 1: Prometheus metrics via OTel Collector sidecar - DONE
 
 **CRD types** ([api/v1alpha1/claw_types.go](../../api/v1alpha1/claw_types.go)):
 - Add `MetricsSpec`, `ServiceMonitorSpec` structs
@@ -290,7 +290,7 @@ service:
 **Docs:**
 - Update [user-guide.md](../../docs/user-guide.md) with Metrics section
 
-### Phase 2: Plugin installation via init container
+### Phase 2: Plugin installation via init container - DONE
 
 **CRD types** ([api/v1alpha1/claw_types.go](../../api/v1alpha1/claw_types.go)):
 - Add `Plugins []string` to `ClawSpec`

@@ -428,6 +428,12 @@ type ClawSpec struct {
 	// +optional
 	Metrics *MetricsSpec `json:"metrics,omitempty"`
 
+	// Plugins lists OpenClaw plugins to install via an init container before
+	// the gateway starts. Each entry is a package name (e.g. "@openclaw/matrix").
+	// The operator runs `openclaw plugins install clawhub:<pkg>` for each entry.
+	// +optional
+	Plugins []string `json:"plugins,omitempty"`
+
 	// Idle, when set to true, instructs the operator to scale all managed
 	// Deployments to zero replicas. Set to false (or omit) to run normally.
 	// +optional

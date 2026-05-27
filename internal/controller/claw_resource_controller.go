@@ -726,7 +726,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
 	}
-	if err := stampGatewayConfigHash(objects, instance.Name); err != nil {
+	if err := stampGatewayConfigHash(objects, instance.Name, instance.Spec.Plugins); err != nil {
 		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
 	}
 	return nil
@@ -782,6 +782,11 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if metricsEnabled(instance) {
 		if err := configureMetricsSidecar(objects, instance, r.OTelCollectorImage); err != nil {
 			return fmt.Errorf("failed to configure metrics sidecar: %w", err)
+		}
+	}
+	if pluginsEnabled(instance) {
+		if err := configurePluginsInitContainer(objects, instance); err != nil {
+			return fmt.Errorf("failed to configure plugins init container: %w", err)
 		}
 	}
 	return nil
