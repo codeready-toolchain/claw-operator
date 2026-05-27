@@ -274,7 +274,7 @@ data:
     The model picker list is dynamically generated from the providers configured in the
     Claw CR `spec.credentials`. Each credential with a `provider` field contributes its
     known models to the picker. Models appear as `{provider}/{model-name}` (e.g.,
-    `google/gemini-3-flash-preview`, `anthropic/claude-sonnet-4-6`).
+    `google/gemini-3.5-flash`, `anthropic/claude-sonnet-4-6`).
 
     Supported providers with automatic model catalogs: `google`, `anthropic`, `openai`, `xai`.
     Meta-providers like `openrouter` do not have a hardcoded catalog — users can add
@@ -770,7 +770,7 @@ data:
           agents:
             defaults:
               model:
-                primary: google/gemini-3-flash-preview
+                primary: google/gemini-3.5-flash
               models:
                 openrouter/qwen3-14b:
                   alias: Qwen 3 14B

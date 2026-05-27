@@ -189,7 +189,7 @@ func TestMergeJS(t *testing.T) {
 				"defaults": {
 					"model": { "primary": "anthropic-vertex/claude-sonnet-4-6" },
 					"models": {
-						"google/gemini-3-flash-preview": { "alias": "Gemini Flash" }
+						"google/gemini-3.5-flash": { "alias": "Gemini Flash" }
 					},
 					"workspace": "~/.openclaw/workspace"
 				},
@@ -326,7 +326,7 @@ func TestMergeJS(t *testing.T) {
 	t.Run("primary preserved on restart", func(t *testing.T) {
 		operatorJSON := `{
 			"gateway": {"port": 18789},
-			"agents": {"defaults": {"model": {"primary": "google/gemini-3-flash-preview"}, "models": {"google/gemini-3-flash-preview": {"alias": "Gemini 3 Flash"}}}}
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.5-flash"}, "models": {"google/gemini-3.5-flash": {"alias": "Gemini 3.5 Flash"}}}}
 		}`
 		pvcJSON := `{
 			"agents": {"defaults": {"model": {"primary": "anthropic/claude-opus-4-7"}, "workspace": "~/.openclaw/workspace"}}
@@ -342,21 +342,21 @@ func TestMergeJS(t *testing.T) {
 	t.Run("primary set on first run", func(t *testing.T) {
 		operatorJSON := `{
 			"gateway": {"port": 18789},
-			"agents": {"defaults": {"model": {"primary": "google/gemini-3-flash-preview"}, "models": {"google/gemini-3-flash-preview": {"alias": "Gemini 3 Flash"}}}}
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.5-flash"}, "models": {"google/gemini-3.5-flash": {"alias": "Gemini 3.5 Flash"}}}}
 		}`
 
 		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON})
 
 		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
 		assert.True(t, hasPrimary, "should have primary model on first run")
-		assert.Equal(t, "google/gemini-3-flash-preview", primary, "operator's primary should be used on first run")
+		assert.Equal(t, "google/gemini-3.5-flash", primary, "operator's primary should be used on first run")
 	})
 
 	t.Run("primary preserved even when models change", func(t *testing.T) {
 		operatorJSON := `{
 			"gateway": {"port": 18789},
-			"agents": {"defaults": {"model": {"primary": "google/gemini-3-flash-preview"}, "models": {
-				"google/gemini-3-flash-preview": {"alias": "Gemini 3 Flash"},
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.5-flash"}, "models": {
+				"google/gemini-3.5-flash": {"alias": "Gemini 3.5 Flash"},
 				"google/gemini-3.1-pro-preview": {"alias": "Gemini 3.1 Pro"}
 			}}}
 		}`
@@ -375,14 +375,14 @@ func TestMergeJS(t *testing.T) {
 		models, hasModels := nestedValue(result.config, "agents.defaults.models")
 		assert.True(t, hasModels)
 		modelsMap := models.(map[string]any)
-		assert.Contains(t, modelsMap, "google/gemini-3-flash-preview", "new operator models should be merged in")
+		assert.Contains(t, modelsMap, "google/gemini-3.5-flash", "new operator models should be merged in")
 		assert.Contains(t, modelsMap, "google/gemini-3.1-pro-preview", "new operator models should be merged in")
 	})
 
 	t.Run("primary not preserved in overwrite mode", func(t *testing.T) {
 		operatorJSON := `{
 			"gateway": {"port": 18789},
-			"agents": {"defaults": {"model": {"primary": "google/gemini-3-flash-preview"}}}
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.5-flash"}}}
 		}`
 		pvcJSON := `{
 			"agents": {"defaults": {"model": {"primary": "anthropic/claude-opus-4-7"}}}
@@ -392,7 +392,7 @@ func TestMergeJS(t *testing.T) {
 
 		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
 		assert.True(t, hasPrimary)
-		assert.Equal(t, "google/gemini-3-flash-preview", primary, "overwrite mode should reset to operator's primary")
+		assert.Equal(t, "google/gemini-3.5-flash", primary, "overwrite mode should reset to operator's primary")
 	})
 
 	t.Run("workspace file seeded on first run", func(t *testing.T) {

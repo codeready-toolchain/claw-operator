@@ -275,9 +275,9 @@ func TestInjectModelCatalog(t *testing.T) {
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
 		assert.Len(t, models, len(modelCatalog["google"]))
-		assert.Contains(t, models, "google/gemini-3-flash-preview")
-		entry := models["google/gemini-3-flash-preview"].(map[string]any)
-		assert.Equal(t, "Gemini 3 Flash", entry["alias"])
+		assert.Contains(t, models, "google/gemini-3.5-flash")
+		entry := models["google/gemini-3.5-flash"].(map[string]any)
+		assert.Equal(t, "Gemini 3.5 Flash", entry["alias"])
 	})
 
 	t.Run("multiple providers emit models for each", func(t *testing.T) {
@@ -292,7 +292,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
 		expectedCount := len(modelCatalog["google"]) + len(modelCatalog["anthropic"])
 		assert.Len(t, models, expectedCount)
-		assert.Contains(t, models, "google/gemini-3-flash-preview")
+		assert.Contains(t, models, "google/gemini-3.5-flash")
 		assert.Contains(t, models, "anthropic/claude-sonnet-4-6")
 	})
 
@@ -341,7 +341,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
-		assert.Equal(t, "google/gemini-3-flash-preview", model["primary"])
+		assert.Equal(t, "google/gemini-3.5-flash", model["primary"])
 	})
 
 	t.Run("primary set from first provider with catalog", func(t *testing.T) {
@@ -401,7 +401,7 @@ func TestInjectModelCatalog(t *testing.T) {
 			"agents": map[string]any{
 				"defaults": map[string]any{
 					"models": map[string]any{
-						"google/gemini-3-flash-preview": map[string]any{"alias": "My Custom Alias"},
+						"google/gemini-3.5-flash": map[string]any{"alias": "My Custom Alias"},
 					},
 				},
 			},
@@ -413,7 +413,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-		entry := models["google/gemini-3-flash-preview"].(map[string]any)
+		entry := models["google/gemini-3.5-flash"].(map[string]any)
 		assert.Equal(t, "My Custom Alias", entry["alias"])
 		assert.Len(t, models, len(modelCatalog["google"]))
 	})
@@ -456,7 +456,7 @@ func TestInjectModelCatalog(t *testing.T) {
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
 		assert.Len(t, models, len(modelCatalog["google"]))
-		assert.Contains(t, models, "google/gemini-3-flash-preview")
+		assert.Contains(t, models, "google/gemini-3.5-flash")
 		assert.Contains(t, models, "google/gemini-3.1-flash-lite")
 		proEntry := models["google/gemini-3.1-pro-preview"].(map[string]any)
 		assert.Equal(t, "My Pro Override", proEntry["alias"])
@@ -579,9 +579,9 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 
 		catalogModels, hasModels := defaults["models"].(map[string]any)
 		require.True(t, hasModels, "operator.json should contain agents.defaults.models")
-		assert.Contains(t, catalogModels, "google/gemini-3-flash-preview", "should have google model from catalog")
+		assert.Contains(t, catalogModels, "google/gemini-3.5-flash", "should have google model from catalog")
 
 		model := defaults["model"].(map[string]any)
-		assert.Equal(t, "google/gemini-3-flash-preview", model["primary"], "primary should be first google model")
+		assert.Equal(t, "google/gemini-3.5-flash", model["primary"], "primary should be first google model")
 	})
 }

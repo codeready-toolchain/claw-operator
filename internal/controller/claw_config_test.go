@@ -421,7 +421,7 @@ func TestSpecConfigRawIntegration(t *testing.T) {
 										"model": {"primary": "openrouter/qwen3-14b"},
 										"models": {
 											"openrouter/qwen3-14b": {"alias": "Qwen 3 14B"},
-											"google/gemini-3-flash-preview": {"alias": "My Flash"}
+											"google/gemini-3.5-flash": {"alias": "My Flash"}
 										}
 									}
 								}
@@ -442,7 +442,7 @@ func TestSpecConfigRawIntegration(t *testing.T) {
 
 		assert.Contains(t, models, "openrouter/qwen3-14b",
 			"user-added model should be present")
-		flash := models["google/gemini-3-flash-preview"].(map[string]any)
+		flash := models["google/gemini-3.5-flash"].(map[string]any)
 		assert.Equal(t, "My Flash", flash["alias"],
 			"user alias should win over catalog alias")
 		assert.Contains(t, models, "google/gemini-3.1-pro-preview",

@@ -1058,7 +1058,7 @@ spec:
       agents:
         defaults:
           model:
-            primary: google/gemini-3-flash-preview
+            primary: google/gemini-3.5-flash
           models:
             openrouter/qwen3-14b:
               alias: Qwen 3 14B

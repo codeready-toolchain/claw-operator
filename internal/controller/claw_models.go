@@ -29,6 +29,7 @@ type modelEntry struct {
 // Providers not in this map (e.g., "openrouter") are silently skipped.
 var modelCatalog = map[string][]modelEntry{
 	"google": {
+		{Name: "gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
 		{Name: "gemini-3-flash-preview", Alias: "Gemini 3 Flash"},
 		{Name: "gemini-3.1-pro-preview", Alias: "Gemini 3.1 Pro"},
 		{Name: "gemini-3.1-flash-lite", Alias: "Gemini 3.1 Flash Lite"},
