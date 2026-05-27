@@ -71,6 +71,8 @@ spec:
             value: claw-proxy:latest
           - name: KUBECTL_IMAGE
             value: quay.io/openshift/origin-cli:4.21
+          - name: OTEL_COLLECTOR_IMAGE
+            value: mirror.gcr.io/otel/opentelemetry-collector:0.152.1
         ports: []
         securityContext:
           allowPrivilegeEscalation: false

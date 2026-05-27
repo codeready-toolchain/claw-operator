@@ -376,10 +376,11 @@ func getDevicePairingServiceAccountName(instanceName string) string {
 // ClawResourceReconciler reconciles all resources for Claw
 type ClawResourceReconciler struct {
 	client.Client
-	Scheme          *runtime.Scheme
-	ProxyImage      string
-	KubectlImage    string
-	ImagePullPolicy string
+	Scheme             *runtime.Scheme
+	ProxyImage         string
+	KubectlImage       string
+	OTelCollectorImage string
+	ImagePullPolicy    string
 }
 
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch
@@ -579,6 +580,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	// Reconcile ServiceMonitor (separate from bulk apply — CRD may not exist)
+	if err := r.reconcileServiceMonitor(ctx, instance); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to reconcile ServiceMonitor: %w", err)
+	}
+
 	// Update status based on deployment readiness
 	if err := r.updateStatus(ctx, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update status (will retry): %w", err)
@@ -692,6 +698,8 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 		return fmt.Errorf("failed to inject web search config: %w", err)
 	}
 
+	injectMetricsConfig(config, instance)
+
 	updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal enriched operator.json: %w", err)
@@ -702,6 +710,17 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 
 	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
+	}
+	if metricsEnabled(instance) {
+		if err := injectOTelCollectorConfig(objects, instance); err != nil {
+			return fmt.Errorf("failed to inject OTel collector config: %w", err)
+		}
+		if err := addMetricsPortToService(objects, instance); err != nil {
+			return fmt.Errorf("failed to add metrics port to Service: %w", err)
+		}
+		if err := addMetricsIngressRule(objects, instance); err != nil {
+			return fmt.Errorf("failed to add metrics ingress rule: %w", err)
+		}
 	}
 	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
@@ -758,6 +777,11 @@ func (r *ClawResourceReconciler) configureDeployments(
 	}
 	if err := configureClawDeploymentForAuth(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure gateway for auth: %w", err)
+	}
+	if metricsEnabled(instance) {
+		if err := configureMetricsSidecar(objects, instance, r.OTelCollectorImage); err != nil {
+			return fmt.Errorf("failed to configure metrics sidecar: %w", err)
+		}
 	}
 	return nil
 }

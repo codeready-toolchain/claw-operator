@@ -215,11 +215,12 @@ func main() {
 	}
 
 	if err = (&controller.ClawResourceReconciler{
-		Client:          mgr.GetClient(),
-		Scheme:          mgr.GetScheme(),
-		ProxyImage:      os.Getenv("PROXY_IMAGE"),
-		KubectlImage:    os.Getenv("KUBECTL_IMAGE"),
-		ImagePullPolicy: imagePullPolicy,
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		ProxyImage:         os.Getenv("PROXY_IMAGE"),
+		KubectlImage:       os.Getenv("KUBECTL_IMAGE"),
+		OTelCollectorImage: os.Getenv("OTEL_COLLECTOR_IMAGE"),
+		ImagePullPolicy:    imagePullPolicy,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Claw")
 		os.Exit(1)

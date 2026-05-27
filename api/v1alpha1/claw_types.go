@@ -363,6 +363,34 @@ type RawConfig struct {
 	runtime.RawExtension `json:",inline"`
 }
 
+// MetricsSpec configures Prometheus metrics collection via an OTel Collector sidecar.
+type MetricsSpec struct {
+	// Enabled activates the OTel Collector sidecar and diagnostics.otel.metrics
+	// config injection.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Port for the Prometheus metrics endpoint on the OTel Collector sidecar.
+	// Default: 9464.
+	// +optional
+	Port *int32 `json:"port,omitempty"`
+
+	// ServiceMonitor configures Prometheus Operator ServiceMonitor creation.
+	// +optional
+	ServiceMonitor *ServiceMonitorSpec `json:"serviceMonitor,omitempty"`
+}
+
+// ServiceMonitorSpec configures the Prometheus Operator ServiceMonitor resource.
+type ServiceMonitorSpec struct {
+	// Enabled controls whether a ServiceMonitor is created. Default: true
+	// (when metrics.enabled is true).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Interval is the Prometheus scrape interval. Default: "30s".
+	// +optional
+	Interval string `json:"interval,omitempty"`
+}
+
 // ClawSpec defines the desired state of Claw
 type ClawSpec struct {
 	// Config provides user-supplied OpenClaw configuration and merge behavior.
@@ -393,6 +421,10 @@ type ClawSpec struct {
 	// permitted by credentials, search providers, or builtins are reachable.
 	// +optional
 	WebFetch *WebFetchSpec `json:"webFetch,omitempty"`
+
+	// Metrics configures Prometheus metrics collection via an OTel Collector sidecar.
+	// +optional
+	Metrics *MetricsSpec `json:"metrics,omitempty"`
 
 	// Idle, when set to true, instructs the operator to scale all managed
 	// Deployments to zero replicas. Set to false (or omit) to run normally.
