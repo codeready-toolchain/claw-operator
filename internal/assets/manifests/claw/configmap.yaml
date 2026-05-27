@@ -760,8 +760,11 @@ data:
     - `agents.defaults.model.primary` — user value wins over catalog default
 
     **User-only (operator never touches — full user control):**
-    - `diagnostics.*`, `session.*`, `logging.*`, `plugins.*` (non-declared),
-      `skills.*`, `ui.*`, `cron.*`, `hooks.*`, `browser.*`, `memory.*`, etc.
+    - `diagnostics.*` (except: when `spec.metrics` is enabled, the operator
+      injects `diagnostics.otel.metrics` and `diagnostics.otel.metricsEndpoint`
+      if not already set by the user), `session.*`, `logging.*`,
+      `plugins.*` (non-declared), `skills.*`, `ui.*`, `cron.*`, `hooks.*`,
+      `browser.*`, `memory.*`, etc.
 
     ## Example
 

@@ -1135,7 +1135,7 @@ EOF
 
 This single field (`spec.metrics.enabled: true`) triggers the operator to:
 
-1. Inject `diagnostics.otel.metrics: true` and `diagnostics.otel.endpoint: "http://localhost:4318"` into the gateway config
+1. Inject `diagnostics.otel.metrics: true` and the sidecar OTLP endpoint into the gateway config
 2. Add an OTel Collector sidecar container to the gateway pod
 3. Add a `metrics` port (9464) to the Service
 4. Open the NetworkPolicy for scraping from monitoring namespaces
@@ -1200,9 +1200,42 @@ curl http://localhost:9464/metrics
 
 You should see Prometheus-format metrics from the OpenClaw gateway.
 
-### User-provided diagnostics config
+### Combining metrics with external tracing
 
-If you configure `diagnostics.otel` in `spec.config.raw`, the operator will not override your settings. This allows advanced users to point OTLP to a custom endpoint or configure additional telemetry options while still using the operator-managed sidecar for Prometheus export.
+When you configure `diagnostics.otel` in `spec.config.raw` alongside `spec.metrics.enabled: true`, the operator deep-merges the sidecar-specific keys (`metrics` and `metricsEndpoint`) into your config without overwriting your settings. This lets you send traces to an external backend (e.g., Langfuse, MLflow) while Prometheus metrics flow through the sidecar automatically:
+
+```yaml
+spec:
+  metrics:
+    enabled: true
+  plugins:
+    - "@openclaw/diagnostics-otel"
+  config:
+    raw:
+      diagnostics:
+        otel:
+          enabled: true
+          endpoint: http://langfuse.observability.svc:3000/api/public/otel/v1/traces
+          traces: true
+          captureContent:
+            inputMessages: true
+            outputMessages: true
+      plugins:
+        entries:
+          diagnostics-otel:
+            enabled: true
+  networkPolicy:
+    allowedEgress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: observability
+        ports:
+          - port: 3000
+            protocol: TCP
+```
+
+The operator injects `metrics: true` and `metricsEndpoint: "http://localhost:4318"` (pointing to the sidecar) only if you haven't set them yourself. Your `endpoint` routes traces to Langfuse; the injected `metricsEndpoint` routes metrics to the sidecar for Prometheus scraping. If you set `metrics: false` explicitly, the operator respects it.
 
 ## Network Policy
 
