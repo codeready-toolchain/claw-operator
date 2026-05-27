@@ -95,13 +95,23 @@ func TestPluginsEnabled(t *testing.T) {
 func TestGeneratePluginInstallScript(t *testing.T) {
 	t.Run("should generate script for single plugin", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
-		assert.Equal(t, "set -e; openclaw plugins install clawhub:@openclaw/matrix", script)
+		assert.Equal(t, "set -e; openclaw plugins install clawhub:'@openclaw/matrix'", script)
 	})
 
 	t.Run("should generate script for multiple plugins", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix", "@openclaw/diagnostics-otel"})
-		expected := "set -e; openclaw plugins install clawhub:@openclaw/matrix; openclaw plugins install clawhub:@openclaw/diagnostics-otel"
+		expected := "set -e; openclaw plugins install clawhub:'@openclaw/matrix'; openclaw plugins install clawhub:'@openclaw/diagnostics-otel'"
 		assert.Equal(t, expected, script)
+	})
+
+	t.Run("should escape single quotes in plugin names", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"foo'bar"})
+		assert.Equal(t, "set -e; openclaw plugins install clawhub:'foo'\\''bar'", script)
+	})
+
+	t.Run("should escape shell metacharacters", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"foo; rm -rf /"})
+		assert.Contains(t, script, "'foo; rm -rf /'")
 	})
 }
 
@@ -126,7 +136,7 @@ func TestConfigurePluginsInitContainer(t *testing.T) {
 		command := pluginInit["command"].([]any)
 		assert.Equal(t, "sh", command[0])
 		assert.Equal(t, "-c", command[1])
-		assert.Contains(t, command[2], "openclaw plugins install clawhub:@openclaw/matrix")
+		assert.Contains(t, command[2], "openclaw plugins install clawhub:'@openclaw/matrix'")
 	})
 
 	t.Run("should set proxy environment variables", func(t *testing.T) {
@@ -245,8 +255,8 @@ func TestConfigurePluginsInitContainer(t *testing.T) {
 		command := pluginInit["command"].([]any)
 		script := command[2].(string)
 		assert.Contains(t, script, "set -e")
-		assert.Contains(t, script, "openclaw plugins install clawhub:@openclaw/matrix")
-		assert.Contains(t, script, "openclaw plugins install clawhub:@openclaw/diagnostics-otel")
+		assert.Contains(t, script, "openclaw plugins install clawhub:'@openclaw/matrix'")
+		assert.Contains(t, script, "openclaw plugins install clawhub:'@openclaw/diagnostics-otel'")
 	})
 
 	t.Run("should no-op when plugins are empty", func(t *testing.T) {
@@ -388,7 +398,7 @@ func TestPluginsIntegration(t *testing.T) {
 		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
 			if ic.Name == PluginsInitContainerName {
 				found = true
-				assert.Contains(t, ic.Command[2], "openclaw plugins install clawhub:@openclaw/matrix")
+				assert.Contains(t, ic.Command[2], "openclaw plugins install clawhub:'@openclaw/matrix'")
 
 				envMap := make(map[string]string)
 				for _, e := range ic.Env {
@@ -459,8 +469,8 @@ func TestPluginsIntegration(t *testing.T) {
 		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
 			if ic.Name == PluginsInitContainerName {
 				script := ic.Command[2]
-				assert.Contains(t, script, "openclaw plugins install clawhub:@openclaw/matrix")
-				assert.Contains(t, script, "openclaw plugins install clawhub:@openclaw/diagnostics-otel")
+				assert.Contains(t, script, "openclaw plugins install clawhub:'@openclaw/matrix'")
+				assert.Contains(t, script, "openclaw plugins install clawhub:'@openclaw/diagnostics-otel'")
 				return
 			}
 		}

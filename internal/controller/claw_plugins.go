@@ -37,8 +37,9 @@ func generatePluginInstallScript(plugins []string) string {
 	var b strings.Builder
 	b.WriteString("set -e")
 	for _, pkg := range plugins {
+		escaped := "'" + strings.ReplaceAll(pkg, "'", "'\\''") + "'"
 		b.WriteString("; openclaw plugins install clawhub:")
-		b.WriteString(pkg)
+		b.WriteString(escaped)
 	}
 	return b.String()
 }

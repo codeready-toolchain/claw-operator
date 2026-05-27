@@ -751,9 +751,6 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if err := configureProxyImage(objects, instance, r.ProxyImage); err != nil {
 		return fmt.Errorf("failed to configure proxy image: %w", err)
 	}
-	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
-		return fmt.Errorf("failed to configure image pull policy: %w", err)
-	}
 	if err := configureProxyForCredentials(objects, instance, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
 	}
@@ -788,6 +785,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 		if err := configurePluginsInitContainer(objects, instance); err != nil {
 			return fmt.Errorf("failed to configure plugins init container: %w", err)
 		}
+	}
+	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
+		return fmt.Errorf("failed to configure image pull policy: %w", err)
 	}
 	return nil
 }
