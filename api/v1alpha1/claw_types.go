@@ -372,6 +372,8 @@ type MetricsSpec struct {
 	// Port for the Prometheus metrics endpoint on the OTel Collector sidecar.
 	// Default: 9464.
 	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	Port *int32 `json:"port,omitempty"`
 
 	// ServiceMonitor configures Prometheus Operator ServiceMonitor creation.

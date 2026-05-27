@@ -40,8 +40,6 @@ const (
 	ServiceMonitorKind         = "ServiceMonitor"
 )
 
-// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
-
 func getServiceMonitorName(instanceName string) string {
 	return instanceName + "-metrics"
 }

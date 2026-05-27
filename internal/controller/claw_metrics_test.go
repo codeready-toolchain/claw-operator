@@ -26,8 +26,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -864,5 +868,120 @@ func TestMetricsIntegration(t *testing.T) {
 			"user-configured endpoint should be preserved")
 		assert.Equal(t, true, otel["tracing"],
 			"user-configured tracing should be preserved")
+	})
+
+	// Must be last: installing/deleting a CRD at runtime invalidates the discovery cache
+	t.Run("should create ServiceMonitor when CRD exists", func(t *testing.T) {
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
+			crdToDelete := &apiextensionsv1.CustomResourceDefinition{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "servicemonitors.monitoring.coreos.com",
+				},
+			}
+			_ = k8sClient.Delete(ctx, crdToDelete)
+			waitFor(t, timeout*3, interval, func() bool {
+				crd := &apiextensionsv1.CustomResourceDefinition{}
+				err := k8sClient.Get(ctx, client.ObjectKey{Name: "servicemonitors.monitoring.coreos.com"}, crd)
+				return apierrors.IsNotFound(err)
+			}, "ServiceMonitor CRD should be deleted")
+		})
+
+		smCRD := &apiextensionsv1.CustomResourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "servicemonitors.monitoring.coreos.com",
+			},
+			Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+				Group: "monitoring.coreos.com",
+				Names: apiextensionsv1.CustomResourceDefinitionNames{
+					Plural:   "servicemonitors",
+					Singular: "servicemonitor",
+					Kind:     "ServiceMonitor",
+					ListKind: "ServiceMonitorList",
+				},
+				Scope: apiextensionsv1.NamespaceScoped,
+				Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+					{
+						Name:    "v1",
+						Served:  true,
+						Storage: true,
+						Schema: &apiextensionsv1.CustomResourceValidation{
+							OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+								Type: "object",
+								Properties: map[string]apiextensionsv1.JSONSchemaProps{
+									"spec": {
+										Type:                   "object",
+										XPreserveUnknownFields: boolPtr(true),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, smCRD)
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			require.NoError(t, err, "failed to create ServiceMonitor CRD")
+		}
+
+		waitFor(t, timeout, interval, func() bool {
+			crd := &apiextensionsv1.CustomResourceDefinition{}
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: "servicemonitors.monitoring.coreos.com"}, crd)
+			if err != nil {
+				return false
+			}
+			for _, cond := range crd.Status.Conditions {
+				if cond.Type == apiextensionsv1.Established && cond.Status == apiextensionsv1.ConditionTrue {
+					return true
+				}
+			}
+			return false
+		}, "ServiceMonitor CRD should be established")
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = testCredentials()
+		instance.Spec.Metrics = &clawv1alpha1.MetricsSpec{Enabled: true}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		sm := &unstructured.Unstructured{}
+		sm.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "monitoring.coreos.com",
+			Version: "v1",
+			Kind:    "ServiceMonitor",
+		})
+
+		smName := getServiceMonitorName(testInstanceName)
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      smName,
+				Namespace: namespace,
+			}, sm) == nil
+		}, "ServiceMonitor should be created")
+
+		labels := sm.GetLabels()
+		assert.Equal(t, "claw", labels["app.kubernetes.io/name"])
+		assert.Equal(t, testInstanceName, labels["claw.sandbox.redhat.com/instance"])
+
+		spec, _, _ := unstructured.NestedMap(sm.Object, "spec")
+		selector, _, _ := unstructured.NestedMap(spec, "selector")
+		matchLabels, _, _ := unstructured.NestedStringMap(selector, "matchLabels")
+		assert.Equal(t, "claw", matchLabels["app"])
+		assert.Equal(t, testInstanceName, matchLabels["claw.sandbox.redhat.com/instance"])
+
+		endpoints, _, _ := unstructured.NestedSlice(spec, "endpoints")
+		require.Len(t, endpoints, 1)
+		ep := endpoints[0].(map[string]any)
+		assert.Equal(t, "metrics", ep["port"])
+		assert.Equal(t, "30s", ep["interval"])
+		assert.Equal(t, "/metrics", ep["path"])
 	})
 }

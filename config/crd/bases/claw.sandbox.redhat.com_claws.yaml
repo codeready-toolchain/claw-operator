@@ -417,6 +417,8 @@ spec:
                       Port for the Prometheus metrics endpoint on the OTel Collector sidecar.
                       Default: 9464.
                     format: int32
+                    maximum: 65535
+                    minimum: 1
                     type: integer
                   serviceMonitor:
                     description: ServiceMonitor configures Prometheus Operator ServiceMonitor
