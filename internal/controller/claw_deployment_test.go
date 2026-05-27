@@ -288,7 +288,7 @@ func TestStampGatewayConfigHash(t *testing.T) {
 		require.NoError(t, stampGatewayConfigHash(objects1, testInstanceName, nil))
 
 		objects2 := makeObjects(`{"gateway":{"port":18789}}`)
-		_ = unstructured.SetNestedField(objects2[0].Object, "# Identity", "data", "_ws_IDENTITY.md")
+		require.NoError(t, unstructured.SetNestedField(objects2[0].Object, "# Identity", "data", "_ws_IDENTITY.md"))
 		require.NoError(t, stampGatewayConfigHash(objects2, testInstanceName, nil))
 
 		ann1, _, _ := unstructured.NestedStringMap(objects1[1].Object, "spec", "template", "metadata", "annotations")
@@ -303,7 +303,7 @@ func TestStampGatewayConfigHash(t *testing.T) {
 		require.NoError(t, stampGatewayConfigHash(objects1, testInstanceName, nil))
 
 		objects2 := makeObjects(`{"gateway":{"port":18789}}`)
-		_ = unstructured.SetNestedField(objects2[0].Object, "# Skill content", "data", "_skill_compliance")
+		require.NoError(t, unstructured.SetNestedField(objects2[0].Object, "# Skill content", "data", "_skill_compliance"))
 		require.NoError(t, stampGatewayConfigHash(objects2, testInstanceName, nil))
 
 		ann1, _, _ := unstructured.NestedStringMap(objects1[1].Object, "spec", "template", "metadata", "annotations")

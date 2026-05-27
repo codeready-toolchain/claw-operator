@@ -144,6 +144,18 @@ func TestValidateSkillNames(t *testing.T) {
 		assert.Contains(t, err.Error(), "must not be empty")
 	})
 
+	t.Run("should reject dot name", func(t *testing.T) {
+		err := validateSkillNames(map[string]string{".": "content"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `must not be "."`)
+	})
+
+	t.Run("should reject dot-dot name", func(t *testing.T) {
+		err := validateSkillNames(map[string]string{"..": "content"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `must not be ".."`)
+	})
+
 	t.Run("should reject name with slash", func(t *testing.T) {
 		err := validateSkillNames(map[string]string{"my/skill": "content"})
 		require.Error(t, err)
@@ -447,7 +459,7 @@ func TestWorkspaceIntegration(t *testing.T) {
 		ctx := context.Background()
 
 		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-		_ = k8sClient.Create(ctx, secret)
+		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
@@ -493,7 +505,7 @@ func TestWorkspaceIntegration(t *testing.T) {
 		ctx := context.Background()
 
 		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-		_ = k8sClient.Create(ctx, secret)
+		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
@@ -527,7 +539,7 @@ func TestWorkspaceIntegration(t *testing.T) {
 		ctx := context.Background()
 
 		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-		_ = k8sClient.Create(ctx, secret)
+		require.NoError(t, k8sClient.Create(ctx, secret))
 
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},

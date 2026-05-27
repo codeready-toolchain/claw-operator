@@ -79,6 +79,9 @@ func validateSkillNames(skills map[string]string) error {
 		if name == "" {
 			return fmt.Errorf("skill name must not be empty")
 		}
+		if name == "." || name == ".." {
+			return fmt.Errorf("skill name %q is invalid: must not be %q", name, name)
+		}
 		if strings.Contains(name, "/") {
 			return fmt.Errorf("skill name %q is invalid: must not contain \"/\"", name)
 		}
