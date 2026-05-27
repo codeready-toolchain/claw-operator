@@ -1,7 +1,7 @@
-# MCP Egress and NetworkPolicy Escape Hatch
+# ADR-0016: MCP Egress and NetworkPolicy Escape Hatch
 
-**Status:** Final — all decisions resolved in
-[mcp-diagnostics-egress-questions.md](mcp-diagnostics-egress-questions.md)
+**Status:** Implemented
+**Date:** 2026-05-27
 
 ---
 
@@ -46,7 +46,7 @@ This feature adds two capabilities:
    namespaces and ports.
 
 4. **Follow existing patterns** — rules are appended to existing NP objects
-   (same as `addMetricsIngressRule` and `injectKubePortsIntoNetworkPolicy`).
+   (same as metrics ingress rules and kube port injection).
    No new NetworkPolicy resources created.
 
 5. **Backward compatible** — no MCP servers declared and no `allowedEgress` →
@@ -54,9 +54,24 @@ This feature adds two capabilities:
 
 ---
 
+## Decisions
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | Scope — MCP only, or also diagnostics/tracing? | MCP auto-egress + `spec.networkPolicy.allowedEgress` escape hatch | Auto-configures typed MCP URLs (operator should "just work"); escape hatch covers all other cases without fragile JSON path parsing of `spec.config.raw`; follows upstream community operator pattern; `spec.networkPolicy` grouping leaves room for future additions |
+| 2 | In-cluster URL detection — heuristic vs explicit? | Kubernetes DNS heuristic | Zero config; matches `NO_PROXY` behavior exactly; OpenShift always uses `cluster.local` and ships k8s 1.23+ |
+| 3 | Same-namespace egress rule granularity | `podSelector: {}` with port | Scoped to same-namespace pods; no target label knowledge needed; tighter than port-only |
+| 4 | Cross-namespace targeting strategy | `kubernetes.io/metadata.name` namespace label | Precise scoping; namespace parsed from URL; guaranteed on OpenShift |
+| 5 | External non-443 ports — proxy egress? | Add parsed ports to proxy egress NP | Consistent with kube API port injection pattern; proxy L7 allowlist remains primary enforcement |
+| 6 | Diagnostics endpoint source | Superseded by Q1 — escape hatch handles diagnostics | No `spec.config.raw` parsing or new typed diagnostics fields needed |
+| 7 | Unparseable URL handling | Skip and log warning | Non-blocking; consistent with existing proxy allowlist behavior; users can use escape hatch |
+| 8 | NP rule strategy | Append to existing NPs | Consistent with established patterns; self-cleaning via server-side apply; no new resources |
+
+---
+
 ## Architecture
 
-### Traffic model (unchanged)
+### Traffic model
 
 ```
 External MCP/LLM traffic:
@@ -80,7 +95,8 @@ MCP URLs are classified by hostname pattern:
 hostname has no dots              → in-cluster, same namespace
 hostname ends .svc.cluster.local  → in-cluster, namespace = 2nd label
 hostname ends .svc                → in-cluster, namespace = 2nd label
-else (2+ labels, IP, etc.)        → external
+hostname has exactly 2 parts (a.b)→ in-cluster, namespace = 2nd label
+else (3+ non-svc labels, IP, etc.)→ external
 ```
 
 If the extracted namespace matches the Claw instance's own namespace, treat as
@@ -118,7 +134,6 @@ egress:
 
 ```yaml
 # Port added to {instance}-proxy-egress first egress rule
-# (same pattern as injectKubePortsIntoNetworkPolicy)
 egress:
   - ports:
       - port: 443
@@ -185,31 +200,22 @@ spec.networkPolicy   │  injectAllowedEgress(objects, instance)         │
 
 ### `spec.networkPolicy`
 
-```go
-// NetworkPolicySpec configures additional NetworkPolicy rules beyond
-// the operator's auto-generated defaults.
-type NetworkPolicySpec struct {
-    // AllowedEgress appends raw egress rules to the gateway NetworkPolicy.
-    // Use for targets the operator cannot auto-detect: tracing collectors,
-    // databases, webhooks, etc. Rules are appended to {instance}-egress.
-    // +optional
-    AllowedEgress []networkingv1.NetworkPolicyEgressRule `json:"allowedEgress,omitempty"`
-}
+```yaml
+spec:
+  networkPolicy:
+    allowedEgress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: langfuse
+        ports:
+          - port: 3000
+            protocol: TCP
 ```
 
-Added to `ClawSpec`:
-
-```go
-// NetworkPolicy configures additional NetworkPolicy rules.
-// MCP server egress rules are auto-generated from spec.mcpServers URLs.
-// +optional
-NetworkPolicy *NetworkPolicySpec `json:"networkPolicy,omitempty"`
-```
-
-**Import note:** `api/v1alpha1/claw_types.go` will need a new import of
-`networkingv1 "k8s.io/api/networking/v1"`. The type name `NetworkPolicySpec`
-does not conflict in practice — it lives in the `clawv1alpha1` package, while
-the Kubernetes type is `networkingv1.NetworkPolicySpec`.
+`NetworkPolicySpec` contains `AllowedEgress []networkingv1.NetworkPolicyEgressRule`
+— raw Kubernetes types validated by the API server on CR admission. No
+operator-side validation needed.
 
 No changes to `McpServerSpec` — MCP URLs are already declared there.
 
@@ -227,7 +233,7 @@ in the proxy egress rule (443, kube API ports).
 ## Validation and error handling
 
 - MCP URLs that fail to parse are skipped with a log warning. No egress rule
-  generated. Consistent with `mcpPassthroughRoutes()` behavior.
+  generated. Consistent with proxy allowlist behavior.
 - Port defaults: HTTP → 80, HTTPS → 443. Only non-443 external ports generate
   proxy egress rules.
 - `allowedEgress` rules are raw Kubernetes types — validated by the API server
@@ -235,77 +241,13 @@ in the proxy egress rule (443, kube API ports).
 
 ---
 
-## Implementation Plan
-
-Single PR. Implementation order within the PR:
-
-**1. CRD types + code generation**
-
-- Add `NetworkPolicySpec` to `api/v1alpha1/claw_types.go` with
-  `AllowedEgress []networkingv1.NetworkPolicyEgressRule`.
-- Add `NetworkPolicy *NetworkPolicySpec` to `ClawSpec`.
-- Add `networkingv1 "k8s.io/api/networking/v1"` import.
-- `make manifests generate` to regenerate CRD YAML and DeepCopy.
-
-**2. URL classification and egress rule injection**
-
-New files: `internal/controller/claw_egress.go`,
-`internal/controller/claw_egress_test.go`
-
-- `egressTarget` struct: `Port int`, `Namespace string`, `External bool`
-- `classifyServiceURL(rawURL, instanceNamespace) → egressTarget` — parses a
-  URL, classifies by DNS heuristic, extracts namespace and port.
-- `classifyMcpEgressTargets(instance) → []egressTarget` — iterates
-  `spec.mcpServers`, calls `classifyServiceURL` for each HTTP MCP server
-  (skips stdio). Deduplicates by `(namespace, port)`.
-- `injectMcpGatewayEgressRules(objects, targets, instanceName)` — appends
-  egress rules to `{instance}-egress` for in-cluster targets. Same-namespace
-  uses `podSelector: {}` + port. Cross-namespace uses `namespaceSelector` with
-  `kubernetes.io/metadata.name` + port.
-- `injectMcpProxyEgressPorts(objects, targets, instanceName)` — adds non-443
-  external ports to the first egress rule in `{instance}-proxy-egress`,
-  following the `injectKubePortsIntoNetworkPolicy` pattern (append to
-  `egress[0].ports`). Deduplicates against existing ports.
-- `injectAllowedEgress(objects, instance)` — appends user's
-  `spec.networkPolicy.allowedEgress` rules to `{instance}-egress`.
-- All three injection functions called from `r.enrichConfigAndNetworkPolicy()`.
-
-**3. Tests**
-
-- Unit tests covering URL classification: bare hostname, two-part DNS, FQDN,
-  same-namespace FQDN, external hostname, IP address, non-443 port, default
-  ports, malformed URLs, stdio MCP (no URL).
-- Unit tests for NP injection: same-namespace rule, cross-namespace rule,
-  proxy egress port, `allowedEgress` append, deduplication.
-- Integration tests (envtest): reconcile with in-cluster MCP → verify gateway
-  NP. Reconcile with external non-443 MCP → verify proxy NP. Reconcile with
-  `allowedEgress` → verify rules appended.
-
-**4. Documentation**
-
-- Update user guide with `spec.networkPolicy.allowedEgress` section and
-  MCP auto-egress behavior.
-- Update `docs/architecture.md` networking section.
-- Update `PLATFORM.md` skill in `configmap.yaml`:
-  - Proxy Architecture section: clarify that in-cluster traffic (`.svc`,
-    `.svc.cluster.local`) bypasses the proxy via `NO_PROXY` and connects
-    directly. The operator auto-generates NetworkPolicy rules for in-cluster
-    MCP servers declared in `spec.mcpServers`.
-  - MCP Tier 1 section: note that in-cluster HTTP MCP servers connect directly
-    (not through the proxy) and get automatic NP egress rules.
-  - Add a note about `spec.networkPolicy.allowedEgress` as the escape hatch
-    for in-cluster services not covered by MCP auto-egress (tracing collectors,
-    databases, etc.).
-
----
-
 ## Interaction with existing features
 
 | Feature | Interaction |
 |---------|-------------|
-| Proxy allowlist (`claw_proxy.go`) | Independent — allowlist is L7; this is L4 NP rules |
-| `injectKubePortsIntoNetworkPolicy` | Complementary — handles k8s API ports on proxy egress; MCP ports deduplicate against these |
-| `addMetricsIngressRule` | Parallel pattern — same approach (append rules to existing NP) |
+| Proxy allowlist | Independent — allowlist is L7; this is L4 NP rules |
+| Kube API port injection | Complementary — handles k8s API ports on proxy egress; MCP ports deduplicate against these |
+| Metrics ingress rules | Parallel pattern — same approach (append rules to existing NP) |
 | `NO_PROXY` env var | Prerequisite — in-cluster URLs bypass proxy; NP must allow the direct connection |
 | Stdio MCP servers | No effect — subprocess traffic inherits `HTTP_PROXY` |
 | `spec.config.raw` diagnostics | Independent — tracing egress handled via `allowedEgress` escape hatch |
@@ -358,3 +300,11 @@ spec:
           - port: 3000
             protocol: TCP
 ```
+
+---
+
+## Future considerations
+
+- `spec.networkPolicy` grouping leaves room for additions: `allowedEgressCIDRs`,
+  `additionalIngress`, `enabled: false` (disable NPs entirely).
+- Proxy egress customization could be added as a separate field if needed.
