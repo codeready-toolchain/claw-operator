@@ -1107,3 +1107,99 @@ Both methods work for user-managed settings:
 | **Precedence** | Wins over PVC for matching keys (except primary model) | Wins only until next reconcile |
 
 For declarative setups managed via GitOps, prefer `spec.config.raw`. For one-off tweaks inside the pod, `openclaw config patch` is fine.
+
+## Metrics
+
+The operator can expose Prometheus metrics from your Claw instance using an OpenTelemetry Collector sidecar. When enabled, the gateway pushes OTLP metrics to a localhost sidecar that exposes a `/metrics` endpoint for Prometheus scraping.
+
+### Enabling metrics
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      provider: google
+  metrics:
+    enabled: true
+EOF
+```
+
+This single field (`spec.metrics.enabled: true`) triggers the operator to:
+
+1. Inject `diagnostics.otel.metrics: true` and `diagnostics.otel.endpoint: "http://localhost:4318"` into the gateway config
+2. Add an OTel Collector sidecar container to the gateway pod
+3. Add a `metrics` port (9464) to the Service
+4. Open the NetworkPolicy for scraping from monitoring namespaces
+5. Create a ServiceMonitor for Prometheus Operator auto-discovery
+
+### How it works
+
+The gateway pushes OTLP/HTTP metrics to `localhost:4318`. The OTel Collector sidecar receives them and exposes a Prometheus-compatible `/metrics` endpoint on port 9464. Prometheus (via the ServiceMonitor) scrapes this endpoint.
+
+```
+Gateway ──OTLP/HTTP──▶ OTel Collector sidecar ──:9464/metrics──▶ Prometheus
+```
+
+All traffic between the gateway and sidecar stays within the pod (localhost). The NetworkPolicy allows ingress on port 9464 only from namespaces labeled with `network.openshift.io/policy-group: monitoring` (OpenShift platform monitoring).
+
+### Custom port
+
+Override the default Prometheus exporter port (9464):
+
+```yaml
+spec:
+  metrics:
+    enabled: true
+    port: 8888
+```
+
+### ServiceMonitor configuration
+
+By default, the operator creates a ServiceMonitor when metrics are enabled. On OpenShift, Prometheus Operator is a platform component that automatically discovers ServiceMonitors.
+
+Disable ServiceMonitor creation (e.g., if you configure scraping manually):
+
+```yaml
+spec:
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+```
+
+Customize the scrape interval (default: 30s):
+
+```yaml
+spec:
+  metrics:
+    enabled: true
+    serviceMonitor:
+      interval: "15s"
+```
+
+### Verifying metrics
+
+Once enabled, verify the metrics endpoint is working:
+
+```sh
+# Port-forward to the metrics port
+oc port-forward -n $NS svc/instance 9464:9464
+
+# In another terminal, check the endpoint
+curl http://localhost:9464/metrics
+```
+
+You should see Prometheus-format metrics from the OpenClaw gateway.
+
+### User-provided diagnostics config
+
+If you configure `diagnostics.otel` in `spec.config.raw`, the operator will not override your settings. This allows advanced users to point OTLP to a custom endpoint or configure additional telemetry options while still using the operator-managed sidecar for Prometheus export.

@@ -403,6 +403,38 @@ spec:
                   McpServers declares MCP servers injected into OpenClaw's config.
                   Map keys are server names as they appear in the mcp.servers config.
                 type: object
+              metrics:
+                description: Metrics configures Prometheus metrics collection via
+                  an OTel Collector sidecar.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled activates the OTel Collector sidecar and diagnostics.otel.metrics
+                      config injection.
+                    type: boolean
+                  port:
+                    description: |-
+                      Port for the Prometheus metrics endpoint on the OTel Collector sidecar.
+                      Default: 9464.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  serviceMonitor:
+                    description: ServiceMonitor configures Prometheus Operator ServiceMonitor
+                      creation.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled controls whether a ServiceMonitor is created. Default: true
+                          (when metrics.enabled is true).
+                        type: boolean
+                      interval:
+                        description: 'Interval is the Prometheus scrape interval.
+                          Default: "30s".'
+                        type: string
+                    type: object
+                type: object
               webFetch:
                 description: |-
                   WebFetch enables the web_fetch tool for arbitrary URL fetching.
