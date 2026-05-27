@@ -1204,6 +1204,81 @@ You should see Prometheus-format metrics from the OpenClaw gateway.
 
 If you configure `diagnostics.otel` in `spec.config.raw`, the operator will not override your settings. This allows advanced users to point OTLP to a custom endpoint or configure additional telemetry options while still using the operator-managed sidecar for Prometheus export.
 
+## Network Policy
+
+The operator creates strict NetworkPolicies by default: the gateway pod can only reach the MITM proxy (port 8080) and DNS, while the proxy pod can only reach TCP 443 and DNS. This blocks legitimate in-cluster traffic patterns like MCP servers running on custom ports or cross-namespace services.
+
+### Automatic MCP egress rules
+
+The operator automatically generates NetworkPolicy egress rules from `spec.mcpServers[].url`. No additional configuration is needed — if you declare an MCP server URL, the operator creates the appropriate NetworkPolicy rules.
+
+**Same-namespace MCP server** (bare hostname):
+
+```yaml
+spec:
+  mcpServers:
+    customer-api:
+      url: http://mcp-customer:9001/mcp
+```
+
+The operator auto-generates a gateway egress rule allowing traffic to any pod in the same namespace on port 9001.
+
+**Cross-namespace MCP server** (dotted Kubernetes DNS):
+
+```yaml
+spec:
+  mcpServers:
+    shared-tools:
+      url: http://mcp-server.shared-tools.svc:9001/mcp
+```
+
+The operator auto-generates a gateway egress rule targeting the `shared-tools` namespace on port 9001. All Kubernetes DNS forms work: `svc.ns`, `svc.ns.svc`, `svc.ns.svc.cluster.local`.
+
+**External MCP on non-443 port** (e.g., `https://mcp.example.com:8443/mcp`): the operator adds port 8443 to the proxy egress NetworkPolicy. External MCP on port 443 needs no change (already allowed).
+
+**Stdio MCP servers** (subprocess, no URL) need no NetworkPolicy changes.
+
+### Escape hatch: `spec.networkPolicy.allowedEgress`
+
+For services the operator cannot auto-detect — tracing collectors, databases, webhooks — use `spec.networkPolicy.allowedEgress` to append raw `NetworkPolicyEgressRule` objects to the gateway egress NetworkPolicy:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      provider: google
+  networkPolicy:
+    allowedEgress:
+      # Cross-namespace tracing collector (Langfuse)
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: langfuse
+        ports:
+          - port: 3000
+            protocol: TCP
+      # Same-namespace database
+      - to:
+          - podSelector: {}
+        ports:
+          - port: 5432
+            protocol: TCP
+EOF
+```
+
+Rules are standard Kubernetes `NetworkPolicyEgressRule` objects validated by the API server on admission. They are appended to the `{instance}-egress` NetworkPolicy alongside the auto-generated MCP rules.
+
+> **Note:** `allowedEgress` only modifies the **gateway** egress NetworkPolicy. For proxy egress customization (rare — only needed for external non-443 services not declared as MCP servers), create supplemental NetworkPolicies directly.
+
 ## Plugins
 
 The operator supports declarative plugin installation. List plugins in `spec.plugins` and the operator runs an init container that installs them on the PVC before the gateway starts.

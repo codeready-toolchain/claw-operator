@@ -52,6 +52,20 @@ The proxy sits between the gateway and external APIs, injecting credentials into
 
 **Vertex AI path**: credentials with `type: gcp` and a non-google `provider` (e.g., anthropic) use the native Vertex AI SDK rather than gateway routing. The operator creates a stub ADC (Application Default Credentials) ConfigMap so google-auth-library can bootstrap, and the proxy intercepts token refresh requests to vend real tokens.
 
+## NetworkPolicy and Egress Rules
+
+The operator creates three NetworkPolicies per instance: `{instance}-ingress` (gateway ingress from OpenShift routers), `{instance}-egress` (gateway egress to proxy + DNS), and `{instance}-proxy-egress` (proxy egress to HTTPS + DNS). These enforce a defense-in-depth posture where the gateway can only reach external services through the proxy.
+
+**MCP auto-egress:** When `spec.mcpServers` declares HTTP MCP server URLs, the operator classifies each URL as in-cluster or external using Kubernetes DNS heuristics (bare hostname → same namespace, `svc.ns` or `svc.ns.svc.cluster.local` → cross namespace, anything else → external). In-cluster targets get gateway egress rules appended to `{instance}-egress` (podSelector for same-namespace, namespaceSelector with `kubernetes.io/metadata.name` for cross-namespace). External non-443 ports get added to the proxy egress rule in `{instance}-proxy-egress`.
+
+**Escape hatch:** `spec.networkPolicy.allowedEgress` appends raw `NetworkPolicyEgressRule` objects to `{instance}-egress` for anything the operator can't auto-detect (tracing, databases, webhooks). This follows the upstream community operator's `additionalEgress` pattern.
+
+**Kube API ports:** `injectKubePortsIntoNetworkPolicy` adds non-443 ports from kubernetes credentials to proxy egress, allowing the proxy to reach API servers on non-standard ports (e.g., 6443).
+
+**Metrics ingress:** When metrics are enabled, `addMetricsIngressRule` opens the ingress NP for Prometheus scraping from OpenShift monitoring namespaces.
+
+All NP mutations follow the same pattern: find the NP by kind+name in the `[]*unstructured.Unstructured` slice, read with `NestedSlice`, append rules, write back with `SetNestedSlice`. Rules are deterministically sorted to avoid unnecessary NP churn across reconcile loops.
+
 ## Kustomize Manifest Organization
 
 Two Kustomize components under `internal/assets/manifests/`:
