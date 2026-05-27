@@ -726,7 +726,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	if err := injectKubePortsIntoNetworkPolicy(objects, resolvedCreds, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
 	}
-	if err := stampGatewayConfigHash(objects, instance.Name); err != nil {
+	if err := stampGatewayConfigHash(objects, instance.Name, instance.Spec.Plugins); err != nil {
 		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
 	}
 	return nil
@@ -750,9 +750,6 @@ func (r *ClawResourceReconciler) configureDeployments(
 ) error {
 	if err := configureProxyImage(objects, instance, r.ProxyImage); err != nil {
 		return fmt.Errorf("failed to configure proxy image: %w", err)
-	}
-	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
-		return fmt.Errorf("failed to configure image pull policy: %w", err)
 	}
 	if err := configureProxyForCredentials(objects, instance, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
@@ -783,6 +780,14 @@ func (r *ClawResourceReconciler) configureDeployments(
 		if err := configureMetricsSidecar(objects, instance, r.OTelCollectorImage); err != nil {
 			return fmt.Errorf("failed to configure metrics sidecar: %w", err)
 		}
+	}
+	if pluginsEnabled(instance) {
+		if err := configurePluginsInitContainer(objects, instance); err != nil {
+			return fmt.Errorf("failed to configure plugins init container: %w", err)
+		}
+	}
+	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
+		return fmt.Errorf("failed to configure image pull policy: %w", err)
 	}
 	return nil
 }

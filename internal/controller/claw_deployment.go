@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -623,10 +624,11 @@ func mcpAnnotationKey(serverName, envName string) string {
 	return fmt.Sprintf("%x", h[:6])
 }
 
-// stampGatewayConfigHash computes a SHA-256 hash of the gateway ConfigMap data and
-// stamps it on the gateway pod template. This triggers a rollout when operator.json
-// or other operator-managed config files change (e.g., after an operator upgrade).
-func stampGatewayConfigHash(objects []*unstructured.Unstructured, instanceName string) error {
+// stampGatewayConfigHash computes a SHA-256 hash of the gateway ConfigMap data
+// (plus the declared plugin list) and stamps it on the gateway pod template.
+// This triggers a rollout when operator.json, other operator-managed config
+// files, or the plugin install list change.
+func stampGatewayConfigHash(objects []*unstructured.Unstructured, instanceName string, plugins []string) error {
 	configMapName := getConfigMapName(instanceName)
 	var configData map[string]any
 	for _, obj := range objects {
@@ -656,6 +658,12 @@ func stampGatewayConfigHash(objects []*unstructured.Unstructured, instanceName s
 	h := sha256.New()
 	for _, k := range keys {
 		_, _ = fmt.Fprintf(h, "%s=%v\n", k, configData[k])
+	}
+	if len(plugins) > 0 {
+		sorted := make([]string, len(plugins))
+		copy(sorted, plugins)
+		sort.Strings(sorted)
+		_, _ = fmt.Fprintf(h, "plugins=%s\n", strings.Join(sorted, ","))
 	}
 	hash := fmt.Sprintf("%x", h.Sum(nil))
 

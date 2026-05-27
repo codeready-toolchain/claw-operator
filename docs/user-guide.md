@@ -1203,3 +1203,49 @@ You should see Prometheus-format metrics from the OpenClaw gateway.
 ### User-provided diagnostics config
 
 If you configure `diagnostics.otel` in `spec.config.raw`, the operator will not override your settings. This allows advanced users to point OTLP to a custom endpoint or configure additional telemetry options while still using the operator-managed sidecar for Prometheus export.
+
+## Plugins
+
+The operator supports declarative plugin installation. List plugins in `spec.plugins` and the operator runs an init container that installs them on the PVC before the gateway starts.
+
+### Installing plugins
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      provider: google
+  plugins:
+    - "@openclaw/matrix"
+    - "@openclaw/diagnostics-otel"
+EOF
+```
+
+When `spec.plugins` is non-empty, the operator adds an `init-plugins` init container that runs `openclaw plugins install clawhub:<pkg>` for each entry. The init container:
+
+- Uses the same OpenClaw image as the gateway
+- Routes traffic through the MITM proxy (required by the egress NetworkPolicy)
+- Installs plugins to the shared PVC so they persist across pod restarts
+
+### How it works
+
+The `init-plugins` container runs after the proxy is available and before the gateway starts. It downloads packages from ClawHub/npm through the MITM proxy, writing them to the PVC at `/home/node/.openclaw`.
+
+```
+init-volume → init-config → wait-for-proxy → init-plugins → gateway
+```
+
+Changing the plugin list triggers a pod rollout (the operator includes the plugin list in the config hash annotation).
+
+### Limitations
+
+Removing a plugin from `spec.plugins` prevents it from being installed on new pods but does **not** uninstall it from the existing PVC. To fully remove a plugin, either delete the PVC (the operator will recreate it) or manually remove the plugin files.
