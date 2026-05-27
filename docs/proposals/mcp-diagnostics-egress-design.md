@@ -80,8 +80,7 @@ MCP URLs are classified by hostname pattern:
 hostname has no dots              → in-cluster, same namespace
 hostname ends .svc.cluster.local  → in-cluster, namespace = 2nd label
 hostname ends .svc                → in-cluster, namespace = 2nd label
-hostname has exactly 2 parts (a.b)→ in-cluster, namespace = 2nd label
-else (3+ non-svc labels, IP, etc.)→ external
+else (2+ labels, IP, etc.)        → external
 ```
 
 If the extracted namespace matches the Claw instance's own namespace, treat as
@@ -101,7 +100,7 @@ egress:
         protocol: TCP
 ```
 
-**Cross-namespace in-cluster MCP** (e.g., `http://mcp-server.shared-tools:9001`):
+**Cross-namespace in-cluster MCP** (e.g., `http://mcp-server.shared-tools.svc:9001`):
 
 ```yaml
 # Appended to {instance}-egress
@@ -335,7 +334,7 @@ spec:
     customer-api:
       url: http://mcp-customer:9001/mcp
 
-    # Cross-namespace → auto gateway egress namespaceSelector + port 9001
+    # Cross-namespace (requires .svc suffix to match NO_PROXY)
     shared-tools:
       url: http://mcp-server.shared-tools.svc:9001/mcp
 

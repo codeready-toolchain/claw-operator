@@ -1232,7 +1232,7 @@ spec:
       url: http://mcp-server.shared-tools.svc:9001/mcp
 ```
 
-The operator auto-generates a gateway egress rule targeting the `shared-tools` namespace on port 9001. All Kubernetes DNS forms work: `svc.ns`, `svc.ns.svc`, `svc.ns.svc.cluster.local`.
+The operator auto-generates a gateway egress rule targeting the `shared-tools` namespace on port 9001. Cross-namespace services must use the `.svc` or `.svc.cluster.local` suffix (e.g., `svc.ns.svc` or `svc.ns.svc.cluster.local`) to match the `NO_PROXY` bypass and connect directly. Bare two-part names (e.g., `svc.ns`) are treated as external because `NO_PROXY` does not bypass them.
 
 **External MCP on non-443 port** (e.g., `https://mcp.example.com:8443/mcp`): the operator adds port 8443 to the proxy egress NetworkPolicy. External MCP on port 443 needs no change (already allowed).
 

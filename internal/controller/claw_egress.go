@@ -46,8 +46,13 @@ type egressTarget struct {
 //	no dots                          → in-cluster, same namespace
 //	ends .svc.cluster.local          → in-cluster, namespace = 2nd label
 //	ends .svc                        → in-cluster, namespace = 2nd label
-//	exactly 2 parts (a.b)            → in-cluster, namespace = 2nd label
-//	else (3+ non-svc labels, IP)     → external
+//	else (2+ labels, IP, etc.)       → external
+//
+// Two-label hostnames like "svc.namespace" are treated as external because
+// NO_PROXY only bypasses .svc and .svc.cluster.local suffixes. Traffic to
+// bare two-part names flows through the proxy, so a gateway egress rule
+// would have no effect. Users should use the .svc suffix for cross-namespace
+// in-cluster services (e.g., "mcp-server.shared-tools.svc:9001").
 func classifyServiceURL(rawURL, instanceNamespace string) (egressTarget, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -79,9 +84,6 @@ func classifyServiceURL(rawURL, instanceNamespace string) (egressTarget, error) 
 		isInCluster = true
 		namespace = parts[1]
 	case strings.HasSuffix(hostname, ".svc"):
-		isInCluster = true
-		namespace = parts[1]
-	case len(parts) == 2:
 		isInCluster = true
 		namespace = parts[1]
 	}

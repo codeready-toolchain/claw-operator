@@ -49,9 +49,9 @@ func TestClassifyServiceURL(t *testing.T) {
 			want:   egressTarget{Port: 9001},
 		},
 		{
-			name:   "two-part cross namespace",
+			name:   "two-part hostname treated as external",
 			rawURL: "http://mcp-server.shared-tools:9001/mcp",
-			want:   egressTarget{Port: 9001, Namespace: "shared-tools"},
+			want:   egressTarget{Port: 9001, External: true},
 		},
 		{
 			name:   "FQDN .svc cross namespace",
@@ -69,9 +69,9 @@ func TestClassifyServiceURL(t *testing.T) {
 			want:   egressTarget{Port: 9001},
 		},
 		{
-			name:   "two-part pointing to own namespace treated as same namespace",
+			name:   "two-part pointing to own namespace treated as external",
 			rawURL: "http://mcp-server.my-ns:9001/mcp",
-			want:   egressTarget{Port: 9001},
+			want:   egressTarget{Port: 9001, External: true},
 		},
 		{
 			name:   "external hostname",
@@ -123,6 +123,26 @@ func TestClassifyServiceURL(t *testing.T) {
 			rawURL:    "http:///path",
 			wantError: true,
 		},
+		{
+			name:   "FQDN .svc pointing to own namespace treated as same namespace",
+			rawURL: "http://mcp-server.my-ns.svc:9001/mcp",
+			want:   egressTarget{Port: 9001},
+		},
+		{
+			name:   "two-label external domain not misclassified as in-cluster",
+			rawURL: "http://example.com:8443/mcp",
+			want:   egressTarget{Port: 8443, External: true},
+		},
+		{
+			name:   "two-part hostname with default HTTP port treated as external",
+			rawURL: "http://mcp-server.other-ns/mcp",
+			want:   egressTarget{Port: 80, External: true},
+		},
+		{
+			name:   "external with HTTP defaults to port 80",
+			rawURL: "http://mcp.example.com/mcp",
+			want:   egressTarget{Port: 80, External: true},
+		},
 	}
 
 	for _, tt := range tests {
@@ -148,7 +168,7 @@ func TestClassifyMcpEgressTargets(t *testing.T) {
 				McpServers: map[string]clawv1alpha1.McpServerSpec{
 					"same-ns":      {URL: "http://mcp-a:9001/mcp"},
 					"same-ns-dup":  {URL: "http://mcp-b:9001/mcp"},
-					"cross-ns":     {URL: "http://mcp-server.shared-tools:9001/mcp"},
+					"cross-ns":     {URL: "http://mcp-server.shared-tools.svc:9001/mcp"},
 					"external":     {URL: "https://mcp.example.com:8443/mcp"},
 					"external-443": {URL: "https://mcp.other.com/mcp"},
 					"stdio":        {Command: "npx", Args: []string{"-y", "mcp-server"}},
@@ -192,6 +212,31 @@ func TestClassifyMcpEgressTargets(t *testing.T) {
 		}
 		targets := classifyMcpEgressTargets(instance)
 		assert.Empty(t, targets)
+	})
+
+	t.Run("should deduplicate .svc and .svc.cluster.local forms for same destination", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "my-ns"},
+			Spec: clawv1alpha1.ClawSpec{
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"svc":       {URL: "http://mcp-server.shared-tools.svc:9001/mcp"},
+					"fqdn":      {URL: "http://mcp-server.shared-tools.svc.cluster.local:9001/mcp"},
+					"diff-svc":  {URL: "http://other-svc.shared-tools.svc:9001/mcp"},
+					"diff-port": {URL: "http://mcp-server.shared-tools.svc:8080/mcp"},
+				},
+			},
+		}
+
+		targets := classifyMcpEgressTargets(instance)
+		crossNS := filterByNamespace(targets, "shared-tools")
+
+		assert.Len(t, crossNS, 2, "same namespace+port from different DNS forms should dedup; different port should not")
+		ports := map[int]bool{}
+		for _, t := range crossNS {
+			ports[t.Port] = true
+		}
+		assert.True(t, ports[9001], "port 9001 should be present")
+		assert.True(t, ports[8080], "port 8080 should be present")
 	})
 
 	t.Run("should return empty for stdio-only MCP servers", func(t *testing.T) {
@@ -287,6 +332,30 @@ func TestInjectMcpGatewayEgressRules(t *testing.T) {
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		assert.Len(t, egress, 1)
+	})
+
+	t.Run("should append multiple mixed targets in one call", func(t *testing.T) {
+		objects := makeGatewayNP()
+		targets := []egressTarget{
+			{Port: 9001},
+			{Port: 8080, Namespace: "shared-tools"},
+			{Port: 3000, Namespace: "langfuse"},
+		}
+
+		require.NoError(t, injectMcpGatewayEgressRules(objects, targets, testInstanceName))
+
+		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
+		assert.Len(t, egress, 4, "should have original + 3 in-cluster rules")
+
+		sameNSRule := egress[1].(map[string]any)
+		to := sameNSRule["to"].([]any)
+		_, hasPodSelector := to[0].(map[string]any)["podSelector"]
+		assert.True(t, hasPodSelector, "first injected rule should be same-namespace podSelector")
+
+		crossNSRule := egress[2].(map[string]any)
+		to = crossNSRule["to"].([]any)
+		_, hasNSSelector := to[0].(map[string]any)["namespaceSelector"]
+		assert.True(t, hasNSSelector, "second injected rule should be cross-namespace namespaceSelector")
 	})
 
 	t.Run("should return error when NP not found", func(t *testing.T) {
@@ -388,6 +457,15 @@ func TestInjectMcpProxyEgressPorts(t *testing.T) {
 		ports := rule["ports"].([]any)
 		assert.Len(t, ports, 3, "should have 443 + 8443 + 9443")
 	})
+
+	t.Run("should return error when NP not found", func(t *testing.T) {
+		objects := []*unstructured.Unstructured{}
+		targets := []egressTarget{{Port: 8443, External: true}}
+
+		err := injectMcpProxyEgressPorts(objects, targets, testInstanceName)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
 }
 
 // --- injectAllowedEgress tests ---
@@ -481,6 +559,29 @@ func TestInjectAllowedEgress(t *testing.T) {
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		assert.Len(t, egress, 1)
+	})
+
+	t.Run("should return error when NP not found", func(t *testing.T) {
+		objects := []*unstructured.Unstructured{}
+		port3000 := intstr.FromInt32(3000)
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				NetworkPolicy: &clawv1alpha1.NetworkPolicySpec{
+					AllowedEgress: []netv1.NetworkPolicyEgressRule{
+						{
+							Ports: []netv1.NetworkPolicyPort{
+								{Port: &port3000, Protocol: protocolPtr(corev1.ProtocolTCP)},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		err := injectAllowedEgress(objects, instance)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("should append multiple user rules", func(t *testing.T) {
@@ -609,7 +710,7 @@ func TestEgressIntegration(t *testing.T) {
 
 		createClawInstanceWithMcpServers(t, ctx, testInstanceName, namespace,
 			map[string]clawv1alpha1.McpServerSpec{
-				"cross-ns": {URL: "http://mcp-server.shared-tools:9001/mcp"},
+				"cross-ns": {URL: "http://mcp-server.shared-tools.svc:9001/mcp"},
 			}, nil)
 
 		reconciler := createClawReconciler()
@@ -714,6 +815,89 @@ func TestEgressIntegration(t *testing.T) {
 			}
 		}
 		assert.True(t, foundLangfuse, "gateway egress NP should contain allowedEgress rule for langfuse")
+	})
+
+	t.Run("combined MCP servers and allowedEgress in same reconcile", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		port5432 := intstr.FromInt32(5432)
+		createClawInstanceWithMcpServers(t, ctx, testInstanceName, namespace,
+			map[string]clawv1alpha1.McpServerSpec{
+				"in-cluster": {URL: "http://mcp-customer:9001/mcp"},
+			},
+			&clawv1alpha1.NetworkPolicySpec{
+				AllowedEgress: []netv1.NetworkPolicyEgressRule{
+					{
+						To: []netv1.NetworkPolicyPeer{
+							{PodSelector: &metav1.LabelSelector{}},
+						},
+						Ports: []netv1.NetworkPolicyPort{
+							{Port: &port5432, Protocol: protocolPtr(corev1.ProtocolTCP)},
+						},
+					},
+				},
+			})
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		np := &netv1.NetworkPolicy{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getEgressNetworkPolicyName(testInstanceName),
+				Namespace: namespace,
+			}, np) == nil
+		}, "gateway egress NP should be created")
+
+		foundPort9001 := false
+		foundPort5432 := false
+		for _, rule := range np.Spec.Egress {
+			for _, port := range rule.Ports {
+				if port.Port == nil {
+					continue
+				}
+				switch port.Port.IntValue() {
+				case 9001:
+					foundPort9001 = true
+				case 5432:
+					foundPort5432 = true
+				}
+			}
+		}
+		assert.True(t, foundPort9001, "gateway NP should have MCP auto-egress port 9001")
+		assert.True(t, foundPort5432, "gateway NP should have allowedEgress port 5432")
+	})
+
+	t.Run("external 443 MCP does not add extra proxy egress port", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		createClawInstanceWithMcpServers(t, ctx, testInstanceName, namespace,
+			map[string]clawv1alpha1.McpServerSpec{
+				"external-443": {URL: "https://mcp.example.com/mcp"},
+			}, nil)
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		np := &netv1.NetworkPolicy{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getProxyEgressNetworkPolicyName(testInstanceName),
+				Namespace: namespace,
+			}, np) == nil
+		}, "proxy egress NP should be created")
+
+		portCount := 0
+		for _, rule := range np.Spec.Egress {
+			for _, port := range rule.Ports {
+				if port.Port != nil && port.Port.IntValue() == 443 {
+					portCount++
+				}
+			}
+		}
+		assert.Equal(t, 1, portCount, "proxy NP should have exactly one 443 port (no duplicate)")
 	})
 
 	t.Run("no MCP servers and no allowedEgress leaves NP unchanged", func(t *testing.T) {
