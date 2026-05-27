@@ -1,6 +1,7 @@
-# Workspace Files and Skills Injection
+# ADR-0015: Workspace Files and Skills Injection
 
-**Status:** Final
+**Status:** Implemented
+**Date:** 2026-05-26
 
 ---
 
@@ -35,21 +36,22 @@ and enables GitOps workflows for workspace content.
 
 ---
 
+## Decisions
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| Q1 | How do users provide file content? | Inline map only (`map[string]string` in the CR) | Simplest UX — everything in one CR, GitOps-friendly, proven by upstream's `initialFiles`. ConfigMapRef can be added later as a non-breaking extension. |
+| Q2 | Workspace file ownership — seedIfMissing or copyAlways? | Fixed strategy per field type: `spec.workspace.files` → `seedIfMissing`, `spec.skills` → `copyAlways` | Simple mental model matching existing operator patterns (AGENTS.md = seed, PLATFORM.md = always) and upstream behavior. No per-file strategy config needed. |
+| Q3 | Skills API shape? | Inline map (name → content) on `ClawSpec` | Same shape as workspace files, minimal CRD surface. Map key = skill directory name, value = SKILL.md content. |
+| Q4 | How are files keyed in the ConfigMap? | Self-describing prefixed keys with `--` path encoding | `_ws_` prefix for workspace (seedIfMissing), `_skill_` prefix for skills (copyAlways). Slashes encoded as `--` matching upstream convention. One-pass iteration in merge.js. |
+| Q5 | Should `skipBootstrap` be a dedicated CR field? | Yes — `spec.workspace.skipBootstrap` | Discoverable in CRD docs, pairs naturally with workspace file seeding. Users setting up workspace files almost always want to skip bootstrap. |
+| Q6 | Same ConfigMap or separate volume? | Existing gateway ConfigMap (implied by Q4) | No separate ConfigMap or volume needed. |
+
+---
+
 ## Architecture
 
-### Current file seeding flow
-
-```
-ConfigMap keys          merge.js            PVC destination
-─────────────          ────────            ───────────────
-operator.json    ──▶  deep-merge      ──▶  openclaw.json
-openclaw.json    ──▶  (seed)
-AGENTS.md        ──▶  seedIfMissing   ──▶  workspace/AGENTS.md
-PLATFORM.md      ──▶  copyAlways      ──▶  workspace/skills/platform/SKILL.md
-KUBERNETES.md    ──▶  copyAlways      ──▶  workspace/skills/kubernetes/SKILL.md
-```
-
-### Extended flow (this design)
+### File seeding flow
 
 ```
 ConfigMap keys              merge.js                PVC destination
@@ -137,61 +139,18 @@ spec:
       Always follow FantaCo policy...
 ```
 
-### Go types
-
-```go
-// WorkspaceSpec configures workspace file seeding.
-type WorkspaceSpec struct {
-    // SkipBootstrap suppresses the OpenClaw first-run questionnaire.
-    // Default: false.
-    // +optional
-    SkipBootstrap bool `json:"skipBootstrap,omitempty"`
-
-    // Files maps workspace-relative paths to file content.
-    // Each file is seeded once (seedIfMissing) — user edits via the
-    // OpenClaw UI are preserved across restarts.
-    // +optional
-    Files map[string]string `json:"files,omitempty"`
-}
-```
-
-`spec.skills` is `map[string]string` directly on `ClawSpec`:
-
-```go
-// Skills maps skill names to SKILL.md content. Each entry creates
-// workspace/skills/<name>/SKILL.md, overwritten on every pod restart
-// (operator-managed).
-// +optional
-Skills map[string]string `json:"skills,omitempty"`
-```
-
 ---
 
-## Implementation Plan
+## Validation
 
-Single PR. Steps are ordered by dependency but ship together.
+The controller rejects the CR (condition = `Ready=False`) if:
 
-1. Add `WorkspaceSpec` to `api/v1alpha1/claw_types.go`; add
-   `Workspace *WorkspaceSpec` and `Skills map[string]string` to `ClawSpec`;
-   run `make manifests generate`
-2. Add validation helpers — reject empty/absolute/traversal paths, `--` in
-   names, conflicts with built-in skills (`platform`, `kubernetes`)
-3. Add `injectWorkspaceFiles(objects, instance)` — validate, encode paths
-   with `--`, write `_ws_<encoded-path>` keys into the gateway ConfigMap
-4. Add `injectSkillFiles(objects, instance)` — validate, write `_skill_<name>`
-   keys into the gateway ConfigMap
-5. Add `injectSkipBootstrap(config, instance)` — set
-   `agents.defaults.skipBootstrap: true` in operator.json when enabled
-6. Wire steps 3-5 into `enrichConfigAndNetworkPolicy()` pipeline
-7. Extend merge.js: iterate `_ws_*` keys (seedIfMissing) **before** static
-   seeds; iterate `_skill_*` keys (copyAlways); guard existing static
-   `seedIfMissing(AGENTS.md)` with an existence check
-8. Unit tests for injection functions and validation
-9. Integration tests (envtest — keys appear in ConfigMap after reconcile)
-10. Update user guide with "Workspace Files" and "Skills" sections
-
-**Note:** `stampGatewayConfigHash` already hashes all ConfigMap data keys —
-new `_ws_`/`_skill_` keys trigger pod rollouts automatically with no changes.
+- A workspace file path is empty, absolute, or contains `..` (directory traversal)
+- A workspace file path conflicts with operator-managed paths (e.g., `skills/platform/SKILL.md`)
+- A skill name is empty, `.`, `..`, or contains `/`
+- A skill name conflicts with built-in operator skills (`platform`, `kubernetes`)
+- A workspace file path or skill name contains `--` (reserved as the slash encoding
+  delimiter)
 
 ---
 
@@ -201,26 +160,9 @@ new `_ws_`/`_skill_` keys trigger pod rollouts automatically with no changes.
 |---------|-------------|
 | `spec.config.raw` | Independent — workspace files are PVC content, not openclaw.json |
 | `spec.plugins` | Independent — plugins are npm packages; skills are markdown files |
-| Existing `AGENTS.md` seed | User's `spec.workspace.files.AGENTS.md` overrides the built-in seed. merge.js processes `_ws_*` keys FIRST, then runs the static `seedIfMissing(AGENTS.md)`. Since the destination already exists after `_ws_AGENTS.md` is seeded, the static seed is a no-op. |
+| Existing `AGENTS.md` seed | User's `spec.workspace.files.AGENTS.md` overrides the built-in seed. merge.js processes `_ws_*` keys first; the static `seedIfMissing(AGENTS.md)` becomes a no-op since the destination already exists. |
 | Existing platform/kubernetes skills | Coexist — operator-injected skills use `PLATFORM.md`/`KUBERNETES.md` keys; user skills use `_skill_` prefix |
 | Config hash / rollout | Automatic — any workspace/skill change triggers pod restart |
-
----
-
-## Validation
-
-The controller rejects the CR (condition = `Ready=False`) if:
-
-- A workspace file path is empty, absolute, or contains `..` (directory traversal)
-- A workspace file path conflicts with operator-managed paths (e.g., `skills/platform/SKILL.md`)
-- A skill name is empty or contains `/` (names are directory components, not paths)
-- A skill name conflicts with built-in operator skills (`platform`, `kubernetes`)
-- A workspace file path or skill name contains `--` (reserved as the slash encoding
-  delimiter — filenames with literal `--` are unsupported)
-
-These checks run in the controller before writing ConfigMap keys, producing clear
-status messages (e.g., `workspace file path "../../etc/passwd" is invalid: must not
-contain ".."`)
 
 ---
 
@@ -234,53 +176,10 @@ contain ".."`)
 | **Total** | **~40-50KB** |
 | **Remaining budget** | **~950KB** |
 
-Well within the 1MB ConfigMap limit for typical use cases.
-
 ---
 
-## Example CR
+## Future considerations
 
-```yaml
-apiVersion: claw.sandbox.redhat.com/v1alpha1
-kind: Claw
-metadata:
-  name: demo-instance
-spec:
-  credentials:
-    - name: gemini
-      type: apiKey
-      secretRef:
-        - name: gemini-api-key
-          key: api-key
-      provider: google
-  config:
-    raw:
-      agents:
-        defaults:
-          model:
-            primary: google/gemini-2.5-pro
-  workspace:
-    skipBootstrap: true
-    files:
-      IDENTITY.md: |
-        # Identity
-        - Name: Demo User
-        - Role: Enterprise Developer
-        - Company: FantaCo
-      AGENTS.md: |
-        ## FantaCo Enterprise Assistant
-        You are a FantaCo enterprise assistant with access to
-        internal APIs and compliance guidelines.
-  skills:
-    quote-builder: |
-      ---
-      name: quote-builder
-      description: Build customer quotes using the pricing API
-      ---
-      # Quote Builder
-      Connect to the pricing MCP server and generate quotes...
-  plugins:
-    - "@openclaw/diagnostics-otel"
-  metrics:
-    enabled: true
-```
+- **ConfigMapRef extension** — for large file sets or shared content across
+  instances, a `configMapRef` field could be added to both `spec.workspace` and
+  `spec.skills` as a non-breaking extension.
