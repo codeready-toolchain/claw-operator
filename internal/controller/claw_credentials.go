@@ -221,7 +221,7 @@ func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instanc
 			var credFailed bool
 			for _, ref := range cred.SecretRef {
 				secret := &corev1.Secret{}
-				if err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: ref.Name}, secret); err != nil {
+				if err := r.UserSecretReader.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: ref.Name}, secret); err != nil {
 					if apierrors.IsNotFound(err) {
 						errs = append(errs, fmt.Errorf("credential %q: Secret %q not found", cred.Name, ref.Name))
 					} else {

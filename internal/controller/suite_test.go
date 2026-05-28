@@ -340,10 +340,13 @@ func toResolved(specs []clawv1alpha1.CredentialSpec) []resolvedCredential {
 }
 
 // createClawReconciler creates a ClawResourceReconciler for testing.
+// In envtest the same direct client serves as both the cached Client and the
+// UserSecretReader, so all Secret reads work without informer cache distinctions.
 func createClawReconciler() *ClawResourceReconciler {
 	return &ClawResourceReconciler{
-		Client: k8sClient,
-		Scheme: scheme.Scheme,
+		Client:           k8sClient,
+		Scheme:           scheme.Scheme,
+		UserSecretReader: k8sClient,
 	}
 }
 

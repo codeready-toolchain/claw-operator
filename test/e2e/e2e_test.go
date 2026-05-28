@@ -1202,6 +1202,116 @@ spec:
 			assert.Empty(t, idleStatus, "Idle condition should be absent after unidle")
 		})
 
+		t.Run("should reconcile unlabeled user Secret and detect rotation via metadata-only watch", func(t *testing.T) {
+			const unlabeledSecretName = "e2e-unlabeled-key"
+
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", unlabeledSecretName, "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating a user Secret WITHOUT the claw managed label")
+			cmd := exec.Command("kubectl", "delete", "secret", unlabeledSecretName,
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", unlabeledSecretName,
+				"--from-literal=api-key=initial-key-value", "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create unlabeled Secret")
+
+			t.Log("applying Claw CR referencing the unlabeled Secret")
+			crFile := filepath.Join("/tmp", "claw-e2e-unlabeled.yaml")
+			err = os.WriteFile(crFile, []byte(clawYAMLWithGemini(unlabeledSecretName, "api-key")),
+				os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for Claw CredentialsResolved condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='CredentialsResolved')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw CredentialsResolved did not become True — "+
+				"UserSecretReader should read unlabeled Secrets")
+
+			t.Log("waiting for proxy pod to be running")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=claw-proxy",
+						"-o", "jsonpath={.items[0].status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == podPhaseRunning, nil
+				})
+			require.NoError(t, err, "proxy pod did not reach Running phase")
+
+			t.Log("capturing original proxy pod UID before Secret rotation")
+			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=claw-proxy",
+				"-o", "jsonpath={.items[0].metadata.uid}",
+				"-n", userNamespace)
+			originalPodUID, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			require.NotEmpty(t, originalPodUID)
+
+			t.Log("rotating user Secret data (no label change)")
+			cmd = exec.Command("kubectl", "create", "secret", "generic", unlabeledSecretName,
+				"--from-literal=api-key=rotated-key-value",
+				"-n", userNamespace, "--dry-run=client", "-o", "yaml")
+			yamlOut, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", "-", "-n", userNamespace)
+			cmd.Stdin = strings.NewReader(yamlOut)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to rotate Secret data")
+
+			t.Log("verifying proxy pod was restarted after Secret rotation")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=claw-proxy",
+						"-o", "jsonpath={.items[0].metadata.uid}",
+						"-n", userNamespace)
+					uid, err := utils.Run(t, cmd)
+					return err == nil && uid != "" && uid != originalPodUID, nil
+				})
+			require.NoError(t, err, "proxy pod was not restarted after Secret rotation — "+
+				"Watches should detect changes to unlabeled Secrets")
+
+			t.Log("verifying operator-created Secrets have the instance label")
+			for _, secretName := range []string{gatewaySecretName, proxyCACertName} {
+				cmd = exec.Command("kubectl", "get", "secret", secretName,
+					"-o", "jsonpath={.metadata.labels}", "-n", userNamespace)
+				labelsOut, err := utils.Run(t, cmd)
+				require.NoError(t, err, "Secret %s should exist", secretName)
+				assert.Contains(t, labelsOut, controller.InstanceLabelKey,
+					"Secret %s should have instance label", secretName)
+			}
+
+			t.Log("verifying operator-created ConfigMaps have the instance label")
+			for _, cmName := range []string{proxyConfigMapName, configMapName} {
+				cmd = exec.Command("kubectl", "get", "configmap", cmName,
+					"-o", "jsonpath={.metadata.labels}", "-n", userNamespace)
+				labelsOut, err := utils.Run(t, cmd)
+				require.NoError(t, err, "ConfigMap %s should exist", cmName)
+				assert.Contains(t, labelsOut, controller.InstanceLabelKey,
+					"ConfigMap %s should have instance label", cmName)
+			}
+		})
+
 		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {
 			const (
 				kubeWorkspace = "e2e-kube-workspace"

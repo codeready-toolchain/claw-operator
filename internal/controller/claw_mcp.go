@@ -35,7 +35,7 @@ func (r *ClawResourceReconciler) validateMcpServerSecrets(ctx context.Context, i
 	for serverName, spec := range instance.Spec.McpServers {
 		for _, ef := range spec.EnvFrom {
 			secret := &corev1.Secret{}
-			if err := r.Get(ctx, client.ObjectKey{
+			if err := r.UserSecretReader.Get(ctx, client.ObjectKey{
 				Namespace: instance.Namespace,
 				Name:      ef.SecretRef.Name,
 			}, secret); err != nil {

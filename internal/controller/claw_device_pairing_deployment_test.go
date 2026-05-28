@@ -302,8 +302,9 @@ func TestDevicePairingReconciliation(t *testing.T) {
 
 		createClawInstance(t, ctx, resourceName, namespace)
 		reconciler := &ClawResourceReconciler{
-			Client: k8sClient,
-			Scheme: scheme.Scheme,
+			Client:           k8sClient,
+			Scheme:           scheme.Scheme,
+			UserSecretReader: k8sClient,
 		}
 		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 

@@ -60,8 +60,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -92,8 +93,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -130,8 +132,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -187,8 +190,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -244,8 +248,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -347,8 +352,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -417,8 +423,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -475,8 +482,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -513,8 +521,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -555,8 +564,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
-					Client: k8sClient,
-					Scheme: scheme.Scheme,
+					Client:           k8sClient,
+					Scheme:           scheme.Scheme,
+					UserSecretReader: k8sClient,
 				}
 
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -587,8 +597,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
-					Client: k8sClient,
-					Scheme: scheme.Scheme,
+					Client:           k8sClient,
+					Scheme:           scheme.Scheme,
+					UserSecretReader: k8sClient,
 				}
 
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -641,8 +652,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
-					Client: k8sClient,
-					Scheme: scheme.Scheme,
+					Client:           k8sClient,
+					Scheme:           scheme.Scheme,
+					UserSecretReader: k8sClient,
 				}
 
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -695,8 +707,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
-					Client: k8sClient,
-					Scheme: scheme.Scheme,
+					Client:           k8sClient,
+					Scheme:           scheme.Scheme,
+					UserSecretReader: k8sClient,
 				}
 
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -761,8 +774,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
-					Client: k8sClient,
-					Scheme: scheme.Scheme,
+					Client:           k8sClient,
+					Scheme:           scheme.Scheme,
+					UserSecretReader: k8sClient,
 				}
 
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -805,8 +819,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
-					Client: k8sClient,
-					Scheme: scheme.Scheme,
+					Client:           k8sClient,
+					Scheme:           scheme.Scheme,
+					UserSecretReader: k8sClient,
 				}
 
 				_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1007,8 +1022,9 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1039,8 +1055,9 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 			reconciler := &ClawResourceReconciler{
-				Client: k8sClient,
-				Scheme: scheme.Scheme,
+				Client:           k8sClient,
+				Scheme:           scheme.Scheme,
+				UserSecretReader: k8sClient,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1104,8 +1121,9 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway secret")
 
 		reconciler := &ClawResourceReconciler{
-			Client: k8sClient,
-			Scheme: scheme.Scheme,
+			Client:           k8sClient,
+			Scheme:           scheme.Scheme,
+			UserSecretReader: k8sClient,
 		}
 		token := reconciler.getGatewayToken(ctx, namespace, testInstanceName)
 
@@ -1119,8 +1137,9 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		})
 
 		reconciler := &ClawResourceReconciler{
-			Client: k8sClient,
-			Scheme: scheme.Scheme,
+			Client:           k8sClient,
+			Scheme:           scheme.Scheme,
+			UserSecretReader: k8sClient,
 		}
 		token := reconciler.getGatewayToken(ctx, namespace, testInstanceName)
 
@@ -1142,8 +1161,9 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway secret")
 
 		reconciler := &ClawResourceReconciler{
-			Client: k8sClient,
-			Scheme: scheme.Scheme,
+			Client:           k8sClient,
+			Scheme:           scheme.Scheme,
+			UserSecretReader: k8sClient,
 		}
 		token := reconciler.getGatewayToken(ctx, namespace, testInstanceName)
 
@@ -1165,8 +1185,9 @@ func TestGatewayTokenRetrieval(t *testing.T) {
 		require.NoError(t, k8sClient.Create(ctx, gatewaySecret), "failed to create gateway secret")
 
 		reconciler := &ClawResourceReconciler{
-			Client: k8sClient,
-			Scheme: scheme.Scheme,
+			Client:           k8sClient,
+			Scheme:           scheme.Scheme,
+			UserSecretReader: k8sClient,
 		}
 		token := reconciler.getGatewayToken(ctx, namespace, testInstanceName)
 

@@ -531,7 +531,7 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 	for _, cred := range instance.Spec.Credentials {
 		for _, ref := range cred.SecretRef {
 			secret := &corev1.Secret{}
-			if err := r.Get(ctx, client.ObjectKey{
+			if err := r.UserSecretReader.Get(ctx, client.ObjectKey{
 				Namespace: instance.Namespace,
 				Name:      ref.Name,
 			}, secret); err != nil {
@@ -547,7 +547,7 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 
 	if ws := instance.Spec.WebSearch; ws != nil && ws.SecretRef != nil {
 		secret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{
+		if err := r.UserSecretReader.Get(ctx, client.ObjectKey{
 			Namespace: instance.Namespace,
 			Name:      ws.SecretRef.Name,
 		}, secret); err != nil {

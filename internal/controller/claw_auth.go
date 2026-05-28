@@ -39,7 +39,7 @@ func (r *ClawResourceReconciler) resolveAuthPassword(ctx context.Context, instan
 
 	ref := instance.Spec.Auth.PasswordSecretRef
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{
+	if err := r.UserSecretReader.Get(ctx, client.ObjectKey{
 		Namespace: instance.Namespace,
 		Name:      ref.Name,
 	}, secret); err != nil {
