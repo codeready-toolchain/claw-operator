@@ -350,7 +350,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "gemini-api-key", userNamespace,
+			createLabeledSecret(t, "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
@@ -456,7 +456,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "gemini-api-key", userNamespace,
+			createLabeledSecret(t, "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
@@ -584,7 +584,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "gemini-api-key", userNamespace,
+			createLabeledSecret(t, "gemini-api-key",
 				"--from-literal=api-key=test-gemini-key-value")
 
 			t.Log("applying the Claw CR")
@@ -660,7 +660,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "llm-key-1",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "llm-key-1", userNamespace,
+			createLabeledSecret(t, "llm-key-1",
 				"--from-literal=api-key=first-api-key")
 
 			t.Log("creating Claw CR referencing first Secret")
@@ -709,7 +709,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd = exec.Command("kubectl", "delete", "secret", "llm-key-2",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "llm-key-2", userNamespace,
+			createLabeledSecret(t, "llm-key-2",
 				"--from-literal=api-key=second-api-key")
 
 			t.Log("updating Claw CR to reference the second Secret")
@@ -779,7 +779,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "gemini-api-key", userNamespace,
+			createLabeledSecret(t, "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
@@ -839,7 +839,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "gemini-api-key", userNamespace,
+			createLabeledSecret(t, "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
@@ -986,14 +986,14 @@ spec:
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "gemini-api-key", userNamespace,
+			createLabeledSecret(t, "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("creating the password Secret")
 			cmd = exec.Command("kubectl", "delete", "secret", "workshop-pw",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "workshop-pw", userNamespace,
+			createLabeledSecret(t, "workshop-pw",
 				"--from-literal=password=classroom-pass-e2e")
 
 			t.Log("applying Claw CR with password auth mode")
@@ -1101,7 +1101,7 @@ spec:
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, "gemini-api-key", userNamespace,
+			createLabeledSecret(t, "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
@@ -1300,7 +1300,7 @@ users:
 			cmd = exec.Command("kubectl", "delete", "secret", kubeSecretNm,
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			createLabeledSecret(t, kubeSecretNm, userNamespace,
+			createLabeledSecret(t, kubeSecretNm,
 				fmt.Sprintf("--from-file=kubeconfig=%s", kubeconfigFile))
 
 			// 8. Apply Claw CR with kubernetes credential
@@ -1545,16 +1545,16 @@ type tokenRequest struct {
 // createLabeledSecret creates a Secret via kubectl and applies the instance
 // label so it is visible to the operator's label-filtered informer cache.
 // extraArgs are passed to `kubectl create secret generic` (e.g. --from-literal, --from-file).
-func createLabeledSecret(t *testing.T, name, namespace string, extraArgs ...string) {
+func createLabeledSecret(t *testing.T, name string, extraArgs ...string) {
 	t.Helper()
-	args := append([]string{"create", "secret", "generic", name, "-n", namespace}, extraArgs...)
+	args := append([]string{"create", "secret", "generic", name, "-n", userNamespace}, extraArgs...)
 	cmd := exec.Command("kubectl", args...)
 	_, err := utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to create Secret %s", name)
 
 	cmd = exec.Command("kubectl", "label", "secret", name,
 		controller.InstanceLabelKey+"="+clawInstanceName,
-		"-n", namespace, "--overwrite")
+		"-n", userNamespace, "--overwrite")
 	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to label Secret %s", name)
 }
