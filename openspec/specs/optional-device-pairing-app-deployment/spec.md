@@ -54,6 +54,7 @@ The e2e test suite SHALL include a test case verifying that a Claw CR with `spec
 - **THEN** no device-pairing Deployment SHALL exist
 - **THEN** no device-pairing Service SHALL exist
 - **THEN** no device-pairing ServiceAccount SHALL exist
+- **THEN** no device-pairing RoleBinding SHALL exist
 - **THEN** the Claw instance SHALL eventually reach `Ready=True`
 
 #### Scenario: E2E enabled device pairing (existing behavior preserved)

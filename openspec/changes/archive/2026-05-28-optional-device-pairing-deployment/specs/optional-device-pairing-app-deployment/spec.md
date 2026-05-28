@@ -32,7 +32,7 @@ When device pairing transitions from enabled to disabled, the controller SHALL d
 
 #### Scenario: Cleanup on disable toggle
 - **WHEN** a Claw CR previously had device pairing enabled (resources exist) and `spec.auth.disableDevicePairing` is changed to `true`
-- **THEN** the controller SHALL delete the device-pairing Deployment, Service, ServiceAccount, RoleBinding, and Route
+- **THEN** the controller SHALL delete the device-pairing Deployment, Service, ServiceAccount, ClusterRole, RoleBinding, and Route
 - **THEN** NotFound errors during deletion SHALL be silently ignored (idempotent)
 
 #### Scenario: Cleanup is idempotent

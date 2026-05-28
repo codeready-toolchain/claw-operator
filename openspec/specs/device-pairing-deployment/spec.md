@@ -1,5 +1,5 @@
 ### Requirement: Device pairing manifests exist as embedded Kustomize directory
-The system SHALL include a `claw-device-pairing` directory under `internal/assets/manifests/` containing a `kustomization.yaml` and resource YAML files for ServiceAccount, Deployment, Service, and Route. The controller SHALL only include these manifests in the Kustomize build when device pairing is enabled (`shouldDisableDevicePairing()` returns `false`).
+The system SHALL include a `claw-device-pairing` directory under `internal/assets/manifests/` containing a `kustomization.yaml` and resource YAML files for ServiceAccount, ClusterRole, RoleBinding, Deployment, Service, and Route. The controller SHALL only include these manifests in the Kustomize build when device pairing is enabled (`shouldDisableDevicePairing()` returns `false`).
 
 #### Scenario: Kustomize directory structure
 - **WHEN** examining `internal/assets/manifests/claw-device-pairing/`

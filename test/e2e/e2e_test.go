@@ -1019,19 +1019,29 @@ spec:
 			cmd = exec.Command("kubectl", "get", "deployment", devicePairingDeploymentName,
 				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
-			assert.Error(t, err, "device-pairing Deployment should not exist when disableDevicePairing=true")
+			require.Error(t, err, "device-pairing Deployment should not exist when disableDevicePairing=true")
+			assert.Contains(t, err.Error(), "not found", "device-pairing Deployment error should be NotFound")
 
 			t.Log("verifying device-pairing Service does NOT exist")
 			cmd = exec.Command("kubectl", "get", "service", devicePairingServiceName,
 				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
-			assert.Error(t, err, "device-pairing Service should not exist when disableDevicePairing=true")
+			require.Error(t, err, "device-pairing Service should not exist when disableDevicePairing=true")
+			assert.Contains(t, err.Error(), "not found", "device-pairing Service error should be NotFound")
 
 			t.Log("verifying device-pairing ServiceAccount does NOT exist")
 			cmd = exec.Command("kubectl", "get", "serviceaccount", devicePairingSAName,
 				"-n", userNamespace)
 			_, err = utils.Run(t, cmd)
-			assert.Error(t, err, "device-pairing ServiceAccount should not exist when disableDevicePairing=true")
+			require.Error(t, err, "device-pairing ServiceAccount should not exist when disableDevicePairing=true")
+			assert.Contains(t, err.Error(), "not found", "device-pairing ServiceAccount error should be NotFound")
+
+			t.Log("verifying device-pairing RoleBinding does NOT exist")
+			cmd = exec.Command("kubectl", "get", "rolebinding", devicePairingSAName,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.Error(t, err, "device-pairing RoleBinding should not exist when disableDevicePairing=true")
+			assert.Contains(t, err.Error(), "not found", "device-pairing RoleBinding error should be NotFound")
 
 			t.Log("verifying DevicePairingConfigured condition is absent")
 			cmd = exec.Command("kubectl", "get", "claw", "instance",

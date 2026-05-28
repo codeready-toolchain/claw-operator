@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -333,21 +334,21 @@ func TestDevicePairingReconciliation(t *testing.T) {
 			Name:      getDevicePairingDeploymentName(resourceName),
 			Namespace: namespace,
 		}, dpDeployment)
-		assert.Error(t, err, "device-pairing Deployment should not exist")
+		assert.True(t, apierrors.IsNotFound(err), "device-pairing Deployment should not exist")
 
 		dpService := &corev1.Service{}
 		err = k8sClient.Get(ctx, client.ObjectKey{
 			Name:      getDevicePairingServiceName(resourceName),
 			Namespace: namespace,
 		}, dpService)
-		assert.Error(t, err, "device-pairing Service should not exist")
+		assert.True(t, apierrors.IsNotFound(err), "device-pairing Service should not exist")
 
 		dpSA := &corev1.ServiceAccount{}
 		err = k8sClient.Get(ctx, client.ObjectKey{
 			Name:      getDevicePairingServiceAccountName(resourceName),
 			Namespace: namespace,
 		}, dpSA)
-		assert.Error(t, err, "device-pairing ServiceAccount should not exist")
+		assert.True(t, apierrors.IsNotFound(err), "device-pairing ServiceAccount should not exist")
 	})
 
 	t.Run("should clean up device-pairing resources when disableDevicePairing is toggled to true", func(t *testing.T) {
