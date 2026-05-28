@@ -959,6 +959,110 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			require.NoError(t, err, "DevicePairingConfigured did not become True within %v", defaultTimeout)
 		})
 
+		t.Run("should not deploy device-pairing when disableDevicePairing is true", func(t *testing.T) {
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value",
+				"-n", userNamespace)
+			_, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create Secret")
+
+			t.Log("applying Claw CR with disableDevicePairing=true")
+			crYAML := `apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  auth:
+    disableDevicePairing: true
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      provider: google
+`
+			crFile := filepath.Join("/tmp", "claw-e2e-no-device-pairing.yaml")
+			err = os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
+			require.NoError(t, err)
+
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for Claw Ready=True")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw Ready did not become True within %v", extendedTimeout)
+
+			t.Log("verifying device-pairing Deployment does NOT exist")
+			cmd = exec.Command("kubectl", "get", "deployment", devicePairingDeploymentName,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.Error(t, err, "device-pairing Deployment should not exist when disableDevicePairing=true")
+			assert.Contains(t, err.Error(), "not found", "device-pairing Deployment error should be NotFound")
+
+			t.Log("verifying device-pairing Service does NOT exist")
+			cmd = exec.Command("kubectl", "get", "service", devicePairingServiceName,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.Error(t, err, "device-pairing Service should not exist when disableDevicePairing=true")
+			assert.Contains(t, err.Error(), "not found", "device-pairing Service error should be NotFound")
+
+			t.Log("verifying device-pairing ServiceAccount does NOT exist")
+			cmd = exec.Command("kubectl", "get", "serviceaccount", devicePairingSAName,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.Error(t, err, "device-pairing ServiceAccount should not exist when disableDevicePairing=true")
+			assert.Contains(t, err.Error(), "not found", "device-pairing ServiceAccount error should be NotFound")
+
+			t.Log("verifying device-pairing RoleBinding does NOT exist")
+			cmd = exec.Command("kubectl", "get", "rolebinding", devicePairingSAName,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.Error(t, err, "device-pairing RoleBinding should not exist when disableDevicePairing=true")
+			assert.Contains(t, err.Error(), "not found", "device-pairing RoleBinding error should be NotFound")
+
+			t.Log("verifying DevicePairingConfigured condition is absent")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.conditions[?(@.type=='DevicePairingConfigured')].status}",
+				"-n", userNamespace)
+			dpCondOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Empty(t, dpCondOutput, "DevicePairingConfigured condition should not exist when device pairing is disabled")
+
+			t.Log("verifying claw and proxy Deployments DO exist")
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "claw Deployment should exist")
+
+			cmd = exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
+				"-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "proxy Deployment should exist")
+		})
+
 		t.Run("should reject Claw CR with password mode but no passwordSecretRef", func(t *testing.T) {
 			t.Cleanup(func() { collectDebugInfo(t) })
 

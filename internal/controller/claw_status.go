@@ -59,12 +59,15 @@ func (r *ClawResourceReconciler) getDeploymentAvailableStatus(ctx context.Contex
 	return false, nil
 }
 
-// checkDeploymentsReady checks if all managed Deployments (claw, claw-proxy, claw-device-pairing) are ready
-func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, namespace, instanceName string) (bool, []string, error) {
+// checkDeploymentsReady checks if all managed Deployments are ready.
+// When device pairing is disabled, the device-pairing Deployment is excluded.
+func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, namespace, instanceName string, auth *clawv1alpha1.AuthSpec) (bool, []string, error) {
 	deployNames := []string{
 		getClawDeploymentName(instanceName),
 		getProxyDeploymentName(instanceName),
-		getDevicePairingDeploymentName(instanceName),
+	}
+	if !shouldDisableDevicePairing(auth) {
+		deployNames = append(deployNames, getDevicePairingDeploymentName(instanceName))
 	}
 
 	var pending []string
@@ -221,7 +224,7 @@ func buildClawURL(routeURL, token string) string {
 // updateStatus updates the Claw status with current deployment conditions
 func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	// check deployment readiness
-	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace, instance.Name)
+	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace, instance.Name, instance.Spec.Auth)
 	if err != nil {
 		return fmt.Errorf("failed to check deployment readiness: %w", err)
 	}
@@ -229,12 +232,15 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 	// Set Ready condition
 	setReadyCondition(instance, ready, pending)
 
-	// Set DevicePairingConfigured condition — derived from the pending list above to avoid a duplicate API call
-	dpReady := !slices.Contains(pending, getDevicePairingDeploymentName(instance.Name))
-	if dpReady {
-		setCondition(instance, clawv1alpha1.ConditionTypeDevicePairingConfigured, metav1.ConditionTrue, clawv1alpha1.ConditionReasonConfigured, "Device pairing deployment is available")
+	if shouldDisableDevicePairing(instance.Spec.Auth) {
+		meta.RemoveStatusCondition(&instance.Status.Conditions, clawv1alpha1.ConditionTypeDevicePairingConfigured)
 	} else {
-		setCondition(instance, clawv1alpha1.ConditionTypeDevicePairingConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonProvisioning, "Waiting for device pairing deployment to become ready")
+		dpReady := !slices.Contains(pending, getDevicePairingDeploymentName(instance.Name))
+		if dpReady {
+			setCondition(instance, clawv1alpha1.ConditionTypeDevicePairingConfigured, metav1.ConditionTrue, clawv1alpha1.ConditionReasonConfigured, "Device pairing deployment is available")
+		} else {
+			setCondition(instance, clawv1alpha1.ConditionTypeDevicePairingConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonProvisioning, "Waiting for device pairing deployment to become ready")
+		}
 	}
 
 	// Expose gateway secret name in status

@@ -679,7 +679,7 @@ func TestPasswordAuthModeReconciliation(t *testing.T) {
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
-		setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+		setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		updatedInstance := &clawv1alpha1.Claw{}

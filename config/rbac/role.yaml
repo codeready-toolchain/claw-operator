@@ -10,7 +10,6 @@ rules:
   - configmaps
   - persistentvolumeclaims
   - secrets
-  - serviceaccounts
   verbs:
   - create
   - get
@@ -33,6 +32,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - serviceaccounts
   - services
   verbs:
   - create
@@ -48,6 +48,7 @@ rules:
   - deployments
   verbs:
   - create
+  - delete
   - get
   - list
   - patch
@@ -116,9 +117,20 @@ rules:
   - rbac.authorization.k8s.io
   resources:
   - clusterroles
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
   - rolebindings
   verbs:
   - create
+  - delete
   - get
   - list
   - patch

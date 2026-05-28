@@ -24,12 +24,53 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
 func TestDevicePairingDeployment(t *testing.T) {
+
+	t.Run("buildKustomizedObjects excludes device-pairing resources when disableDevicePairing is true", func(t *testing.T) {
+		reconciler := createClawReconciler()
+		instance := testClawWithCredentials(testCredentials())
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+			DisableDevicePairing: boolPtr(true),
+		}
+		objects, err := reconciler.buildKustomizedObjects(instance)
+		require.NoError(t, err, "buildKustomizedObjects failed")
+
+		devicePairingKinds := map[string]string{
+			"ServiceAccount": getDevicePairingServiceAccountName(testInstanceName),
+			"Deployment":     getDevicePairingDeploymentName(testInstanceName),
+			"Service":        getDevicePairingServiceName(testInstanceName),
+			"Route":          getDevicePairingRouteName(testInstanceName),
+		}
+
+		for kind, name := range devicePairingKinds {
+			for _, obj := range objects {
+				if obj.GetKind() == kind && obj.GetName() == name {
+					t.Errorf("unexpected %s/%s in buildKustomizedObjects output when device pairing disabled", kind, name)
+				}
+			}
+		}
+
+		// Claw and proxy resources should still be present
+		var foundClawDeployment, foundProxyDeployment bool
+		for _, obj := range objects {
+			if obj.GetKind() == DeploymentKind && obj.GetName() == getClawDeploymentName(testInstanceName) {
+				foundClawDeployment = true
+			}
+			if obj.GetKind() == DeploymentKind && obj.GetName() == getProxyDeploymentName(testInstanceName) {
+				foundProxyDeployment = true
+			}
+		}
+		assert.True(t, foundClawDeployment, "claw Deployment should be present")
+		assert.True(t, foundProxyDeployment, "proxy Deployment should be present")
+	})
 
 	t.Run("buildKustomizedObjects includes device-pairing resources", func(t *testing.T) {
 		reconciler := createClawReconciler()
@@ -254,6 +295,102 @@ func TestDevicePairingDeployment(t *testing.T) {
 }
 
 func TestDevicePairingReconciliation(t *testing.T) {
+
+	t.Run("should not create device-pairing resources when disableDevicePairing is true", func(t *testing.T) {
+		const resourceName = testInstanceName
+		ctx := context.Background()
+
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = resourceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = testCredentials()
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+			DisableDevicePairing: boolPtr(true),
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		// Core resources should exist
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(resourceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "claw Deployment should be created")
+
+		// Device-pairing resources should NOT exist
+		dpDeployment := &appsv1.Deployment{}
+		err := k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getDevicePairingDeploymentName(resourceName),
+			Namespace: namespace,
+		}, dpDeployment)
+		assert.True(t, apierrors.IsNotFound(err), "device-pairing Deployment should not exist")
+
+		dpService := &corev1.Service{}
+		err = k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getDevicePairingServiceName(resourceName),
+			Namespace: namespace,
+		}, dpService)
+		assert.True(t, apierrors.IsNotFound(err), "device-pairing Service should not exist")
+
+		dpSA := &corev1.ServiceAccount{}
+		err = k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getDevicePairingServiceAccountName(resourceName),
+			Namespace: namespace,
+		}, dpSA)
+		assert.True(t, apierrors.IsNotFound(err), "device-pairing ServiceAccount should not exist")
+	})
+
+	t.Run("should clean up device-pairing resources when disableDevicePairing is toggled to true", func(t *testing.T) {
+		const resourceName = testInstanceName
+		ctx := context.Background()
+
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		// Create with device pairing enabled (default)
+		createClawInstance(t, ctx, resourceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		// Verify device-pairing resources were created
+		dpDeployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getDevicePairingDeploymentName(resourceName),
+				Namespace: namespace,
+			}, dpDeployment) == nil
+		}, "device-pairing Deployment should be created initially")
+
+		// Toggle disableDevicePairing to true
+		instance := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+			DisableDevicePairing: boolPtr(true),
+		}
+		require.NoError(t, k8sClient.Update(ctx, instance))
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		// Device-pairing resources should be cleaned up
+		waitFor(t, timeout, interval, func() bool {
+			err := k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getDevicePairingDeploymentName(resourceName),
+				Namespace: namespace,
+			}, dpDeployment)
+			return err != nil
+		}, "device-pairing Deployment should be deleted after disabling")
+	})
 
 	t.Run("should create device-pairing resources after reconcile", func(t *testing.T) {
 		const resourceName = testInstanceName
