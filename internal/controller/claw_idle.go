@@ -43,7 +43,9 @@ func (r *ClawResourceReconciler) handleIdle(ctx context.Context, instance *clawv
 	deploymentNames := []string{
 		getClawDeploymentName(instance.Name),
 		getProxyDeploymentName(instance.Name),
-		getDevicePairingDeploymentName(instance.Name),
+	}
+	if !shouldDisableDevicePairing(instance.Spec.Auth) {
+		deploymentNames = append(deploymentNames, getDevicePairingDeploymentName(instance.Name))
 	}
 
 	for _, name := range deploymentNames {
