@@ -179,7 +179,7 @@ container-push-proxy: ## Push container image for the credential proxy.
 # pull-policy defaults to IfNotPresent; dev-deploy passes Always to force re-pulls.
 define generate-deploy-overlay
 	@rm -rf config/.deploy && mkdir -p config/.deploy
-	@img=$(1); printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- ../default\nimages:\n- name: controller\n  newName: %s\n  newTag: %s\npatches:\n- path: proxy_image_patch.yaml\n  target:\n    kind: Deployment\n' "$${img%:*}" "$${img##*:}" > config/.deploy/kustomization.yaml
+	@img=$(1); printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- ../default\nimages:\n- name: controller\n  newName: %s\n  newTag: "%s"\npatches:\n- path: proxy_image_patch.yaml\n  target:\n    kind: Deployment\n' "$${img%:*}" "$${img##*:}" > config/.deploy/kustomization.yaml
 	@printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: controller-manager\nspec:\n  template:\n    spec:\n      containers:\n      - name: manager\n        imagePullPolicy: $(or $(3),IfNotPresent)\n        env:\n        - name: PROXY_IMAGE\n          value: "$(2)"\n        - name: IMAGE_PULL_POLICY\n          value: "$(or $(3),)"\n' > config/.deploy/proxy_image_patch.yaml
 endef
 
@@ -189,7 +189,7 @@ endef
 # Usage: $(call generate-bundle-overlay,<controller-image>)
 define generate-bundle-overlay
 	@rm -rf config/.bundle && mkdir -p config/.bundle
-	@img=$(1); printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- ../manifests\nimages:\n- name: controller\n  newName: %s\n  newTag: %s\n' \
+	@img=$(1); printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n- ../manifests\nimages:\n- name: controller\n  newName: %s\n  newTag: "%s"\n' \
 		"$${img%:*}" "$${img##*:}" > config/.bundle/kustomization.yaml
 endef
 
