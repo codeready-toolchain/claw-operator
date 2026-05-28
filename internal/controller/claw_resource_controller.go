@@ -1086,12 +1086,13 @@ func injectProviders(config map[string]any, instance *clawv1alpha1.Claw) error {
 }
 
 // injectModelCatalog merges the hardcoded model catalog into
-// agents.defaults.models. Catalog entries fill gaps; user entries from
-// spec.config.raw win on collision. For primary: user value wins over
-// catalog default.
+// agents.defaults.models and sets the default primary + fallback chain.
+// Catalog entries fill gaps; user entries from spec.config.raw win on
+// collision. For primary and fallbacks: user values win over catalog defaults.
 func injectModelCatalog(config map[string]any, instance *clawv1alpha1.Claw) {
 	catalogModels := map[string]any{}
 	var catalogPrimary string
+	var catalogFallbacks []string
 
 	for _, cred := range instance.Spec.Credentials {
 		if cred.Provider == "" || cred.Type == clawv1alpha1.CredentialTypePathToken {
@@ -1118,6 +1119,9 @@ func injectModelCatalog(config map[string]any, instance *clawv1alpha1.Claw) {
 
 		if catalogPrimary == "" {
 			catalogPrimary = providerKey + "/" + catalog[0].Name
+			for _, m := range catalog[1:] {
+				catalogFallbacks = append(catalogFallbacks, providerKey+"/"+m.Name)
+			}
 		}
 	}
 
@@ -1144,6 +1148,13 @@ func injectModelCatalog(config map[string]any, instance *clawv1alpha1.Claw) {
 	}
 	if existing, _ := modelMap["primary"].(string); existing == "" {
 		modelMap["primary"] = catalogPrimary
+	}
+	if _, hasFallbacks := modelMap["fallbacks"]; !hasFallbacks && len(catalogFallbacks) > 0 {
+		fallbacksAny := make([]any, len(catalogFallbacks))
+		for i, f := range catalogFallbacks {
+			fallbacksAny[i] = f
+		}
+		modelMap["fallbacks"] = fallbacksAny
 	}
 	defaults["model"] = modelMap
 }

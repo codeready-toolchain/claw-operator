@@ -326,7 +326,7 @@ func TestMergeJS(t *testing.T) {
 	t.Run("primary preserved on restart", func(t *testing.T) {
 		operatorJSON := `{
 			"gateway": {"port": 18789},
-			"agents": {"defaults": {"model": {"primary": "google/gemini-3.5-flash"}, "models": {"google/gemini-3.5-flash": {"alias": "Gemini 3.5 Flash"}}}}
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.1-pro-preview", "fallbacks": ["google/gemini-3-flash-preview"]}, "models": {"google/gemini-3.1-pro-preview": {"alias": "Gemini 3.1 Pro"}}}}
 		}`
 		pvcJSON := `{
 			"agents": {"defaults": {"model": {"primary": "anthropic/claude-opus-4-7"}, "workspace": "~/.openclaw/workspace"}}
@@ -342,22 +342,28 @@ func TestMergeJS(t *testing.T) {
 	t.Run("primary set on first run", func(t *testing.T) {
 		operatorJSON := `{
 			"gateway": {"port": 18789},
-			"agents": {"defaults": {"model": {"primary": "google/gemini-3.5-flash"}, "models": {"google/gemini-3.5-flash": {"alias": "Gemini 3.5 Flash"}}}}
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.1-pro-preview", "fallbacks": ["google/gemini-3-flash-preview"]}, "models": {"google/gemini-3.1-pro-preview": {"alias": "Gemini 3.1 Pro"}}}}
 		}`
 
 		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON})
 
 		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
 		assert.True(t, hasPrimary, "should have primary model on first run")
-		assert.Equal(t, "google/gemini-3.5-flash", primary, "operator's primary should be used on first run")
+		assert.Equal(t, "google/gemini-3.1-pro-preview", primary, "operator's primary should be used on first run")
+
+		fallbacks, hasFallbacks := nestedValue(result.config, "agents.defaults.model.fallbacks")
+		assert.True(t, hasFallbacks, "should have fallbacks on first run")
+		fbSlice := fallbacks.([]any)
+		require.Len(t, fbSlice, 1)
+		assert.Equal(t, "google/gemini-3-flash-preview", fbSlice[0], "operator's fallbacks should be used on first run")
 	})
 
 	t.Run("primary preserved even when models change", func(t *testing.T) {
 		operatorJSON := `{
 			"gateway": {"port": 18789},
-			"agents": {"defaults": {"model": {"primary": "google/gemini-3.5-flash"}, "models": {
-				"google/gemini-3.5-flash": {"alias": "Gemini 3.5 Flash"},
-				"google/gemini-3.1-pro-preview": {"alias": "Gemini 3.1 Pro"}
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.1-pro-preview", "fallbacks": ["google/gemini-3-flash-preview"]}, "models": {
+				"google/gemini-3.1-pro-preview": {"alias": "Gemini 3.1 Pro"},
+				"google/gemini-3-flash-preview": {"alias": "Gemini 3 Flash"}
 			}}}
 		}`
 		pvcJSON := `{
@@ -375,14 +381,14 @@ func TestMergeJS(t *testing.T) {
 		models, hasModels := nestedValue(result.config, "agents.defaults.models")
 		assert.True(t, hasModels)
 		modelsMap := models.(map[string]any)
-		assert.Contains(t, modelsMap, "google/gemini-3.5-flash", "new operator models should be merged in")
 		assert.Contains(t, modelsMap, "google/gemini-3.1-pro-preview", "new operator models should be merged in")
+		assert.Contains(t, modelsMap, "google/gemini-3-flash-preview", "new operator models should be merged in")
 	})
 
 	t.Run("primary not preserved in overwrite mode", func(t *testing.T) {
 		operatorJSON := `{
 			"gateway": {"port": 18789},
-			"agents": {"defaults": {"model": {"primary": "google/gemini-3.5-flash"}}}
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.1-pro-preview"}}}
 		}`
 		pvcJSON := `{
 			"agents": {"defaults": {"model": {"primary": "anthropic/claude-opus-4-7"}}}
@@ -392,7 +398,43 @@ func TestMergeJS(t *testing.T) {
 
 		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
 		assert.True(t, hasPrimary)
-		assert.Equal(t, "google/gemini-3.5-flash", primary, "overwrite mode should reset to operator's primary")
+		assert.Equal(t, "google/gemini-3.1-pro-preview", primary, "overwrite mode should reset to operator's primary")
+	})
+
+	t.Run("fallbacks preserved on restart", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.1-pro-preview", "fallbacks": ["google/gemini-3-flash-preview", "google/gemini-3.5-flash"]}}}
+		}`
+		pvcJSON := `{
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.1-pro-preview", "fallbacks": ["anthropic/claude-sonnet-4-6"]}}}
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON, pvcJSON: pvcJSON})
+
+		fallbacks, hasFallbacks := nestedValue(result.config, "agents.defaults.model.fallbacks")
+		assert.True(t, hasFallbacks, "should have fallbacks")
+		fbSlice := fallbacks.([]any)
+		require.Len(t, fbSlice, 1)
+		assert.Equal(t, "anthropic/claude-sonnet-4-6", fbSlice[0], "user's fallbacks should be preserved on restart")
+	})
+
+	t.Run("fallbacks not preserved in overwrite mode", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.1-pro-preview", "fallbacks": ["google/gemini-3-flash-preview"]}}}
+		}`
+		pvcJSON := `{
+			"agents": {"defaults": {"model": {"primary": "google/gemini-3.1-pro-preview", "fallbacks": ["anthropic/claude-sonnet-4-6"]}}}
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON, pvcJSON: pvcJSON, configMode: "overwrite"})
+
+		fallbacks, hasFallbacks := nestedValue(result.config, "agents.defaults.model.fallbacks")
+		assert.True(t, hasFallbacks)
+		fbSlice := fallbacks.([]any)
+		require.Len(t, fbSlice, 1)
+		assert.Equal(t, "google/gemini-3-flash-preview", fbSlice[0], "overwrite mode should reset to operator's fallbacks")
 	})
 
 	t.Run("workspace file seeded on first run", func(t *testing.T) {
