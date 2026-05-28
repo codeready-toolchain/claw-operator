@@ -29,7 +29,7 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
-const testGatewayImage = "ghcr.io/openclaw/openclaw:2026.5.26-slim"
+const testGatewayImage = "ghcr.io/openclaw/openclaw:2026.5.27-slim"
 
 func makeTestDeploymentForPlugins() []*unstructured.Unstructured {
 	dep := &unstructured.Unstructured{}
