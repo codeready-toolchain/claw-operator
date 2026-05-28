@@ -1058,7 +1058,7 @@ spec:
       agents:
         defaults:
           model:
-            primary: google/gemini-3-flash-preview
+            primary: google/gemini-3.5-flash
           models:
             openrouter/qwen3-14b:
               alias: Qwen 3 14B
@@ -1135,7 +1135,7 @@ EOF
 
 This single field (`spec.metrics.enabled: true`) triggers the operator to:
 
-1. Inject `diagnostics.otel.metrics: true` and `diagnostics.otel.endpoint: "http://localhost:4318"` into the gateway config
+1. Inject `diagnostics.otel.metrics: true` and the sidecar OTLP endpoint into the gateway config
 2. Add an OTel Collector sidecar container to the gateway pod
 3. Add a `metrics` port (9464) to the Service
 4. Open the NetworkPolicy for scraping from monitoring namespaces
@@ -1200,9 +1200,117 @@ curl http://localhost:9464/metrics
 
 You should see Prometheus-format metrics from the OpenClaw gateway.
 
-### User-provided diagnostics config
+### Combining metrics with external tracing
 
-If you configure `diagnostics.otel` in `spec.config.raw`, the operator will not override your settings. This allows advanced users to point OTLP to a custom endpoint or configure additional telemetry options while still using the operator-managed sidecar for Prometheus export.
+When you configure `diagnostics.otel` in `spec.config.raw` alongside `spec.metrics.enabled: true`, the operator deep-merges the sidecar-specific keys (`metrics` and `metricsEndpoint`) into your config without overwriting your settings. This lets you send traces to an external backend (e.g., Langfuse, MLflow) while Prometheus metrics flow through the sidecar automatically:
+
+```yaml
+spec:
+  metrics:
+    enabled: true
+  plugins:
+    - "@openclaw/diagnostics-otel"
+  config:
+    raw:
+      diagnostics:
+        otel:
+          enabled: true
+          endpoint: http://langfuse.observability.svc:3000/api/public/otel/v1/traces
+          traces: true
+          captureContent:
+            inputMessages: true
+            outputMessages: true
+      plugins:
+        entries:
+          diagnostics-otel:
+            enabled: true
+  networkPolicy:
+    allowedEgress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: observability
+        ports:
+          - port: 3000
+            protocol: TCP
+```
+
+The operator injects `metrics: true` and `metricsEndpoint: "http://localhost:4318"` (pointing to the sidecar) only if you haven't set them yourself. Your `endpoint` routes traces to Langfuse; the injected `metricsEndpoint` routes metrics to the sidecar for Prometheus scraping. If you set `metrics: false` explicitly, the operator respects it.
+
+## Network Policy
+
+The operator creates strict NetworkPolicies by default: the gateway pod can only reach the MITM proxy (port 8080) and DNS, while the proxy pod can only reach TCP 443 and DNS. This blocks legitimate in-cluster traffic patterns like MCP servers running on custom ports or cross-namespace services.
+
+### Automatic MCP egress rules
+
+The operator automatically generates NetworkPolicy egress rules from `spec.mcpServers[].url`. No additional configuration is needed — if you declare an MCP server URL, the operator creates the appropriate NetworkPolicy rules.
+
+**Same-namespace MCP server** (bare hostname):
+
+```yaml
+spec:
+  mcpServers:
+    customer-api:
+      url: http://mcp-customer:9001/mcp
+```
+
+The operator auto-generates a gateway egress rule allowing traffic to any pod in the same namespace on port 9001.
+
+**Cross-namespace MCP server** (dotted Kubernetes DNS):
+
+```yaml
+spec:
+  mcpServers:
+    shared-tools:
+      url: http://mcp-server.shared-tools.svc:9001/mcp
+```
+
+The operator auto-generates a gateway egress rule targeting the `shared-tools` namespace on port 9001. Cross-namespace services must use the `.svc` or `.svc.cluster.local` suffix (e.g., `svc.ns.svc` or `svc.ns.svc.cluster.local`) to match the `NO_PROXY` bypass and connect directly. Bare two-part names (e.g., `svc.ns`) are treated as external because `NO_PROXY` does not bypass them.
+
+**External MCP on non-443 port** (e.g., `https://mcp.example.com:8443/mcp`): the operator adds port 8443 to the proxy egress NetworkPolicy. External MCP on port 443 needs no change (already allowed).
+
+**Stdio MCP servers** (subprocess, no URL) need no NetworkPolicy changes.
+
+### Escape hatch: `spec.networkPolicy.allowedEgress`
+
+For services the operator cannot auto-detect — tracing collectors, databases, webhooks — use `spec.networkPolicy.allowedEgress` to append raw `NetworkPolicyEgressRule` objects to the gateway egress NetworkPolicy:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      provider: google
+  networkPolicy:
+    allowedEgress:
+      # Cross-namespace tracing collector (Langfuse)
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: langfuse
+        ports:
+          - port: 3000
+            protocol: TCP
+      # Same-namespace database
+      - to:
+          - podSelector: {}
+        ports:
+          - port: 5432
+            protocol: TCP
+EOF
+```
+
+Rules are standard Kubernetes `NetworkPolicyEgressRule` objects validated by the API server on admission. They are appended to the `{instance}-egress` NetworkPolicy alongside the auto-generated MCP rules.
+
+> **Note:** `allowedEgress` only modifies the **gateway** egress NetworkPolicy. For proxy egress customization (rare — only needed for external non-443 services not declared as MCP servers), create supplemental NetworkPolicies directly.
 
 ## Plugins
 

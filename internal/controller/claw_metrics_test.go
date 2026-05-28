@@ -275,14 +275,14 @@ func TestInjectMetricsConfig(t *testing.T) {
 		assert.Equal(t, "http://localhost:4318", otel["endpoint"])
 	})
 
-	t.Run("should not override user-configured diagnostics.otel", func(t *testing.T) {
+	t.Run("should deep-merge sidecar keys into user-configured diagnostics.otel", func(t *testing.T) {
 		config := map[string]any{
 			"gateway": map[string]any{},
 			"diagnostics": map[string]any{
 				"otel": map[string]any{
-					"metrics":  true,
-					"endpoint": "http://custom:4318",
-					"tracing":  true,
+					"enabled":  true,
+					"endpoint": "http://langfuse.svc:3000/api/public/otel/v1/traces",
+					"traces":   true,
 				},
 			},
 		}
@@ -292,8 +292,54 @@ func TestInjectMetricsConfig(t *testing.T) {
 
 		diagnostics := config["diagnostics"].(map[string]any)
 		otel := diagnostics["otel"].(map[string]any)
-		assert.Equal(t, "http://custom:4318", otel["endpoint"])
-		assert.Equal(t, true, otel["tracing"])
+		assert.Equal(t, "http://langfuse.svc:3000/api/public/otel/v1/traces", otel["endpoint"],
+			"user endpoint should be preserved")
+		assert.Equal(t, true, otel["traces"], "user traces should be preserved")
+		assert.Equal(t, true, otel["enabled"], "user enabled should be preserved")
+		assert.Equal(t, true, otel["metrics"], "metrics should be injected")
+		assert.Equal(t, "http://localhost:4318", otel["metricsEndpoint"],
+			"metricsEndpoint should be injected for sidecar")
+	})
+
+	t.Run("should not override user-set metricsEndpoint", func(t *testing.T) {
+		config := map[string]any{
+			"gateway": map[string]any{},
+			"diagnostics": map[string]any{
+				"otel": map[string]any{
+					"enabled":         true,
+					"metricsEndpoint": "http://custom-collector:4318",
+				},
+			},
+		}
+		instance := testClawWithMetrics(true, nil)
+
+		injectMetricsConfig(config, instance)
+
+		otel := config["diagnostics"].(map[string]any)["otel"].(map[string]any)
+		assert.Equal(t, "http://custom-collector:4318", otel["metricsEndpoint"],
+			"user metricsEndpoint should not be overridden")
+		assert.Equal(t, true, otel["metrics"], "metrics should be injected when absent")
+	})
+
+	t.Run("should not override user-set metrics false", func(t *testing.T) {
+		config := map[string]any{
+			"gateway": map[string]any{},
+			"diagnostics": map[string]any{
+				"otel": map[string]any{
+					"enabled": true,
+					"metrics": false,
+				},
+			},
+		}
+		instance := testClawWithMetrics(true, nil)
+
+		injectMetricsConfig(config, instance)
+
+		otel := config["diagnostics"].(map[string]any)["otel"].(map[string]any)
+		assert.Equal(t, false, otel["metrics"],
+			"user metrics:false should be respected")
+		assert.Equal(t, "http://localhost:4318", otel["metricsEndpoint"],
+			"metricsEndpoint should still be injected")
 	})
 
 	t.Run("should be no-op when metrics not enabled", func(t *testing.T) {
@@ -542,6 +588,33 @@ func TestInjectMetricsConfigJSONRoundTrip(t *testing.T) {
 		otel := diagnostics["otel"].(map[string]any)
 		assert.Equal(t, true, otel["metrics"])
 		assert.Equal(t, "http://localhost:4318", otel["endpoint"])
+	})
+
+	t.Run("should produce valid JSON after deep-merge into user config", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"diagnostics": {"otel": {"enabled": true, "endpoint": "http://langfuse:3000/otel", "traces": true}}
+		}`
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(operatorJSON), &config))
+
+		instance := testClawWithMetrics(true, nil)
+		injectMetricsConfig(config, instance)
+
+		result, err := json.Marshal(config)
+		require.NoError(t, err)
+
+		var roundTripped map[string]any
+		require.NoError(t, json.Unmarshal(result, &roundTripped))
+
+		diagnostics := roundTripped["diagnostics"].(map[string]any)
+		otel := diagnostics["otel"].(map[string]any)
+		assert.Equal(t, true, otel["enabled"], "user enabled preserved")
+		assert.Equal(t, "http://langfuse:3000/otel", otel["endpoint"], "user endpoint preserved")
+		assert.Equal(t, true, otel["traces"], "user traces preserved")
+		assert.Equal(t, true, otel["metrics"], "metrics injected")
+		assert.Equal(t, "http://localhost:4318", otel["metricsEndpoint"], "metricsEndpoint injected")
 	})
 }
 
@@ -826,7 +899,7 @@ func TestMetricsIntegration(t *testing.T) {
 		t.Fatal("otel-collector sidecar not found in deployment")
 	})
 
-	t.Run("should preserve user diagnostics.otel config from spec.config.raw", func(t *testing.T) {
+	t.Run("should deep-merge sidecar keys into user diagnostics.otel from spec.config.raw", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
@@ -840,7 +913,7 @@ func TestMetricsIntegration(t *testing.T) {
 		instance.Spec.Config = &clawv1alpha1.ConfigSpec{
 			Raw: &clawv1alpha1.RawConfig{
 				RawExtension: runtime.RawExtension{
-					Raw: []byte(`{"diagnostics":{"otel":{"metrics":true,"endpoint":"http://custom-collector:4318","tracing":true}}}`),
+					Raw: []byte(`{"diagnostics":{"otel":{"enabled":true,"endpoint":"http://langfuse.svc:3000/api/public/otel/v1/traces","traces":true}}}`),
 				},
 			},
 		}
@@ -864,10 +937,14 @@ func TestMetricsIntegration(t *testing.T) {
 		require.True(t, ok)
 		otel, ok := diagnostics["otel"].(map[string]any)
 		require.True(t, ok)
-		assert.Equal(t, "http://custom-collector:4318", otel["endpoint"],
+		assert.Equal(t, "http://langfuse.svc:3000/api/public/otel/v1/traces", otel["endpoint"],
 			"user-configured endpoint should be preserved")
-		assert.Equal(t, true, otel["tracing"],
-			"user-configured tracing should be preserved")
+		assert.Equal(t, true, otel["traces"],
+			"user-configured traces should be preserved")
+		assert.Equal(t, true, otel["metrics"],
+			"operator should inject metrics: true")
+		assert.Equal(t, "http://localhost:4318", otel["metricsEndpoint"],
+			"operator should inject metricsEndpoint for sidecar")
 	})
 
 	// Must be last: installing/deleting a CRD at runtime invalidates the discovery cache
