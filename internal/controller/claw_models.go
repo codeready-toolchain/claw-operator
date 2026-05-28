@@ -24,14 +24,15 @@ type modelEntry struct {
 
 // modelCatalog maps logical provider names to their known models.
 // Order matters: the first model becomes the default primary when this provider
-// is the first configured credential in the Claw CR. Lead with the best
-// cost/performance model, not the most expensive.
+// is the first configured credential in the Claw CR, and remaining models
+// become the fallback chain. Lead with the most stable, production-ready
+// model rather than the newest or cheapest.
 // Providers not in this map (e.g., "openrouter") are silently skipped.
 var modelCatalog = map[string][]modelEntry{
 	"google": {
-		{Name: "gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
-		{Name: "gemini-3-flash-preview", Alias: "Gemini 3 Flash"},
 		{Name: "gemini-3.1-pro-preview", Alias: "Gemini 3.1 Pro"},
+		{Name: "gemini-3-flash-preview", Alias: "Gemini 3 Flash"},
+		{Name: "gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
 		{Name: "gemini-3.1-flash-lite", Alias: "Gemini 3.1 Flash Lite"},
 	},
 	"anthropic": {

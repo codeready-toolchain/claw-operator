@@ -99,12 +99,18 @@ data:
         console.warn("[init-config] existing openclaw.json is invalid JSON; falling back to seed");
       }
       const savedPrimary = base?.agents?.defaults?.model?.primary;
+      const savedFallbacks = base?.agents?.defaults?.model?.fallbacks;
       const merged = deepMerge(base, ops);
-      if (savedPrimary) {
+      if (savedPrimary || savedFallbacks) {
         merged.agents = merged.agents || {};
         merged.agents.defaults = merged.agents.defaults || {};
         merged.agents.defaults.model = merged.agents.defaults.model || {};
-        merged.agents.defaults.model.primary = savedPrimary;
+        if (savedPrimary) {
+          merged.agents.defaults.model.primary = savedPrimary;
+        }
+        if (savedFallbacks) {
+          merged.agents.defaults.model.fallbacks = savedFallbacks;
+        }
       }
       fs.writeFileSync(pvcPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
       console.log("[init-config] merged operator.json into existing openclaw.json");

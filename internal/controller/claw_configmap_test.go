@@ -341,7 +341,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
-		assert.Equal(t, "google/gemini-3.5-flash", model["primary"])
+		assert.Equal(t, "google/gemini-3.1-pro-preview", model["primary"])
 	})
 
 	t.Run("primary set from first provider with catalog", func(t *testing.T) {
@@ -436,6 +436,83 @@ func TestInjectModelCatalog(t *testing.T) {
 
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
 		assert.Equal(t, "anthropic/claude-sonnet-4-6", model["primary"])
+	})
+
+	t.Run("fallbacks set from remaining catalog models", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+		}
+
+		injectModelCatalog(config, testClawWithCredentials(credentials))
+
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		fallbacks, ok := model["fallbacks"].([]any)
+		require.True(t, ok, "fallbacks should be set")
+		require.Len(t, fallbacks, len(modelCatalog["google"])-1, "fallbacks should contain all non-primary models")
+		assert.Equal(t, "google/"+modelCatalog["google"][1].Name, fallbacks[0])
+		assert.Equal(t, "google/"+modelCatalog["google"][2].Name, fallbacks[1])
+		assert.Equal(t, "google/"+modelCatalog["google"][3].Name, fallbacks[2])
+	})
+
+	t.Run("fallbacks use same provider as primary", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
+		}
+
+		injectModelCatalog(config, testClawWithCredentials(credentials))
+
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		fallbacks, ok := model["fallbacks"].([]any)
+		require.True(t, ok)
+		for _, f := range fallbacks {
+			assert.Contains(t, f.(string), "google/", "fallbacks should only contain models from the primary provider")
+		}
+	})
+
+	t.Run("vertex credential fallbacks use provider-vertex prefix", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name: "claude-vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
+				Domain: ".googleapis.com", GCP: &clawv1alpha1.GCPConfig{Project: "my-project", Location: "us-east5"},
+			},
+		}
+
+		injectModelCatalog(config, testClawWithCredentials(credentials))
+
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		assert.Equal(t, "anthropic-vertex/"+modelCatalog["anthropic"][0].Name, model["primary"])
+		fallbacks, ok := model["fallbacks"].([]any)
+		require.True(t, ok, "fallbacks should be set for vertex credentials")
+		for _, f := range fallbacks {
+			assert.Contains(t, f.(string), "anthropic-vertex/",
+				"vertex fallbacks must use the provider-vertex prefix")
+		}
+	})
+
+	t.Run("user fallbacks win over catalog default", func(t *testing.T) {
+		config := map[string]any{
+			"agents": map[string]any{
+				"defaults": map[string]any{
+					"model": map[string]any{
+						"fallbacks": []any{"anthropic/claude-sonnet-4-6"},
+					},
+				},
+			},
+		}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
+		}
+
+		injectModelCatalog(config, testClawWithCredentials(credentials))
+
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		fallbacks := model["fallbacks"].([]any)
+		require.Len(t, fallbacks, 1)
+		assert.Equal(t, "anthropic/claude-sonnet-4-6", fallbacks[0])
 	})
 
 	t.Run("catalog fills gaps when user has some models", func(t *testing.T) {
@@ -579,9 +656,12 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 
 		catalogModels, hasModels := defaults["models"].(map[string]any)
 		require.True(t, hasModels, "operator.json should contain agents.defaults.models")
-		assert.Contains(t, catalogModels, "google/gemini-3.5-flash", "should have google model from catalog")
+		assert.Contains(t, catalogModels, "google/gemini-3.1-pro-preview", "should have google model from catalog")
 
 		model := defaults["model"].(map[string]any)
-		assert.Equal(t, "google/gemini-3.5-flash", model["primary"], "primary should be first google model")
+		assert.Equal(t, "google/gemini-3.1-pro-preview", model["primary"], "primary should be first google model")
+		fallbacks, ok := model["fallbacks"].([]any)
+		assert.True(t, ok, "fallbacks should be set")
+		assert.NotEmpty(t, fallbacks, "fallbacks should contain remaining catalog models")
 	})
 }
