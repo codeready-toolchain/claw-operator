@@ -375,6 +375,13 @@ func setAllDeploymentsAvailable(t *testing.T, ctx context.Context, instanceName,
 	setDeploymentAvailable(t, ctx, getDevicePairingDeploymentName(instanceName), namespace)
 }
 
+// setCoreDeploymentsAvailable marks claw and claw-proxy Deployments as available (no device-pairing).
+func setCoreDeploymentsAvailable(t *testing.T, ctx context.Context, instanceName, namespace string) { //nolint:unparam
+	t.Helper()
+	setDeploymentAvailable(t, ctx, getClawDeploymentName(instanceName), namespace)
+	setDeploymentAvailable(t, ctx, getProxyDeploymentName(instanceName), namespace)
+}
+
 // reconcileClaw performs a reconciliation for the given Claw resource.
 func reconcileClaw(t *testing.T, ctx context.Context, reconciler *ClawResourceReconciler, name, namespace string) {
 	t.Helper()

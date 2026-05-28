@@ -36,6 +36,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -414,14 +415,14 @@ type ClawResourceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes/custom-host,verbs=create;update
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile manages the complete lifecycle of resources for Claw instances
 func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) { //nolint:gocyclo
@@ -450,6 +451,13 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		meta.RemoveStatusCondition(&instance.Status.Conditions, clawv1alpha1.ConditionTypeIdle)
 		if err := r.Status().Update(ctx, instance); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to persist Idle condition removal: %w", err)
+		}
+	}
+
+	// Clean up device-pairing resources if device pairing is now disabled
+	if shouldDisableDevicePairing(instance.Spec.Auth) {
+		if err := r.cleanupDevicePairingResources(ctx, instance); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to clean up device-pairing resources: %w", err)
 		}
 	}
 
@@ -541,12 +549,13 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{Requeue: true, RequeueAfter: 5 * time.Second}, nil
 		}
 
-		// Inject Claw Route host into device-pairing Route and apply it
-		if err := injectRouteHostIntoDevicePairingRoute(objects, routeHost, instance.Name); err != nil {
-			return ctrl.Result{}, err
-		}
-		if _, err := r.applyRouteByName(ctx, objects, instance, getDevicePairingRouteName(instance.Name)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to apply device-pairing Route: %w", err)
+		if !shouldDisableDevicePairing(instance.Spec.Auth) {
+			if err := injectRouteHostIntoDevicePairingRoute(objects, routeHost, instance.Name); err != nil {
+				return ctrl.Result{}, err
+			}
+			if _, err := r.applyRouteByName(ctx, objects, instance, getDevicePairingRouteName(instance.Name)); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to apply device-pairing Route: %w", err)
+			}
 		}
 	} else {
 		// Route CRD not registered - proceed with localhost fallback
@@ -921,22 +930,24 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 		"manifests/claw-proxy/network-policies.yaml": readEmbeddedFile("manifests/claw-proxy/network-policies.yaml"),
 	}
 
-	// Device pairing component manifests
-	devicePairingManifests := map[string][]byte{
-		"manifests/claw-device-pairing/kustomization.yaml":  readEmbeddedFile("manifests/claw-device-pairing/kustomization.yaml"),
-		"manifests/claw-device-pairing/serviceaccount.yaml": readEmbeddedFile("manifests/claw-device-pairing/serviceaccount.yaml"),
-		"manifests/claw-device-pairing/clusterrole.yaml":    readEmbeddedFile("manifests/claw-device-pairing/clusterrole.yaml"),
-		"manifests/claw-device-pairing/rolebinding.yaml":    readEmbeddedFile("manifests/claw-device-pairing/rolebinding.yaml"),
-		"manifests/claw-device-pairing/deployment.yaml":     readEmbeddedFile("manifests/claw-device-pairing/deployment.yaml"),
-		"manifests/claw-device-pairing/service.yaml":        readEmbeddedFile("manifests/claw-device-pairing/service.yaml"),
-		"manifests/claw-device-pairing/route.yaml":          readEmbeddedFile("manifests/claw-device-pairing/route.yaml"),
-	}
-
 	// Write all files to in-memory filesystem
-	allManifests := make(map[string][]byte, len(clawManifests)+len(proxyManifests)+len(devicePairingManifests))
+	allManifests := make(map[string][]byte, len(clawManifests)+len(proxyManifests))
 	maps.Copy(allManifests, clawManifests)
 	maps.Copy(allManifests, proxyManifests)
-	maps.Copy(allManifests, devicePairingManifests)
+
+	devicePairingEnabled := !shouldDisableDevicePairing(instance.Spec.Auth)
+	if devicePairingEnabled {
+		devicePairingManifests := map[string][]byte{
+			"manifests/claw-device-pairing/kustomization.yaml":  readEmbeddedFile("manifests/claw-device-pairing/kustomization.yaml"),
+			"manifests/claw-device-pairing/serviceaccount.yaml": readEmbeddedFile("manifests/claw-device-pairing/serviceaccount.yaml"),
+			"manifests/claw-device-pairing/clusterrole.yaml":    readEmbeddedFile("manifests/claw-device-pairing/clusterrole.yaml"),
+			"manifests/claw-device-pairing/rolebinding.yaml":    readEmbeddedFile("manifests/claw-device-pairing/rolebinding.yaml"),
+			"manifests/claw-device-pairing/deployment.yaml":     readEmbeddedFile("manifests/claw-device-pairing/deployment.yaml"),
+			"manifests/claw-device-pairing/service.yaml":        readEmbeddedFile("manifests/claw-device-pairing/service.yaml"),
+			"manifests/claw-device-pairing/route.yaml":          readEmbeddedFile("manifests/claw-device-pairing/route.yaml"),
+		}
+		maps.Copy(allManifests, devicePairingManifests)
+	}
 
 	for path, content := range allManifests {
 		replaced := bytes.ReplaceAll(content, []byte("CLAW_INSTANCE_NAME"), []byte(instance.Name))
@@ -957,15 +968,16 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 		return nil, err
 	}
 
-	// Build device pairing component
-	devicePairingObjects, err := r.buildKustomizeFromPath(fs, "manifests/claw-device-pairing")
-	if err != nil {
-		return nil, err
-	}
-
 	// Merge all object lists
 	allObjects := append(clawObjects, proxyObjects...)
-	allObjects = append(allObjects, devicePairingObjects...)
+
+	if devicePairingEnabled {
+		devicePairingObjects, err := r.buildKustomizeFromPath(fs, "manifests/claw-device-pairing")
+		if err != nil {
+			return nil, err
+		}
+		allObjects = append(allObjects, devicePairingObjects...)
+	}
 
 	// Inject instance labels into selectors for multi-instance discrimination
 	if err := injectInstanceLabels(allObjects, instance.Name); err != nil {
@@ -1030,6 +1042,62 @@ func (r *ClawResourceReconciler) applyRouteByName(ctx context.Context, objects [
 
 func getDevicePairingRouteName(instanceName string) string {
 	return instanceName + "-device-pairing"
+}
+
+func getDevicePairingRoleBindingName(instanceName string) string {
+	return instanceName + "-device-pairing"
+}
+
+func (r *ClawResourceReconciler) cleanupDevicePairingResources(ctx context.Context, instance *clawv1alpha1.Claw) error {
+	logger := log.FromContext(ctx)
+	name := instance.Name
+	ns := instance.Namespace
+
+	resources := []client.Object{
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: getDevicePairingDeploymentName(name), Namespace: ns}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: getDevicePairingServiceName(name), Namespace: ns}},
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: getDevicePairingServiceAccountName(name), Namespace: ns}},
+		newDevicePairingRouteUnstructured(name, ns),
+		newDevicePairingRoleBindingUnstructured(name, ns),
+	}
+
+	for _, obj := range resources {
+		if err := r.Delete(ctx, obj); err != nil {
+			if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+				continue
+			}
+			return fmt.Errorf("failed to delete device-pairing resource %s/%s: %w",
+				obj.GetObjectKind().GroupVersionKind().Kind, obj.GetName(), err)
+		}
+		logger.Info("Deleted device-pairing resource",
+			"kind", obj.GetObjectKind().GroupVersionKind().Kind,
+			"name", obj.GetName())
+	}
+	return nil
+}
+
+func newDevicePairingRouteUnstructured(instanceName, ns string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "route.openshift.io",
+		Version: "v1",
+		Kind:    RouteKind,
+	})
+	u.SetName(getDevicePairingRouteName(instanceName))
+	u.SetNamespace(ns)
+	return u
+}
+
+func newDevicePairingRoleBindingUnstructured(instanceName, ns string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "rbac.authorization.k8s.io",
+		Version: "v1",
+		Kind:    "RoleBinding",
+	})
+	u.SetName(getDevicePairingRoleBindingName(instanceName))
+	u.SetNamespace(ns)
+	return u
 }
 
 func isClusterScoped(obj *unstructured.Unstructured) bool {

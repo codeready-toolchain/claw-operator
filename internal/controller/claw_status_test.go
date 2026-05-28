@@ -316,6 +316,63 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			assert.Equal(t, clawv1alpha1.ConditionReasonConfigured, condition.Reason)
 		})
 
+		t.Run("should set Ready True when claw and proxy are ready and device-pairing is disabled", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
+
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			instance.Spec.Credentials = testCredentials()
+			instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+				DisableDevicePairing: boolPtr(true),
+			}
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			setDeploymentAvailable(t, ctx, getClawDeploymentName(testInstanceName), namespace)
+			setDeploymentAvailable(t, ctx, getProxyDeploymentName(testInstanceName), namespace)
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			updatedInstance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
+			require.NotNil(t, condition)
+			assert.Equal(t, metav1.ConditionTrue, condition.Status, "Ready should be True when claw+proxy are ready and device-pairing is disabled")
+		})
+
+		t.Run("should not set DevicePairingConfigured when device-pairing is disabled", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
+
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			instance.Spec.Credentials = testCredentials()
+			instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+				DisableDevicePairing: boolPtr(true),
+			}
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			updatedInstance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeDevicePairingConfigured)
+			assert.Nil(t, condition, "DevicePairingConfigured should not be set when device pairing is disabled")
+		})
+
 		t.Run("should keep Ready False when claw and proxy are ready but device-pairing is not", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
