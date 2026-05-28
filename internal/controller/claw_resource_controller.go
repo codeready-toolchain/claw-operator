@@ -1438,8 +1438,8 @@ func (r *ClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // user-owned Secrets, we scan Claw CRs for name references.
 func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context, obj client.Object) []reconcile.Request {
 	// Operator-managed secret — handled by Owns(), skip.
-	if ctrl := metav1.GetControllerOf(obj); ctrl != nil &&
-		ctrl.Kind == ClawResourceKind {
+	if owner := metav1.GetControllerOf(obj); owner != nil &&
+		owner.Kind == ClawResourceKind {
 		return nil
 	}
 
