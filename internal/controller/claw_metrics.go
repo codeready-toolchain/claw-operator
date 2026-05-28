@@ -176,8 +176,11 @@ service:
 	return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 }
 
-// injectMetricsConfig injects diagnostics.otel.metrics and endpoint into the
-// operator.json config map. Only sets if user hasn't already configured diagnostics.otel.
+// injectMetricsConfig injects diagnostics.otel config for the OTel Collector
+// sidecar. When the user hasn't set diagnostics.otel, it injects the base
+// endpoint. When the user has their own diagnostics.otel (e.g., for tracing
+// to Langfuse), it deep-merges only the sidecar-specific keys (metrics +
+// metricsEndpoint) so both paths work simultaneously.
 func injectMetricsConfig(config map[string]any, instance *clawv1alpha1.Claw) {
 	if !metricsEnabled(instance) {
 		return
@@ -189,13 +192,20 @@ func injectMetricsConfig(config map[string]any, instance *clawv1alpha1.Claw) {
 		config["diagnostics"] = diagnostics
 	}
 
-	if _, exists := diagnostics["otel"]; exists {
+	otel, _ := diagnostics["otel"].(map[string]any)
+	if otel == nil {
+		diagnostics["otel"] = map[string]any{
+			"metrics":  true,
+			"endpoint": "http://localhost:4318",
+		}
 		return
 	}
 
-	diagnostics["otel"] = map[string]any{
-		"metrics":  true,
-		"endpoint": "http://localhost:4318",
+	if _, set := otel["metrics"]; !set {
+		otel["metrics"] = true
+	}
+	if _, set := otel["metricsEndpoint"]; !set {
+		otel["metricsEndpoint"] = "http://localhost:4318"
 	}
 }
 

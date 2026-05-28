@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -407,6 +408,16 @@ type ServiceMonitorSpec struct {
 	Interval string `json:"interval,omitempty"`
 }
 
+// NetworkPolicySpec configures additional NetworkPolicy rules beyond
+// the operator's auto-generated defaults.
+type NetworkPolicySpec struct {
+	// AllowedEgress appends raw egress rules to the gateway NetworkPolicy.
+	// Use for targets the operator cannot auto-detect: tracing collectors,
+	// databases, webhooks, etc. Rules are appended to {instance}-egress.
+	// +optional
+	AllowedEgress []networkingv1.NetworkPolicyEgressRule `json:"allowedEgress,omitempty"`
+}
+
 // ClawSpec defines the desired state of Claw
 type ClawSpec struct {
 	// Config provides user-supplied OpenClaw configuration and merge behavior.
@@ -441,6 +452,11 @@ type ClawSpec struct {
 	// Metrics configures Prometheus metrics collection via an OTel Collector sidecar.
 	// +optional
 	Metrics *MetricsSpec `json:"metrics,omitempty"`
+
+	// NetworkPolicy configures additional NetworkPolicy rules.
+	// MCP server egress rules are auto-generated from spec.mcpServers URLs.
+	// +optional
+	NetworkPolicy *NetworkPolicySpec `json:"networkPolicy,omitempty"`
 
 	// Plugins lists OpenClaw plugins to install via an init container before
 	// the gateway starts. Each entry is a package name (e.g. "@openclaw/matrix").
