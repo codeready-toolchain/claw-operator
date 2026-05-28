@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	"github.com/codeready-toolchain/claw-operator/internal/controller"
 	"github.com/codeready-toolchain/claw-operator/test/utils"
 )
 
@@ -349,11 +350,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
-				"--from-literal=api-key=test-api-key-value",
-				"-n", userNamespace)
-			_, err := utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create Secret")
+			createLabeledSecret(t, "gemini-api-key", userNamespace,
+				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
 			cmd = exec.Command("kubectl", "apply", "-f",
@@ -458,16 +456,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
-				"--from-literal=api-key=test-api-key-value",
-				"-n", userNamespace)
-			_, err := utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create Secret")
+			createLabeledSecret(t, "gemini-api-key", userNamespace,
+				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
 			cmd = exec.Command("kubectl", "apply", "-f",
 				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
-			_, err = utils.Run(t, cmd)
+			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("waiting for Claw ProxyConfigured condition")
@@ -589,16 +584,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
-				"--from-literal=api-key=test-gemini-key-value",
-				"-n", userNamespace)
-			_, err := utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create Secret")
+			createLabeledSecret(t, "gemini-api-key", userNamespace,
+				"--from-literal=api-key=test-gemini-key-value")
 
 			t.Log("applying the Claw CR")
 			cmd = exec.Command("kubectl", "apply", "-f",
 				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
-			_, err = utils.Run(t, cmd)
+			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("waiting for proxy deployment")
@@ -668,15 +660,12 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "llm-key-1",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "llm-key-1",
-				"--from-literal=api-key=first-api-key",
-				"-n", userNamespace)
-			_, err := utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create first Secret")
+			createLabeledSecret(t, "llm-key-1", userNamespace,
+				"--from-literal=api-key=first-api-key")
 
 			t.Log("creating Claw CR referencing first Secret")
 			crFile := filepath.Join("/tmp", "claw-e2e-test.yaml")
-			err = os.WriteFile(crFile, []byte(clawYAMLWithGemini("llm-key-1", "api-key")),
+			err := os.WriteFile(crFile, []byte(clawYAMLWithGemini("llm-key-1", "api-key")),
 				os.FileMode(0o644))
 			require.NoError(t, err)
 
@@ -720,11 +709,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd = exec.Command("kubectl", "delete", "secret", "llm-key-2",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "llm-key-2",
-				"--from-literal=api-key=second-api-key",
-				"-n", userNamespace)
-			_, err = utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create second Secret")
+			createLabeledSecret(t, "llm-key-2", userNamespace,
+				"--from-literal=api-key=second-api-key")
 
 			t.Log("updating Claw CR to reference the second Secret")
 			err = os.WriteFile(crFile, []byte(clawYAMLWithGemini("llm-key-2", "api-key")),
@@ -793,16 +779,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
-				"--from-literal=api-key=test-api-key-value",
-				"-n", userNamespace)
-			_, err := utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create Secret")
+			createLabeledSecret(t, "gemini-api-key", userNamespace,
+				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
 			cmd = exec.Command("kubectl", "apply", "-f",
 				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
-			_, err = utils.Run(t, cmd)
+			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("waiting for claw pod to reach Running")
@@ -856,16 +839,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
-				"--from-literal=api-key=test-api-key-value",
-				"-n", userNamespace)
-			_, err := utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create Secret")
+			createLabeledSecret(t, "gemini-api-key", userNamespace,
+				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
 			cmd = exec.Command("kubectl", "apply", "-f",
 				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
-			_, err = utils.Run(t, cmd)
+			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("waiting for Claw ProxyConfigured condition")
@@ -1006,21 +986,15 @@ spec:
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
-				"--from-literal=api-key=test-api-key-value",
-				"-n", userNamespace)
-			_, err := utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create credential Secret")
+			createLabeledSecret(t, "gemini-api-key", userNamespace,
+				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("creating the password Secret")
 			cmd = exec.Command("kubectl", "delete", "secret", "workshop-pw",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "workshop-pw",
-				"--from-literal=password=classroom-pass-e2e",
-				"-n", userNamespace)
-			_, err = utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create password Secret")
+			createLabeledSecret(t, "workshop-pw", userNamespace,
+				"--from-literal=password=classroom-pass-e2e")
 
 			t.Log("applying Claw CR with password auth mode")
 			crYAML := `apiVersion: claw.sandbox.redhat.com/v1alpha1
@@ -1042,7 +1016,7 @@ spec:
       provider: google
 `
 			crFile := filepath.Join("/tmp", "claw-e2e-password-auth.yaml")
-			err = os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
+			err := os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
 			require.NoError(t, err)
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
@@ -1127,16 +1101,13 @@ spec:
 			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", "gemini-api-key",
-				"--from-literal=api-key=test-api-key-value",
-				"-n", userNamespace)
-			_, err := utils.Run(t, cmd)
-			require.NoError(t, err, "Failed to create Secret")
+			createLabeledSecret(t, "gemini-api-key", userNamespace,
+				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR")
 			cmd = exec.Command("kubectl", "apply", "-f",
 				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
-			_, err = utils.Run(t, cmd)
+			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
 			t.Log("waiting for Claw Ready=True")
@@ -1329,11 +1300,8 @@ users:
 			cmd = exec.Command("kubectl", "delete", "secret", kubeSecretNm,
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "create", "secret", "generic", kubeSecretNm,
-				fmt.Sprintf("--from-file=kubeconfig=%s", kubeconfigFile),
-				"-n", userNamespace)
-			_, err = utils.Run(t, cmd)
-			require.NoError(t, err, "failed to create kubeconfig Secret")
+			createLabeledSecret(t, kubeSecretNm, userNamespace,
+				fmt.Sprintf("--from-file=kubeconfig=%s", kubeconfigFile))
 
 			// 8. Apply Claw CR with kubernetes credential
 			t.Log("applying Claw CR with kubernetes credential")
@@ -1572,6 +1540,23 @@ type tokenRequest struct {
 	Status struct {
 		Token string `json:"token"`
 	} `json:"status"`
+}
+
+// createLabeledSecret creates a Secret via kubectl and applies the instance
+// label so it is visible to the operator's label-filtered informer cache.
+// extraArgs are passed to `kubectl create secret generic` (e.g. --from-literal, --from-file).
+func createLabeledSecret(t *testing.T, name, namespace string, extraArgs ...string) {
+	t.Helper()
+	args := append([]string{"create", "secret", "generic", name, "-n", namespace}, extraArgs...)
+	cmd := exec.Command("kubectl", args...)
+	_, err := utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to create Secret %s", name)
+
+	cmd = exec.Command("kubectl", "label", "secret", name,
+		controller.InstanceLabelKey+"="+clawInstanceName,
+		"-n", namespace, "--overwrite")
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to label Secret %s", name)
 }
 
 func waitForPVCDeletion(t *testing.T) error {
