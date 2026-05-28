@@ -72,6 +72,10 @@ const (
 	// Gateway networking
 	gatewayPort              = 18789
 	gatewayLocalhostFallback = "http://localhost:18789"
+	// InstanceLabelKey is the label that identifies all resources managed by
+	// a specific Claw instance. Used for cache filtering and multi-instance
+	// discrimination.
+	InstanceLabelKey = "claw.sandbox.redhat.com/instance"
 
 	// Kubernetes resource kinds
 	RouteKind                 = "Route"
@@ -96,11 +100,24 @@ func sanitizeLabelValue(name string) string {
 	return name[:maxLen-9] + "-" + hash
 }
 
+// setInstanceLabel adds the claw.sandbox.redhat.com/instance label to a typed
+// Kubernetes object. Used for controller-managed resources created outside of
+// Kustomize (gateway secret, proxy CA, proxy ConfigMap, etc.) so they are
+// visible to the label-filtered informer cache.
+func setInstanceLabel(obj client.Object, instanceName string) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels[InstanceLabelKey] = sanitizeLabelValue(instanceName)
+	obj.SetLabels(labels)
+}
+
 // injectInstanceLabels adds the claw.sandbox.redhat.com/instance label to all resources
 // and injects it into Deployment/Service/NetworkPolicy selectors for multi-instance discrimination.
 // Resource names are already set via CLAW_INSTANCE_NAME template replacement in buildKustomizedObjects.
 func injectInstanceLabels(objects []*unstructured.Unstructured, instanceName string) error {
-	instanceLabel := "claw.sandbox.redhat.com/instance"
+	instanceLabel := InstanceLabelKey
 	labelValue := sanitizeLabelValue(instanceName)
 
 	for _, obj := range objects {
