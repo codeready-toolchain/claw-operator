@@ -32,7 +32,7 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
-func TestDevicePairingDeployment(t *testing.T) {
+func TestDevicePairingDeployment(t *testing.T) { //nolint:gocyclo
 
 	t.Run("buildKustomizedObjects excludes device-pairing resources when disableDevicePairing is true", func(t *testing.T) {
 		reconciler := createClawReconciler()
