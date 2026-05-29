@@ -566,7 +566,9 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Validate auth password Secret (if auth mode is "password")
 	if _, err := r.resolveAuthPassword(ctx, instance); err != nil {
 		logger.Error(err, "Failed to resolve auth password")
-		instance.Status.URL = ""
+		instance.Status.URL = "" //nolint:staticcheck // deprecated but still populated
+		instance.Status.GatewayURL = ""
+		instance.Status.DevicePairingURL = ""
 		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
 			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {

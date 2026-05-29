@@ -494,9 +494,19 @@ type ClawStatus struct {
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
+	// Deprecated: Use GatewayURL instead. Will be removed in a future version.
 	// URL is the HTTPS URL for accessing the Claw instance
 	// +optional
 	URL string `json:"url,omitempty"`
+
+	// GatewayURL is the HTTPS URL for accessing the Claw gateway, including the auth token fragment when applicable
+	// +optional
+	GatewayURL string `json:"gatewayURL,omitempty"`
+
+	// DevicePairingURL is the HTTPS URL for the device pairing application.
+	// Only populated when device pairing is enabled (disableDevicePairing is not true).
+	// +optional
+	DevicePairingURL string `json:"devicePairingURL,omitempty"`
 }
 
 // +kubebuilder:object:root=true

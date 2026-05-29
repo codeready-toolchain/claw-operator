@@ -688,8 +688,10 @@ func TestPasswordAuthModeReconciliation(t *testing.T) {
 
 		// In envtest without Route CRD, URL is empty since getRouteURL returns ""
 		// but the important thing is it does NOT contain #token=
-		assert.NotContains(t, updatedInstance.Status.URL, "#token=",
+		assert.NotContains(t, updatedInstance.Status.URL, "#token=", //nolint:staticcheck
 			"password mode URL should not contain token fragment")
+		assert.Equal(t, updatedInstance.Status.URL, updatedInstance.Status.GatewayURL, //nolint:staticcheck
+			"gatewayURL should equal url")
 	})
 }
 

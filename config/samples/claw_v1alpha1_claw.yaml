@@ -3,6 +3,8 @@ kind: Claw
 metadata:
   name: instance
 spec:
+  auth:
+    disableDevicePairing: false
   credentials:
     - name: gemini
       type: apiKey
