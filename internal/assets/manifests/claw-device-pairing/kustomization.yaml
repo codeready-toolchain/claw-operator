@@ -7,7 +7,7 @@ labels:
 
 resources:
   - serviceaccount.yaml
-  - clusterrole.yaml
+  - role.yaml
   - rolebinding.yaml
   - deployment.yaml
   - service.yaml

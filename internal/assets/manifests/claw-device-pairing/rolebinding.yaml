@@ -4,7 +4,7 @@ metadata:
   name: CLAW_INSTANCE_NAME-device-pairing
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: CLAW_INSTANCE_NAME-device-pairing
 subjects:
   - kind: ServiceAccount
