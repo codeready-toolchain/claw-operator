@@ -1,0 +1,231 @@
+# ADR-0017: Custom Provider Support
+
+**Status:** Implemented
+**Date:** 2026-05-29
+
+---
+
+## Problem
+
+The operator only accepts a hardcoded set of provider values (`google`, `anthropic`, `openai`, `openrouter`, `xai`) in `spec.credentials[].provider`. Additionally, `models.providers` is in the "always-win" tier — `injectProviders()` unconditionally replaces it, making it impossible for users to configure custom or self-hosted model endpoints via `spec.config.raw`.
+
+This blocks:
+- Self-hosted models (vLLM, Ollama, TGI, LiteLLM) running outside the cluster
+- Hosted providers not in the hardcoded list (Together AI, Fireworks, Groq, Cerebras, etc.)
+- The Dev Sandbox dashboard's "Custom / Self-Hosted" provider option
+
+---
+
+## Design
+
+Two complementary changes that together give full custom provider support:
+
+1. **Remove the `knownProviders` validation gate** — allow arbitrary `provider` strings on credentials, so that any credential with a `provider` value automatically generates both a proxy route and a `models.providers` entry.
+
+2. **Add `spec.customProviders` CRD field** — a typed, validated struct for custom OpenAI-compatible providers with explicit `baseUrl`, model list, and credential linkage. This is the primary interface for dashboards and GitOps.
+
+### How they compose
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                      Claw CR Spec                        │
+│                                                          │
+│  spec.credentials[] ─────────► Proxy routing             │
+│    (domain, type, secretRef)    (domain allowlist + auth)│
+│    provider: "custom-llm" ──┐                            │
+│                             │                            │
+│  spec.customProviders[] ────┼──► models.providers{}      │
+│    (baseUrl, models)        │    (OpenClaw model routing)│
+│    credentialRef ───────────┘                            │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Separation of concerns:**
+- `spec.credentials[]` answers: "Can traffic reach this domain? How is it authenticated?"
+- `spec.customProviders[]` answers: "How does OpenClaw talk to this model endpoint? What models does it serve?"
+
+When `spec.customProviders` is used, the credential does NOT need `provider` set — the custom provider config handles model routing, and the credential just handles proxy access.
+
+When `provider` is set directly on a credential (the quick path), `injectProviders()` auto-generates the `models.providers` entry — useful for quick `oc apply` workflows where the user doesn't want to declare a separate `customProviders` block.
+
+---
+
+## Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Provider validation | Remove `knownProviders` allowlist | Existing `resolveProviderDefaults()` already rejects unknown providers missing explicit `domain`/`type` — the allowlist was redundant gating |
+| Custom provider API | Dedicated `spec.customProviders` field | Typed, validated struct is dashboard-friendly and GitOps-friendly; avoids fighting the always-overwrite tier via `spec.config.raw` |
+| Wire format selection | Include optional `api` enum field | Negligible cost; covers Ollama native, Anthropic endpoints, and OpenAI Responses without falling back to raw config that fights the operator's overwrite behavior |
+| API enum values | `openai-completions`, `openai-responses`, `anthropic-messages`, `ollama` | Maps directly to OpenClaw's supported wire formats; forward-compatible (new values are non-breaking) |
+| Credential linkage | `credentialRef` string referencing `spec.credentials[].name` | Keeps credential management in one place; custom providers compose with existing proxy routing |
+| Duplicate detection | Controller rejects name collisions between `customProviders` and `credentials[].provider` | Prevents ambiguous provider routing |
+
+---
+
+## API Surface
+
+### `spec.customProviders[]`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string (pattern: `^[a-z][a-z0-9-]*$`) | Yes | Provider key in `models.providers` and model prefix (e.g., `my-vllm/model-name`) |
+| `baseUrl` | string (pattern: `^https?://`) | Yes | Full base URL for the OpenAI-compatible API endpoint |
+| `api` | enum | No | Wire format: `openai-completions` (default), `openai-responses`, `anthropic-messages`, `ollama` |
+| `credentialRef` | string | Yes | Name of a credential in `spec.credentials` that handles proxy routing |
+| `models` | array (min 1) | Yes | Models available on this endpoint |
+| `models[].name` | string | Yes | Model identifier as the endpoint knows it |
+| `models[].alias` | string | No | Display name shown in the model picker |
+
+### `spec.credentials[].provider` — relaxed
+
+The `provider` field becomes a free-form string. Known providers (`google`, `anthropic`, `openai`, `openrouter`, `xai`) still get auto-inferred defaults (domain, header). Unknown providers pass through with explicit `domain` and `type` required.
+
+---
+
+## Usage Examples
+
+### Quick path (arbitrary provider on credential)
+
+For power users doing `oc apply`, just set `provider` to an arbitrary value:
+
+```yaml
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: my-vllm
+      type: bearer
+      provider: my-vllm
+      domain: llm.mycompany.com
+      secretRef:
+        - name: vllm-key
+          key: api-key
+  config:
+    raw:
+      agents:
+        defaults:
+          model:
+            primary: my-vllm/qwen3-14b
+          models:
+            my-vllm/qwen3-14b:
+              alias: Qwen 3 14B
+```
+
+The operator generates:
+- Proxy route: `domain: llm.mycompany.com`, `injector: bearer`, `envVar: CRED_MY_VLLM`
+- Provider entry: `models.providers.my-vllm = {baseUrl: "https://llm.mycompany.com", apiKey: "placeholder"}`
+
+Limitation: `baseUrl` is `https://<domain>` (no path). Works for endpoints where the API is at the root. Custom provider IDs (not bundled in OpenClaw) also require user-specified models via `spec.config.raw` since the operator cannot auto-populate the provider's model catalog. Prefer `spec.customProviders` for custom endpoints — it handles both limitations.
+
+### Typed path (`spec.customProviders`)
+
+For dashboards and GitOps with full control over baseUrl:
+
+```yaml
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: my-vllm
+      type: bearer
+      domain: llm.mycompany.com
+      secretRef:
+        - name: vllm-key
+          key: api-key
+  customProviders:
+    - name: my-vllm
+      baseUrl: "https://llm.mycompany.com/v1"
+      credentialRef: my-vllm
+      models:
+        - name: qwen3-14b
+          alias: Qwen 3 14B
+        - name: llama-4-scout
+          alias: Llama 4 Scout
+```
+
+The operator generates:
+- Proxy route: `domain: llm.mycompany.com`, `injector: bearer`
+- Provider entry: `models.providers.my-vllm = {baseUrl: "https://llm.mycompany.com/v1", apiKey: "placeholder", models: [{id: "qwen3-14b", ...}, ...]}`
+- Model entries: `my-vllm/qwen3-14b`, `my-vllm/llama-4-scout` in the model picker
+- Primary set to `my-vllm/qwen3-14b` (first model of first provider if no catalog provider comes first)
+
+### No-auth self-hosted model (Ollama native API)
+
+```yaml
+spec:
+  credentials:
+    - name: local-ollama
+      type: none
+      domain: ollama.internal.corp
+  customProviders:
+    - name: ollama
+      baseUrl: "http://ollama.internal.corp:11434"
+      api: ollama
+      credentialRef: local-ollama
+      models:
+        - name: llama3.3
+          alias: Llama 3.3 70B
+```
+
+### Dashboard use case
+
+A web dashboard that manages Claw instances would create:
+
+```yaml
+# Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: llm-key
+stringData:
+  api-key: <user-provided-key>
+---
+# Claw CR
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: custom-llm
+      type: bearer
+      domain: "llm.mycompany.com"   # extracted from user's URL
+      secretRef:
+        - name: llm-key
+          key: api-key
+  customProviders:
+    - name: custom-llm
+      baseUrl: "https://llm.mycompany.com/v1"  # user's full URL
+      credentialRef: custom-llm
+      models:
+        - name: qwen3-14b           # user-provided model name
+          alias: "Qwen 3 14B"       # user-provided display name
+```
+
+---
+
+## Validation Rules
+
+| Rule | Enforcement |
+|------|-------------|
+| `customProviders[].name` must be unique across all custom providers | Controller validation |
+| `customProviders[].name` must not collide with any `credentials[].provider` | Controller validation |
+| `customProviders[].credentialRef` must reference an existing credential name | Controller validation |
+| `customProviders[].baseUrl` must be a valid HTTP(S) URL | CEL + controller |
+| `customProviders[].models` must have at least one entry | CEL |
+| Credentials with arbitrary `provider` still require explicit `domain` and `type` | Existing `resolveProviderDefaults()` logic |
+
+---
+
+## Backward Compatibility
+
+- Existing CRs with `provider: google`, `anthropic`, `openai`, `openrouter`, `xai` continue to work identically.
+- `resolveProviderDefaults()` still auto-infers domain/header for `google` and `anthropic` — this logic is untouched.
+- The only behavioral change: CRs with unknown `provider` values that previously failed validation will now succeed. This is purely additive.
+- `spec.customProviders` is optional with no default — existing CRs are unaffected.
