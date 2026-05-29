@@ -643,7 +643,9 @@ func TestDevicePairingReconciliation(t *testing.T) {
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-		err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName + "-device-pairing"}, &rbacv1.ClusterRole{})
-		assert.True(t, apierrors.IsNotFound(err), "legacy ClusterRole should be deleted after reconcile")
+		waitFor(t, timeout, interval, func() bool {
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName + "-device-pairing"}, &rbacv1.ClusterRole{})
+			return apierrors.IsNotFound(err)
+		}, "legacy ClusterRole should be deleted after reconcile")
 	})
 }

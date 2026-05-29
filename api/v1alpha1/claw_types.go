@@ -418,6 +418,62 @@ type NetworkPolicySpec struct {
 	AllowedEgress []networkingv1.NetworkPolicyEgressRule `json:"allowedEgress,omitempty"`
 }
 
+// CustomProviderAPI selects the wire format for a custom provider.
+// +kubebuilder:validation:Enum=openai-completions;openai-responses;anthropic-messages;ollama
+type CustomProviderAPI string
+
+const (
+	CustomProviderAPIOpenAICompletions CustomProviderAPI = "openai-completions"
+	CustomProviderAPIOpenAIResponses   CustomProviderAPI = "openai-responses"
+	CustomProviderAPIAnthropicMessages CustomProviderAPI = "anthropic-messages"
+	CustomProviderAPIOllama            CustomProviderAPI = "ollama"
+)
+
+// CustomModelEntry defines a single model on a custom provider.
+type CustomModelEntry struct {
+	// Name is the model identifier as the endpoint knows it (e.g., "qwen3-14b").
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Alias is the human-friendly display name shown in the model picker.
+	// +optional
+	Alias string `json:"alias,omitempty"`
+}
+
+// CustomProviderSpec defines a custom OpenAI-compatible model provider.
+type CustomProviderSpec struct {
+	// Name is the provider key used in models.providers and as the model prefix
+	// (e.g., "my-vllm" -> models are referenced as "my-vllm/model-name").
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]*$`
+	Name string `json:"name"`
+
+	// BaseUrl is the full base URL for the OpenAI-compatible API endpoint,
+	// including any path prefix (e.g., "https://llm.mycompany.com/v1").
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https?://`
+	BaseUrl string `json:"baseUrl"`
+
+	// API selects the wire format / request adapter OpenClaw uses when talking
+	// to this provider. Defaults to "openai-completions" (standard /v1/chat/completions).
+	// +optional
+	// +kubebuilder:validation:Enum=openai-completions;openai-responses;anthropic-messages;ollama
+	API CustomProviderAPI `json:"api,omitempty"`
+
+	// CredentialRef is the name of a credential in spec.credentials that
+	// handles proxy routing and authentication for this provider's domain.
+	// The referenced credential does not need provider set — this field
+	// establishes the linkage.
+	// +kubebuilder:validation:MinLength=1
+	CredentialRef string `json:"credentialRef"`
+
+	// Models lists the models available on this endpoint.
+	// Each model is registered in agents.defaults.models with the provider
+	// name prefix (e.g., "my-vllm/qwen3-14b").
+	// +kubebuilder:validation:MinItems=1
+	Models []CustomModelEntry `json:"models"`
+}
+
 // ClawSpec defines the desired state of Claw
 type ClawSpec struct {
 	// Config provides user-supplied OpenClaw configuration and merge behavior.
@@ -433,6 +489,12 @@ type ClawSpec struct {
 	// Credentials configures proxy credential injection per domain.
 	// +optional
 	Credentials []CredentialSpec `json:"credentials,omitempty"`
+
+	// CustomProviders declares custom OpenAI-compatible model providers.
+	// Each entry generates a models.providers entry and registers its models
+	// in the model picker. The referenced credential handles proxy routing.
+	// +optional
+	CustomProviders []CustomProviderSpec `json:"customProviders,omitempty"`
 
 	// McpServers declares MCP servers injected into OpenClaw's config.
 	// Map keys are server names as they appear in the mcp.servers config.

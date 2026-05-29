@@ -599,6 +599,57 @@ func TestGenerateProxyConfig(t *testing.T) {
 	})
 }
 
+func TestGenerateProxyConfigArbitraryProvider(t *testing.T) {
+	t.Run("should generate gateway fields for arbitrary provider string", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "custom-llm",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "my-vllm",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
+					Name: "secret",
+					Key:  "key",
+				}},
+				Domain: "llm.mycompany.com",
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "llm.mycompany.com")
+		assert.Equal(t, "bearer", route.Injector)
+		assert.Equal(t, "CRED_CUSTOM_LLM", route.EnvVar)
+		assert.Equal(t, "/custom-llm", route.PathPrefix)
+		assert.Equal(t, "https://llm.mycompany.com", route.Upstream)
+	})
+
+	t.Run("should not set gateway fields for credential without provider used by customProvider", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name: "my-cred",
+				Type: clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
+					Name: "secret",
+					Key:  "key",
+				}},
+				Domain: "llm.mycompany.com",
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "llm.mycompany.com")
+		assert.Empty(t, route.PathPrefix, "MITM-only credential should not have gateway path prefix")
+		assert.Empty(t, route.Upstream, "MITM-only credential should not have gateway upstream")
+	})
+}
+
 func TestBuiltinPassthroughDomains(t *testing.T) {
 	t.Run("should include clawhub.ai as none route with no credentials", func(t *testing.T) {
 		data, err := generateProxyConfig(nil, nil, nil)

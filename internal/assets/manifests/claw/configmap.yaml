@@ -283,7 +283,7 @@ data:
   PLATFORM.md: |
     ---
     name: platform
-    description: "Platform overview, proxy architecture, LLM provider model management, messaging channel integration, MCP server configuration, and web search/fetch."
+    description: "Platform overview, proxy architecture, LLM provider and custom provider model management, messaging channel integration, MCP server configuration, and web search/fetch."
     ---
 
     # Platform Overview
@@ -372,14 +372,17 @@ data:
 
     ## How providers map to models
 
-    The model picker list is dynamically generated from the providers configured in the
-    Claw CR `spec.credentials`. Each credential with a `provider` field contributes its
-    known models to the picker. Models appear as `{provider}/{model-name}` (e.g.,
-    `google/gemini-3.5-flash`, `anthropic/claude-sonnet-4-6`).
+    The model picker list is dynamically generated from providers configured in the
+    Claw CR. There are two ways providers contribute models:
 
-    Supported providers with automatic model catalogs: `google`, `anthropic`, `openai`, `xai`.
-    Meta-providers like `openrouter` do not have a hardcoded catalog — users can add
-    specific models manually.
+    1. **Built-in catalog providers** — credentials with `provider` set to a known
+       value (`google`, `anthropic`, `openai`, `xai`) auto-populate the picker with
+       the operator's hardcoded model catalog.
+    2. **Custom providers** — `spec.customProviders` entries explicitly declare the
+       `baseUrl`, wire format, and model list for any OpenAI-compatible endpoint.
+
+    Models appear as `{provider}/{model-name}` (e.g., `google/gemini-3.5-flash`,
+    `my-vllm/qwen3-14b`).
 
     ## Models are operator-managed
 
@@ -387,9 +390,97 @@ data:
     means models stay in sync with the configured credentials automatically:
     - Add a provider credential → its models appear in the picker
     - Remove a provider credential → its models disappear from the picker
+    - Add a custom provider → its declared models appear in the picker
 
     You do NOT need to manually edit the model list when providers change. The operator
     handles it.
+
+    ## Custom / self-hosted providers (`spec.customProviders`)
+
+    For self-hosted models (vLLM, Ollama, TGI, LiteLLM) or hosted providers not in
+    the built-in catalog (Together AI, Fireworks, Groq, etc.), users declare custom
+    providers in the Claw CR:
+
+    ```yaml
+    spec:
+      credentials:
+        - name: my-vllm
+          type: bearer
+          domain: llm.mycompany.com
+          secretRef:
+            - name: vllm-key
+              key: api-key
+      customProviders:
+        - name: my-vllm
+          baseUrl: "https://llm.mycompany.com/v1"
+          credentialRef: my-vllm
+          models:
+            - name: qwen3-14b
+              alias: Qwen 3 14B
+            - name: llama-4-scout
+              alias: Llama 4 Scout
+    ```
+
+    Key fields:
+    - **`name`** — provider key and model prefix (e.g., `my-vllm/qwen3-14b`).
+      Must be lowercase alphanumeric with hyphens (`^[a-z][a-z0-9-]*$`).
+    - **`baseUrl`** — full URL for the API endpoint, including any path prefix.
+    - **`credentialRef`** — name of a credential in `spec.credentials` that handles
+      proxy routing for this provider's domain. The credential does NOT need
+      `provider` set — `customProviders` handles model routing separately.
+    - **`api`** (optional) — wire format adapter. Values:
+      - `openai-completions` (default) — standard `/v1/chat/completions`
+      - `openai-responses` — OpenAI Responses API
+      - `anthropic-messages` — Anthropic Messages API
+      - `ollama` — Ollama native API
+    - **`models`** — list of models with `name` (API model ID) and optional
+      `alias` (display name in the picker).
+
+    ### No-auth self-hosted model (Ollama)
+
+    ```yaml
+    spec:
+      credentials:
+        - name: local-ollama
+          type: none
+          domain: ollama.internal.corp
+      customProviders:
+        - name: ollama
+          baseUrl: "http://ollama.internal.corp:11434"
+          api: ollama
+          credentialRef: local-ollama
+          models:
+            - name: llama3.3
+              alias: Llama 3.3 70B
+    ```
+
+    ### Quick path (arbitrary provider on credential)
+
+    For power users, setting `provider` to an arbitrary string on a credential also
+    works. The operator auto-generates a `models.providers` entry with
+    `baseUrl: "https://<domain>"`. However, models must be added manually via
+    `spec.config.raw` since the operator has no built-in catalog for unknown providers.
+    Prefer `spec.customProviders` for custom endpoints — it handles both `baseUrl`
+    customization and model registration in one place.
+
+    ```yaml
+    spec:
+      credentials:
+        - name: my-vllm
+          type: bearer
+          provider: my-vllm
+          domain: llm.mycompany.com
+          secretRef:
+            - name: vllm-key
+              key: api-key
+      config:
+        raw:
+          agents:
+            defaults:
+              models:
+                my-vllm/qwen3-14b:
+                  alias: Qwen 3 14B
+    ```
 
     ## User customization
 
@@ -419,7 +510,8 @@ data:
     ## Primary model
 
     The primary (default) model is set by the operator on first run based on the first
-    configured provider. Users can override the default primary via:
+    configured provider (either a built-in catalog provider or the first custom
+    provider's first model). Users can override the default primary via:
 
     1. **`spec.config.raw`** — set `agents.defaults.model.primary` in the CR. This wins
        over the operator's catalog default.
@@ -837,7 +929,7 @@ data:
     **Always-win (operator sets unconditionally — `spec.config.raw` cannot override):**
     - `gateway.mode`, `gateway.bind`, `gateway.port`, `gateway.controlUi.enabled`
     - `gateway.auth.*`, `gateway.controlUi.dangerouslyDisableDeviceAuth`
-    - `models.providers` (driven by `spec.credentials`)
+    - `models.providers` (driven by `spec.credentials` and `spec.customProviders`)
     - `channels.*` (driven by `spec.credentials[].channel`)
     - `mcp.servers` (driven by `spec.mcpServers`)
     - `tools.web.*` (driven by `spec.webSearch`/`spec.webFetch`)

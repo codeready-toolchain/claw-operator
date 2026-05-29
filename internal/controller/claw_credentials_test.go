@@ -306,6 +306,182 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 	})
 }
 
+// --- Custom provider validation tests ---
+
+func TestCustomProviderValidation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("should succeed with arbitrary provider string on credential", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "custom-llm",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "my-vllm",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: aiModelSecret, Key: aiModelSecretKey},
+				},
+				Domain: "llm.mycompany.com",
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+	})
+
+	t.Run("should fail when customProvider credentialRef is missing", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "my-cred",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: aiModelSecret, Key: aiModelSecretKey}},
+				Domain:    "llm.mycompany.com",
+			},
+		}
+		instance.Spec.CustomProviders = []clawv1alpha1.CustomProviderSpec{
+			{
+				Name:          "my-vllm",
+				BaseUrl:       "https://llm.mycompany.com/v1",
+				CredentialRef: "nonexistent",
+				Models:        []clawv1alpha1.CustomModelEntry{{Name: "qwen3-14b"}},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `credentialRef "nonexistent" not found`)
+	})
+
+	t.Run("should fail when customProvider name duplicates credential provider", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "gemini",
+				Type:      clawv1alpha1.CredentialTypeAPIKey,
+				Provider:  "google",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: aiModelSecret, Key: aiModelSecretKey}},
+				Domain:    ".googleapis.com",
+				APIKey:    &clawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"},
+			},
+		}
+		instance.Spec.CustomProviders = []clawv1alpha1.CustomProviderSpec{
+			{
+				Name:          "google",
+				BaseUrl:       "https://my-google-proxy.com/v1",
+				CredentialRef: "gemini",
+				Models:        []clawv1alpha1.CustomModelEntry{{Name: "custom-model"}},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `name conflicts with provider on credential`)
+	})
+
+	t.Run("should fail when customProvider names are duplicated", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "my-cred",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: aiModelSecret, Key: aiModelSecretKey}},
+				Domain:    "llm.mycompany.com",
+			},
+		}
+		instance.Spec.CustomProviders = []clawv1alpha1.CustomProviderSpec{
+			{
+				Name:          "my-vllm",
+				BaseUrl:       "https://llm.mycompany.com/v1",
+				CredentialRef: "my-cred",
+				Models:        []clawv1alpha1.CustomModelEntry{{Name: "model-a"}},
+			},
+			{
+				Name:          "my-vllm",
+				BaseUrl:       "https://llm2.mycompany.com/v1",
+				CredentialRef: "my-cred",
+				Models:        []clawv1alpha1.CustomModelEntry{{Name: "model-b"}},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `duplicate name`)
+	})
+
+	t.Run("should succeed with valid customProvider referencing existing credential", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "my-cred",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: aiModelSecret, Key: aiModelSecretKey}},
+				Domain:    "llm.mycompany.com",
+			},
+		}
+		instance.Spec.CustomProviders = []clawv1alpha1.CustomProviderSpec{
+			{
+				Name:          "my-vllm",
+				BaseUrl:       "https://llm.mycompany.com/v1",
+				CredentialRef: "my-cred",
+				Models:        []clawv1alpha1.CustomModelEntry{{Name: "qwen3-14b", Alias: "Qwen 3 14B"}},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+	})
+}
+
 // --- Secret reference and proxy deployment wiring tests ---
 
 func TestOpenClawCredentialSecretReference(t *testing.T) {

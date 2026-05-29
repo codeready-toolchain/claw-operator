@@ -1,6 +1,6 @@
 # User Guide
 
-This guide covers configuring Claw instances: LLM providers, external services, messaging channels, MCP servers, web search, web fetch, application configuration, workspace files, skills, and custom domains. Each section walks through creating the necessary Secrets and Claw CR configuration.
+This guide covers configuring Claw instances: LLM providers (built-in and custom/self-hosted), external services, messaging channels, MCP servers, web search, web fetch, application configuration, workspace files, skills, and custom domains. Each section walks through creating the necessary Secrets and Claw CR configuration.
 
 All examples assume you have set your target namespace:
 
@@ -11,6 +11,8 @@ export NS=my-claw-namespace
 ## LLM Providers
 
 For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers defaults where possible — you only need `name`, `type`, `secretRef`, and `provider`. For `google` and `anthropic`, the `domain` and `apiKey` header are fully inferred. For `openai` and `xai`, you must provide a `domain` explicitly since they use `type: bearer`. You can still override any inferred field if needed (e.g., routing through a custom proxy).
+
+The `provider` field also accepts arbitrary strings for custom/self-hosted providers — see [Custom / Self-Hosted Providers](#custom--self-hosted-providers) below. For the best experience with custom endpoints, use `spec.customProviders` which provides full control over `baseUrl`, wire format, and model registration.
 
 > **Adding credentials incrementally:** Each `oc apply` of the Claw CR **replaces** the entire `credentials` list. When adding a new provider, include all existing credentials in the YAML — otherwise they will be removed. You can retrieve your current configuration with `oc get claw instance -n $NS -o yaml` and add the new entry to the list.
 
@@ -286,6 +288,186 @@ The operator uses two different routing strategies depending on the provider:
 3. The MITM proxy transparently intercepts GCP auth traffic and injects real OAuth2 tokens from the service account
 
 This ensures **real GCP credentials stay on the proxy pod only** — the application pod never sees them.
+
+## Custom / Self-Hosted Providers
+
+For self-hosted models (vLLM, Ollama, TGI, LiteLLM) or hosted providers not in the built-in catalog (Together AI, Fireworks, Groq, Cerebras, etc.), use `spec.customProviders` to declare the endpoint, wire format, and available models. The operator generates `models.providers` entries and registers models in the picker automatically.
+
+Each custom provider references a credential in `spec.credentials` that handles proxy routing and authentication for the provider's domain. The credential does not need a `provider` field — `customProviders` handles model routing separately.
+
+> **Adding credentials incrementally:** Each `oc apply` of the Claw CR **replaces** the entire `credentials` and `customProviders` lists. When adding a new provider, include all existing entries in the YAML. Retrieve your current configuration with `oc get claw instance -n $NS -o yaml`.
+
+### vLLM / OpenAI-Compatible Endpoint
+
+A typical self-hosted vLLM or OpenAI-compatible endpoint using bearer token auth.
+
+**1. Create the Secret:**
+
+```sh
+oc create secret generic vllm-key \
+  --from-literal=api-key=YOUR_VLLM_API_KEY \
+  -n $NS
+```
+
+**2. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: my-vllm
+      type: bearer
+      domain: llm.mycompany.com
+      secretRef:
+        - name: vllm-key
+          key: api-key
+  customProviders:
+    - name: my-vllm
+      baseUrl: "https://llm.mycompany.com/v1"
+      credentialRef: my-vllm
+      models:
+        - name: qwen3-14b
+          alias: Qwen 3 14B
+        - name: llama-4-scout
+          alias: Llama 4 Scout
+EOF
+```
+
+The operator generates:
+- A proxy route for `llm.mycompany.com` with bearer token injection
+- A `models.providers.my-vllm` entry with `baseUrl: "https://llm.mycompany.com/v1"`
+- Model picker entries: `my-vllm/qwen3-14b` and `my-vllm/llama-4-scout`
+
+### Ollama (No Auth)
+
+Self-hosted Ollama using the native Ollama wire format. Since Ollama typically runs without authentication, use `type: none` to allowlist the domain without credential injection.
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: local-ollama
+      type: none
+      domain: ollama.internal.corp
+  customProviders:
+    - name: ollama
+      baseUrl: "http://ollama.internal.corp:11434"
+      api: ollama
+      credentialRef: local-ollama
+      models:
+        - name: llama3.3
+          alias: Llama 3.3 70B
+        - name: qwen3-8b
+          alias: Qwen 3 8B
+EOF
+```
+
+### Wire Format (`api` field)
+
+The `api` field selects the wire format / request adapter OpenClaw uses when talking to the provider. If omitted, it defaults to `openai-completions`.
+
+| Value | Protocol | Use for |
+|-------|----------|---------|
+| `openai-completions` (default) | `/v1/chat/completions` | vLLM, LiteLLM, Together AI, Fireworks, Groq, most OpenAI-compatible APIs |
+| `openai-responses` | OpenAI Responses API | Endpoints implementing the newer OpenAI Responses format |
+| `anthropic-messages` | Anthropic Messages API | Self-hosted or proxied Anthropic-compatible APIs |
+| `ollama` | Ollama native API | Ollama servers |
+
+### `customProviders` Field Reference
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Provider key and model prefix. Must match `^[a-z][a-z0-9-]*$`. Models appear as `{name}/{model}` in the picker. |
+| `baseUrl` | Yes | Full API endpoint URL including path prefix (e.g., `https://llm.mycompany.com/v1`). |
+| `credentialRef` | Yes | Name of a credential in `spec.credentials` that handles proxy routing for this provider's domain. |
+| `models` | Yes | List of models (at least one). Each has a `name` (API model ID) and optional `alias` (display name). |
+| `api` | No | Wire format adapter. Default: `openai-completions`. See table above. |
+
+### Combining with Built-in Providers
+
+Custom providers work alongside built-in providers in the same Claw instance:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: anthropic
+      type: apiKey
+      secretRef:
+        - name: anthropic-api-key
+          key: api-key
+      provider: anthropic
+    - name: my-vllm
+      type: bearer
+      domain: llm.mycompany.com
+      secretRef:
+        - name: vllm-key
+          key: api-key
+  customProviders:
+    - name: my-vllm
+      baseUrl: "https://llm.mycompany.com/v1"
+      credentialRef: my-vllm
+      models:
+        - name: qwen3-14b
+          alias: Qwen 3 14B
+EOF
+```
+
+The model picker shows both built-in Anthropic models (`anthropic/claude-sonnet-4-6`, etc.) and the custom model (`my-vllm/qwen3-14b`).
+
+### Quick Path (Arbitrary Provider on Credential)
+
+For power users, setting `provider` to an arbitrary string on a credential also works without `spec.customProviders`. The operator auto-generates a `models.providers` entry with `baseUrl: "https://<domain>"`. However, the operator has no built-in catalog for unknown providers, so models must be added manually via `spec.config.raw`:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: groq
+      type: bearer
+      provider: groq
+      domain: api.groq.com
+      secretRef:
+        - name: groq-key
+          key: api-key
+  config:
+    raw:
+      agents:
+        defaults:
+          model:
+            primary: groq/llama-4-scout-17b-16e-instruct
+          models:
+            groq/llama-4-scout-17b-16e-instruct:
+              alias: Llama 4 Scout
+EOF
+```
+
+This approach is simpler for quick `oc apply` workflows but has limitations: `baseUrl` is always `https://<domain>` (no custom path), and models must be specified separately in `spec.config.raw`. For full control, prefer `spec.customProviders`.
+
+### Validation Rules
+
+The controller rejects the CR (condition = `Ready=False`) if:
+
+- `customProviders[].name` is not unique across all custom providers
+- `customProviders[].name` collides with any `credentials[].provider` value
+- `customProviders[].credentialRef` does not match a credential name in `spec.credentials`
+- `customProviders[].models` is empty
 
 ## Kubernetes API Access
 
