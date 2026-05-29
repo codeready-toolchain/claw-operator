@@ -1350,7 +1350,7 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 	sb.WriteString("You have access to Kubernetes/OpenShift clusters. Both `kubectl` and `oc` are\n")
 	sb.WriteString("available and your KUBECONFIG is pre-configured — authentication is handled\n")
 	sb.WriteString("transparently by the proxy.\n\n")
-	sb.WriteString("Available contexts:\n")
+	sb.WriteString("## Available contexts\n\n")
 
 	for _, ctx := range allContexts {
 		entry := fmt.Sprintf("- `%s` (cluster: %s", ctx.Name, ctx.Cluster)
@@ -1364,9 +1364,20 @@ func injectKubernetesSkill(objects []*unstructured.Unstructured, resolvedCreds [
 		sb.WriteString(entry + "\n")
 	}
 
-	sb.WriteString("\nWhen the user asks about deployments, pods, services, routes, builds, logs,\n")
-	sb.WriteString("or anything cluster-related, use kubectl/oc directly to help them.\n\n")
-	sb.WriteString("Do not attempt to manage tokens, certificates, or kubeconfig yourself.\n")
+	sb.WriteString("\n## How to use\n\n")
+	sb.WriteString("Use kubectl/oc directly to help the user with deployments, pods, services,\n")
+	sb.WriteString("routes, builds, logs, or any cluster resource. Inspection commands (get,\n")
+	sb.WriteString("describe, logs, events) are always safe to run proactively.\n\n")
+	sb.WriteString("## Access scope\n\n")
+	sb.WriteString("Your access is governed by RBAC. The configured namespace(s) above are your\n")
+	sb.WriteString("primary workspace. Some cluster-scoped resources (e.g., StorageClasses, CRDs,\n")
+	sb.WriteString("ClusterRoles) may be readable. Other namespaces are not accessible.\n\n")
+	sb.WriteString("If a command fails with Forbidden, explain the limitation clearly and suggest\n")
+	sb.WriteString("alternatives within scope.\n\n")
+	sb.WriteString("## Rules\n\n")
+	sb.WriteString("- Confirm before destructive operations (delete, scale to zero, rollback).\n")
+	sb.WriteString("- Do not attempt to manage tokens, certificates, or kubeconfig yourself.\n")
+	sb.WriteString("- Do not try to escalate privileges or create ClusterRoleBindings.\n")
 
 	configMapName := getConfigMapName(instanceName)
 	for _, obj := range objects {
