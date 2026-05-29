@@ -409,7 +409,7 @@ func TestCustomProviderValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), `name conflicts with provider on credential`)
 	})
 
-	t.Run("should fail when customProvider names are duplicated", func(t *testing.T) {
+	t.Run("should reject duplicate customProvider names at admission", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
@@ -440,6 +440,34 @@ func TestCustomProviderValidation(t *testing.T) {
 				Models:        []clawv1alpha1.CustomModelEntry{{Name: "model-b"}},
 			},
 		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "API server should reject duplicate customProvider names via listType=map")
+		assert.Contains(t, err.Error(), "Duplicate value")
+	})
+
+	t.Run("should fail when credential names are duplicated", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "my-cred",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: aiModelSecret, Key: aiModelSecretKey}},
+				Domain:    "llm.mycompany.com",
+			},
+			{
+				Name:      "my-cred",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: aiModelSecret, Key: aiModelSecretKey}},
+				Domain:    "llm2.mycompany.com",
+			},
+		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
 		reconciler := createClawReconciler()
@@ -447,7 +475,7 @@ func TestCustomProviderValidation(t *testing.T) {
 			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
 		})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), `duplicate name`)
+		assert.Contains(t, err.Error(), `credential "my-cred": duplicate name`)
 	})
 
 	t.Run("should succeed with valid customProvider referencing existing credential", func(t *testing.T) {

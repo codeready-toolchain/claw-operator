@@ -626,7 +626,7 @@ func TestGenerateProxyConfigArbitraryProvider(t *testing.T) {
 		assert.Equal(t, "https://llm.mycompany.com", route.Upstream)
 	})
 
-	t.Run("should not set gateway fields for credential without provider used by customProvider", func(t *testing.T) {
+	t.Run("should not set gateway fields for MITM-only credential without provider field", func(t *testing.T) {
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
 				Name: "my-cred",

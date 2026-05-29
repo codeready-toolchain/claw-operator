@@ -494,6 +494,8 @@ type ClawSpec struct {
 	// Each entry generates a models.providers entry and registers its models
 	// in the model picker. The referenced credential handles proxy routing.
 	// +optional
+	// +listType=map
+	// +listMapKey=name
 	CustomProviders []CustomProviderSpec `json:"customProviders,omitempty"`
 
 	// McpServers declares MCP servers injected into OpenClaw's config.

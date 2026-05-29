@@ -275,9 +275,12 @@ func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instanc
 		resolved = append(resolved, rc)
 	}
 
-	// Validate customProviders references and uniqueness
+	// Validate credential name uniqueness before customProviders resolution
 	credNames := map[string]bool{}
 	for _, cred := range instance.Spec.Credentials {
+		if credNames[cred.Name] {
+			errs = append(errs, fmt.Errorf("credential %q: duplicate name", cred.Name))
+		}
 		credNames[cred.Name] = true
 	}
 	seenCustomProviders := map[string]bool{}
