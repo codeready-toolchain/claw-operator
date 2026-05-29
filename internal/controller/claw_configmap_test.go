@@ -260,6 +260,41 @@ func TestInjectProviders(t *testing.T) {
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "google")
 	})
+
+	t.Run("should inject companion providers for openai", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "openai",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "openai",
+				Domain:   "api.openai.com",
+			},
+		}
+
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "openai")
+		require.Contains(t, providers, "openai-codex", "companion provider should be injected")
+		codex := providers["openai-codex"].(map[string]any)
+		openai := providers["openai"].(map[string]any)
+		assert.Equal(t, openai["baseUrl"], codex["baseUrl"])
+		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", codex["apiKey"])
+	})
+
+	t.Run("should reject explicit credential that collides with companion provider", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "codex", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "openai-codex", Domain: "api.openai.com"},
+			{Name: "openai", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "openai", Domain: "api.openai.com"},
+		}
+
+		err := injectProviders(config, testClawWithCredentials(credentials))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate provider")
+		assert.Contains(t, err.Error(), "openai-codex")
+	})
 }
 
 // --- Model catalog injection tests ---

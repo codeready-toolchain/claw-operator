@@ -57,6 +57,13 @@ var knownAPIKeyProviders = map[string]apiKeyProviderDefault{
 	"anthropic": {Domain: "api.anthropic.com", Header: "x-api-key"},
 }
 
+// companionProviders maps a primary provider to additional provider entries that
+// OpenClaw requires. Some models (e.g., gpt-5.x) are routed through a different
+// internal provider name; the companion entry ensures credentials are available.
+var companionProviders = map[string][]string{
+	"openai": {"openai-codex"},
+}
+
 // resolveProviderDefaults fills in missing Domain and APIKey fields for known providers.
 // Explicit values are preserved (escape hatch). Returns an error if required fields
 // are still missing after applying defaults (unknown provider without domain/apiKey).
