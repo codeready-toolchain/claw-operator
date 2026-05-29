@@ -376,7 +376,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
-		assert.Equal(t, "google/gemini-3.1-pro-preview", model["primary"])
+		assert.Equal(t, "google/gemini-3.5-flash", model["primary"])
 	})
 
 	t.Run("primary set from first provider with catalog", func(t *testing.T) {
@@ -485,9 +485,9 @@ func TestInjectModelCatalog(t *testing.T) {
 		fallbacks, ok := model["fallbacks"].([]any)
 		require.True(t, ok, "fallbacks should be set")
 		require.Len(t, fallbacks, len(modelCatalog["google"])-1, "fallbacks should contain all non-primary models")
-		assert.Equal(t, "google/"+modelCatalog["google"][1].Name, fallbacks[0])
-		assert.Equal(t, "google/"+modelCatalog["google"][2].Name, fallbacks[1])
-		assert.Equal(t, "google/"+modelCatalog["google"][3].Name, fallbacks[2])
+		for i, fb := range fallbacks {
+			assert.Equal(t, "google/"+modelCatalog["google"][i+1].Name, fb)
+		}
 	})
 
 	t.Run("fallbacks use same provider as primary", func(t *testing.T) {
@@ -572,6 +572,319 @@ func TestInjectModelCatalog(t *testing.T) {
 		assert.Contains(t, models, "google/gemini-3.1-flash-lite")
 		proEntry := models["google/gemini-3.1-pro-preview"].(map[string]any)
 		assert.Equal(t, "My Pro Override", proEntry["alias"])
+	})
+}
+
+// --- Custom provider injection tests ---
+
+func testClawWithCustomProviders(
+	credentials []clawv1alpha1.CredentialSpec,
+	customProviders []clawv1alpha1.CustomProviderSpec,
+) *clawv1alpha1.Claw {
+	claw := testClawWithCredentials(credentials)
+	claw.Spec.CustomProviders = customProviders
+	return claw
+}
+
+func TestInjectCustomProviders(t *testing.T) {
+	t.Run("should inject custom provider with correct baseUrl and models", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{Name: "my-cred", Type: clawv1alpha1.CredentialTypeBearer, Domain: "llm.mycompany.com"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name:          "my-vllm",
+					BaseUrl:       "https://llm.mycompany.com/v1",
+					CredentialRef: "my-cred",
+					Models: []clawv1alpha1.CustomModelEntry{
+						{Name: "qwen3-14b"},
+						{Name: "llama-4-scout"},
+					},
+				},
+			},
+		)
+
+		require.NoError(t, injectProviders(config, claw))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "my-vllm")
+		vllm := providers["my-vllm"].(map[string]any)
+		assert.Equal(t, "https://llm.mycompany.com/v1", vllm["baseUrl"])
+		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", vllm["apiKey"])
+		models := vllm["models"].([]any)
+		require.Len(t, models, 2)
+		assert.Equal(t, "qwen3-14b", models[0].(map[string]any)["id"])
+		assert.Equal(t, "llama-4-scout", models[1].(map[string]any)["id"])
+	})
+
+	t.Run("should set api field when specified", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{Name: "ollama", Type: clawv1alpha1.CredentialTypeNone, Domain: "ollama.internal.corp"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name:          "ollama",
+					BaseUrl:       "http://ollama.internal.corp:11434",
+					API:           clawv1alpha1.CustomProviderAPIOllama,
+					CredentialRef: "ollama",
+					Models:        []clawv1alpha1.CustomModelEntry{{Name: "llama3.3"}},
+				},
+			},
+		)
+
+		require.NoError(t, injectProviders(config, claw))
+
+		providers := providersFromConfig(t, config)
+		ollama := providers["ollama"].(map[string]any)
+		assert.Equal(t, "ollama", ollama["api"])
+	})
+
+	t.Run("should omit api field when not specified", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{Name: "my-cred", Type: clawv1alpha1.CredentialTypeBearer, Domain: "llm.mycompany.com"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name:          "my-vllm",
+					BaseUrl:       "https://llm.mycompany.com/v1",
+					CredentialRef: "my-cred",
+					Models:        []clawv1alpha1.CustomModelEntry{{Name: "model-a"}},
+				},
+			},
+		)
+
+		require.NoError(t, injectProviders(config, claw))
+
+		providers := providersFromConfig(t, config)
+		vllm := providers["my-vllm"].(map[string]any)
+		assert.NotContains(t, vllm, "api")
+	})
+
+	t.Run("should coexist with credential-based providers", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{
+					Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google",
+					Domain: "generativelanguage.googleapis.com",
+				},
+				{Name: "my-cred", Type: clawv1alpha1.CredentialTypeBearer, Domain: "llm.mycompany.com"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name:          "my-vllm",
+					BaseUrl:       "https://llm.mycompany.com/v1",
+					CredentialRef: "my-cred",
+					Models:        []clawv1alpha1.CustomModelEntry{{Name: "model-a"}},
+				},
+			},
+		)
+
+		require.NoError(t, injectProviders(config, claw))
+
+		providers := providersFromConfig(t, config)
+		assert.Contains(t, providers, "google")
+		assert.Contains(t, providers, "my-vllm")
+	})
+
+	t.Run("should reject duplicate between credential provider and customProvider", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{
+					Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google",
+					Domain: "generativelanguage.googleapis.com",
+				},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name:          "google",
+					BaseUrl:       "https://my-proxy.com/v1",
+					CredentialRef: "gemini",
+					Models:        []clawv1alpha1.CustomModelEntry{{Name: "model-a"}},
+				},
+			},
+		)
+
+		err := injectProviders(config, claw)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate provider")
+		assert.Contains(t, err.Error(), "google")
+	})
+
+	t.Run("should inject multiple custom providers", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{Name: "cred-a", Type: clawv1alpha1.CredentialTypeBearer, Domain: "llm-a.corp"},
+				{Name: "cred-b", Type: clawv1alpha1.CredentialTypeNone, Domain: "ollama.corp"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name: "vllm", BaseUrl: "https://llm-a.corp/v1", CredentialRef: "cred-a",
+					Models: []clawv1alpha1.CustomModelEntry{{Name: "qwen3-14b"}},
+				},
+				{
+					Name: "ollama", BaseUrl: "http://ollama.corp:11434", CredentialRef: "cred-b",
+					API:    clawv1alpha1.CustomProviderAPIOllama,
+					Models: []clawv1alpha1.CustomModelEntry{{Name: "llama3.3"}},
+				},
+			},
+		)
+
+		require.NoError(t, injectProviders(config, claw))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "vllm")
+		require.Contains(t, providers, "ollama")
+		assert.Equal(t, "https://llm-a.corp/v1", providers["vllm"].(map[string]any)["baseUrl"])
+		assert.Equal(t, "http://ollama.corp:11434", providers["ollama"].(map[string]any)["baseUrl"])
+		assert.Equal(t, "ollama", providers["ollama"].(map[string]any)["api"])
+		assert.NotContains(t, providers["vllm"].(map[string]any), "api")
+	})
+}
+
+func TestInjectModelCatalogCustomProviders(t *testing.T) {
+	t.Run("should add custom provider models to catalog", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{Name: "my-cred", Type: clawv1alpha1.CredentialTypeBearer, Domain: "llm.mycompany.com"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name:          "my-vllm",
+					BaseUrl:       "https://llm.mycompany.com/v1",
+					CredentialRef: "my-cred",
+					Models: []clawv1alpha1.CustomModelEntry{
+						{Name: "qwen3-14b", Alias: "Qwen 3 14B"},
+						{Name: "llama-4-scout"},
+					},
+				},
+			},
+		)
+
+		injectModelCatalog(config, claw)
+
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+		require.Contains(t, models, "my-vllm/qwen3-14b")
+		require.Contains(t, models, "my-vllm/llama-4-scout")
+		assert.Equal(t, "Qwen 3 14B", models["my-vllm/qwen3-14b"].(map[string]any)["alias"])
+		assert.Equal(t, "llama-4-scout", models["my-vllm/llama-4-scout"].(map[string]any)["alias"])
+	})
+
+	t.Run("should set primary from custom provider when no catalog provider exists", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{Name: "my-cred", Type: clawv1alpha1.CredentialTypeBearer, Domain: "llm.mycompany.com"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name:          "my-vllm",
+					BaseUrl:       "https://llm.mycompany.com/v1",
+					CredentialRef: "my-cred",
+					Models: []clawv1alpha1.CustomModelEntry{
+						{Name: "qwen3-14b"},
+						{Name: "llama-4-scout"},
+					},
+				},
+			},
+		)
+
+		injectModelCatalog(config, claw)
+
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		assert.Equal(t, "my-vllm/qwen3-14b", model["primary"])
+	})
+
+	t.Run("should prefer built-in catalog primary over custom provider", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{
+					Name: "gemini", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google",
+					Domain: "generativelanguage.googleapis.com",
+				},
+				{Name: "my-cred", Type: clawv1alpha1.CredentialTypeBearer, Domain: "llm.mycompany.com"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name:          "my-vllm",
+					BaseUrl:       "https://llm.mycompany.com/v1",
+					CredentialRef: "my-cred",
+					Models:        []clawv1alpha1.CustomModelEntry{{Name: "qwen3-14b"}},
+				},
+			},
+		)
+
+		injectModelCatalog(config, claw)
+
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		assert.Equal(t, "google/gemini-3.5-flash", model["primary"])
+
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+		assert.Contains(t, models, "my-vllm/qwen3-14b")
+		assert.Contains(t, models, "google/gemini-3.1-pro-preview")
+	})
+
+	t.Run("should register models from multiple custom providers", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{Name: "cred-a", Type: clawv1alpha1.CredentialTypeBearer, Domain: "llm-a.corp"},
+				{Name: "cred-b", Type: clawv1alpha1.CredentialTypeNone, Domain: "ollama.corp"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name: "vllm", BaseUrl: "https://llm-a.corp/v1", CredentialRef: "cred-a",
+					Models: []clawv1alpha1.CustomModelEntry{{Name: "qwen3-14b", Alias: "Qwen 3"}},
+				},
+				{
+					Name: "ollama", BaseUrl: "http://ollama.corp:11434", CredentialRef: "cred-b",
+					Models: []clawv1alpha1.CustomModelEntry{{Name: "llama3.3", Alias: "Llama 3.3"}},
+				},
+			},
+		)
+
+		injectModelCatalog(config, claw)
+
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+		assert.Contains(t, models, "vllm/qwen3-14b")
+		assert.Contains(t, models, "ollama/llama3.3")
+		assert.Equal(t, "Qwen 3", models["vllm/qwen3-14b"].(map[string]any)["alias"])
+		assert.Equal(t, "Llama 3.3", models["ollama/llama3.3"].(map[string]any)["alias"])
+
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		assert.Equal(t, "vllm/qwen3-14b", model["primary"], "primary should come from first custom provider")
+	})
+
+	t.Run("should use model name as alias when alias is empty", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		claw := testClawWithCustomProviders(
+			[]clawv1alpha1.CredentialSpec{
+				{Name: "my-cred", Type: clawv1alpha1.CredentialTypeBearer, Domain: "llm.mycompany.com"},
+			},
+			[]clawv1alpha1.CustomProviderSpec{
+				{
+					Name:          "my-vllm",
+					BaseUrl:       "https://llm.mycompany.com/v1",
+					CredentialRef: "my-cred",
+					Models:        []clawv1alpha1.CustomModelEntry{{Name: "qwen3-14b"}},
+				},
+			},
+		)
+
+		injectModelCatalog(config, claw)
+
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+		assert.Equal(t, "qwen3-14b", models["my-vllm/qwen3-14b"].(map[string]any)["alias"])
 	})
 }
 
@@ -668,6 +981,69 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 		assert.Empty(t, providers, "providers should be empty for MITM-only credentials")
 	})
 
+	t.Run("should inject customProviders into ConfigMap after reconciliation", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "my-cred",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: aiModelSecret, Key: aiModelSecretKey}},
+				Domain:    "llm.mycompany.com",
+			},
+		}
+		instance.Spec.CustomProviders = []clawv1alpha1.CustomProviderSpec{
+			{
+				Name:          "my-vllm",
+				BaseUrl:       "https://llm.mycompany.com/v1",
+				CredentialRef: "my-cred",
+				Models: []clawv1alpha1.CustomModelEntry{
+					{Name: "qwen3-14b", Alias: "Qwen 3 14B"},
+					{Name: "llama-4-scout", Alias: "Llama 4 Scout"},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getConfigMapName(testInstanceName),
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "my-vllm")
+		vllm := providers["my-vllm"].(map[string]any)
+		assert.Equal(t, "https://llm.mycompany.com/v1", vllm["baseUrl"])
+		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", vllm["apiKey"])
+		models := vllm["models"].([]any)
+		require.Len(t, models, 2)
+		assert.Equal(t, "qwen3-14b", models[0].(map[string]any)["id"])
+
+		agents := config["agents"].(map[string]any)["defaults"].(map[string]any)
+		catalogModels := agents["models"].(map[string]any)
+		assert.Contains(t, catalogModels, "my-vllm/qwen3-14b")
+		assert.Contains(t, catalogModels, "my-vllm/llama-4-scout")
+		assert.Equal(t, "Qwen 3 14B", catalogModels["my-vllm/qwen3-14b"].(map[string]any)["alias"])
+
+		model := agents["model"].(map[string]any)
+		assert.Equal(t, "my-vllm/qwen3-14b", model["primary"])
+	})
+
 	t.Run("should inject model catalog into operator.json after reconciliation", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		createClawInstance(t, ctx, testInstanceName, namespace)
@@ -691,10 +1067,10 @@ func TestOpenClawDynamicProviders(t *testing.T) {
 
 		catalogModels, hasModels := defaults["models"].(map[string]any)
 		require.True(t, hasModels, "operator.json should contain agents.defaults.models")
-		assert.Contains(t, catalogModels, "google/gemini-3.1-pro-preview", "should have google model from catalog")
+		assert.Contains(t, catalogModels, "google/gemini-3.5-flash", "should have google model from catalog")
 
 		model := defaults["model"].(map[string]any)
-		assert.Equal(t, "google/gemini-3.1-pro-preview", model["primary"], "primary should be first google model")
+		assert.Equal(t, "google/gemini-3.5-flash", model["primary"], "primary should be first google model")
 		fallbacks, ok := model["fallbacks"].([]any)
 		assert.True(t, ok, "fallbacks should be set")
 		assert.NotEmpty(t, fallbacks, "fallbacks should contain remaining catalog models")

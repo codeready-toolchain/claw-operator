@@ -192,15 +192,6 @@ func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, inst
 	return nil
 }
 
-// Known provider values that the controller can resolve to gateway routes.
-var knownProviders = map[string]bool{
-	"google":     true,
-	"anthropic":  true,
-	"openai":     true,
-	"openrouter": true,
-	"xai":        true,
-}
-
 // resolveCredentials validates all credential entries and returns resolved credentials
 // with parsed data (e.g., kubeconfig). Checks that referenced Secrets exist, that
 // type-specific configuration is present, and that provider values are valid and unique.
@@ -254,9 +245,6 @@ func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instanc
 
 		// Validate provider field
 		if cred.Provider != "" {
-			if !knownProviders[cred.Provider] {
-				errs = append(errs, fmt.Errorf("credential %q: unknown provider %q (known: google, anthropic, openai, openrouter, xai)", cred.Name, cred.Provider))
-			}
 			if existing, seen := seenProviders[cred.Provider]; seen {
 				errs = append(errs, fmt.Errorf("credential %q: duplicate provider %q (already used by credential %q)", cred.Name, cred.Provider, existing))
 			} else {
@@ -285,6 +273,33 @@ func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instanc
 		}
 
 		resolved = append(resolved, rc)
+	}
+
+	// Validate credential name uniqueness before customProviders resolution
+	credNames := map[string]bool{}
+	for _, cred := range instance.Spec.Credentials {
+		if credNames[cred.Name] {
+			errs = append(errs, fmt.Errorf("credential %q: duplicate name", cred.Name))
+		}
+		credNames[cred.Name] = true
+	}
+	seenCustomProviders := map[string]bool{}
+	for _, cp := range instance.Spec.CustomProviders {
+		if seenCustomProviders[cp.Name] {
+			errs = append(errs, fmt.Errorf("customProvider %q: duplicate name", cp.Name))
+		} else {
+			seenCustomProviders[cp.Name] = true
+		}
+		if existing, seen := seenProviders[cp.Name]; seen {
+			errs = append(errs, fmt.Errorf(
+				"customProvider %q: name conflicts with provider on credential %q",
+				cp.Name, existing))
+		}
+		if !credNames[cp.CredentialRef] {
+			errs = append(errs, fmt.Errorf(
+				"customProvider %q: credentialRef %q not found in spec.credentials",
+				cp.Name, cp.CredentialRef))
+		}
 	}
 
 	if len(errs) > 0 {

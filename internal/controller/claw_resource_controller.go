@@ -1216,6 +1216,27 @@ func injectProviders(config map[string]any, instance *clawv1alpha1.Claw) error {
 		}
 	}
 
+	for _, cp := range instance.Spec.CustomProviders {
+		if _, exists := providers[cp.Name]; exists {
+			return fmt.Errorf(
+				"duplicate provider %q: conflicts between credentials and customProviders",
+				cp.Name)
+		}
+		models := make([]any, len(cp.Models))
+		for i, m := range cp.Models {
+			models[i] = map[string]any{"id": m.Name, "name": m.Name}
+		}
+		entry := map[string]any{
+			"baseUrl": cp.BaseUrl,
+			"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
+			"models":  models,
+		}
+		if cp.API != "" {
+			entry["api"] = string(cp.API)
+		}
+		providers[cp.Name] = entry
+	}
+
 	ensureNestedMap(config, "models")["providers"] = providers
 	return nil
 }
@@ -1257,6 +1278,20 @@ func injectModelCatalog(config map[string]any, instance *clawv1alpha1.Claw) {
 			for _, m := range catalog[1:] {
 				catalogFallbacks = append(catalogFallbacks, providerKey+"/"+m.Name)
 			}
+		}
+	}
+
+	for _, cp := range instance.Spec.CustomProviders {
+		for _, m := range cp.Models {
+			key := cp.Name + "/" + m.Name
+			alias := m.Alias
+			if alias == "" {
+				alias = m.Name
+			}
+			catalogModels[key] = map[string]any{"alias": alias}
+		}
+		if catalogPrimary == "" && len(cp.Models) > 0 {
+			catalogPrimary = cp.Name + "/" + cp.Models[0].Name
 		}
 	}
 

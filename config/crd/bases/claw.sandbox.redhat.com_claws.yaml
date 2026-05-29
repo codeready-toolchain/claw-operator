@@ -308,6 +308,86 @@ spec:
                       inferred defaults
                     rule: self.type != 'oauth2' || has(self.oauth2) || has(self.channel)
                 type: array
+              customProviders:
+                description: |-
+                  CustomProviders declares custom OpenAI-compatible model providers.
+                  Each entry generates a models.providers entry and registers its models
+                  in the model picker. The referenced credential handles proxy routing.
+                items:
+                  description: CustomProviderSpec defines a custom OpenAI-compatible
+                    model provider.
+                  properties:
+                    api:
+                      allOf:
+                      - enum:
+                        - openai-completions
+                        - openai-responses
+                        - anthropic-messages
+                        - ollama
+                      - enum:
+                        - openai-completions
+                        - openai-responses
+                        - anthropic-messages
+                        - ollama
+                      description: |-
+                        API selects the wire format / request adapter OpenClaw uses when talking
+                        to this provider. Defaults to "openai-completions" (standard /v1/chat/completions).
+                      type: string
+                    baseUrl:
+                      description: |-
+                        BaseUrl is the full base URL for the OpenAI-compatible API endpoint,
+                        including any path prefix (e.g., "https://llm.mycompany.com/v1").
+                      minLength: 1
+                      pattern: ^https?://
+                      type: string
+                    credentialRef:
+                      description: |-
+                        CredentialRef is the name of a credential in spec.credentials that
+                        handles proxy routing and authentication for this provider's domain.
+                        The referenced credential does not need provider set — this field
+                        establishes the linkage.
+                      minLength: 1
+                      type: string
+                    models:
+                      description: |-
+                        Models lists the models available on this endpoint.
+                        Each model is registered in agents.defaults.models with the provider
+                        name prefix (e.g., "my-vllm/qwen3-14b").
+                      items:
+                        description: CustomModelEntry defines a single model on a
+                          custom provider.
+                        properties:
+                          alias:
+                            description: Alias is the human-friendly display name
+                              shown in the model picker.
+                            type: string
+                          name:
+                            description: Name is the model identifier as the endpoint
+                              knows it (e.g., "qwen3-14b").
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      minItems: 1
+                      type: array
+                    name:
+                      description: |-
+                        Name is the provider key used in models.providers and as the model prefix
+                        (e.g., "my-vllm" -> models are referenced as "my-vllm/model-name").
+                      minLength: 1
+                      pattern: ^[a-z][a-z0-9-]*$
+                      type: string
+                  required:
+                  - baseUrl
+                  - credentialRef
+                  - models
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               idle:
                 default: false
                 description: |-
