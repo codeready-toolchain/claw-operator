@@ -24,7 +24,9 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,7 +34,7 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
-func TestDevicePairingDeployment(t *testing.T) { //nolint:gocyclo
+func TestDevicePairingDeployment(t *testing.T) {
 
 	t.Run("buildKustomizedObjects excludes device-pairing resources when disableDevicePairing is true", func(t *testing.T) {
 		reconciler := createClawReconciler()
@@ -271,74 +273,6 @@ func TestDevicePairingDeployment(t *testing.T) { //nolint:gocyclo
 		assert.Equal(t, testInstanceName, clawEnvMap["value"], "CLAW_INSTANCE should be the instance name after template replacement")
 	})
 
-	t.Run("device-pairing Role is namespace-scoped with correct rules", func(t *testing.T) {
-		reconciler := createClawReconciler()
-		instance := testClawWithCredentials(testCredentials())
-		objects, err := reconciler.buildKustomizedObjects(instance)
-		require.NoError(t, err)
-
-		roleName := testInstanceName + "-device-pairing"
-		var dpRole *unstructured.Unstructured
-		for _, obj := range objects {
-			if obj.GetKind() == "Role" && obj.GetName() == roleName {
-				dpRole = obj
-				break
-			}
-		}
-		require.NotNil(t, dpRole, "device-pairing Role not found")
-
-		// Verify no ClusterRole exists
-		for _, obj := range objects {
-			if obj.GetKind() == "ClusterRole" && obj.GetName() == roleName {
-				t.Errorf("unexpected ClusterRole %s — should be a namespace-scoped Role", roleName)
-			}
-		}
-
-		rules, found, err := unstructured.NestedSlice(dpRole.Object, "rules")
-		require.NoError(t, err)
-		require.True(t, found, "rules should be present")
-		require.Len(t, rules, 1)
-
-		rule, ok := rules[0].(map[string]any)
-		require.True(t, ok)
-
-		apiGroups, _, _ := unstructured.NestedStringSlice(rule, "apiGroups")
-		assert.Equal(t, []string{"claw.sandbox.redhat.com"}, apiGroups)
-
-		resources, _, _ := unstructured.NestedStringSlice(rule, "resources")
-		assert.Equal(t, []string{"clawdevicepairingrequests"}, resources)
-
-		verbs, _, _ := unstructured.NestedStringSlice(rule, "verbs")
-		assert.Equal(t, []string{"create", "get"}, verbs)
-	})
-
-	t.Run("device-pairing RoleBinding references Role not ClusterRole", func(t *testing.T) {
-		reconciler := createClawReconciler()
-		instance := testClawWithCredentials(testCredentials())
-		objects, err := reconciler.buildKustomizedObjects(instance)
-		require.NoError(t, err)
-
-		rbName := testInstanceName + "-device-pairing"
-		var dpRB *unstructured.Unstructured
-		for _, obj := range objects {
-			if obj.GetKind() == "RoleBinding" && obj.GetName() == rbName {
-				dpRB = obj
-				break
-			}
-		}
-		require.NotNil(t, dpRB, "device-pairing RoleBinding not found")
-
-		roleRefKind, found, err := unstructured.NestedString(dpRB.Object, "roleRef", "kind")
-		require.NoError(t, err)
-		require.True(t, found)
-		assert.Equal(t, "Role", roleRefKind, "roleRef.kind should be Role, not ClusterRole")
-
-		roleRefName, found, err := unstructured.NestedString(dpRB.Object, "roleRef", "name")
-		require.NoError(t, err)
-		require.True(t, found)
-		assert.Equal(t, rbName, roleRefName)
-	})
-
 	t.Run("device-pairing resources have app.kubernetes.io/name label", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials(testCredentials())
@@ -360,6 +294,73 @@ func TestDevicePairingDeployment(t *testing.T) { //nolint:gocyclo
 			}
 		}
 	})
+}
+
+func TestDevicePairingRBACRole(t *testing.T) {
+	reconciler := createClawReconciler()
+	instance := testClawWithCredentials(testCredentials())
+	objects, err := reconciler.buildKustomizedObjects(instance)
+	require.NoError(t, err)
+
+	roleName := testInstanceName + "-device-pairing"
+	var dpRole *unstructured.Unstructured
+	for _, obj := range objects {
+		if obj.GetKind() == "Role" && obj.GetName() == roleName {
+			dpRole = obj
+			break
+		}
+	}
+	require.NotNil(t, dpRole, "device-pairing Role not found")
+
+	for _, obj := range objects {
+		if obj.GetKind() == "ClusterRole" && obj.GetName() == roleName {
+			t.Errorf("unexpected ClusterRole %s — should be a namespace-scoped Role", roleName)
+		}
+	}
+
+	rules, found, err := unstructured.NestedSlice(dpRole.Object, "rules")
+	require.NoError(t, err)
+	require.True(t, found, "rules should be present")
+	require.Len(t, rules, 1)
+
+	rule, ok := rules[0].(map[string]any)
+	require.True(t, ok)
+
+	apiGroups, _, _ := unstructured.NestedStringSlice(rule, "apiGroups")
+	assert.Equal(t, []string{"claw.sandbox.redhat.com"}, apiGroups)
+
+	resources, _, _ := unstructured.NestedStringSlice(rule, "resources")
+	assert.Equal(t, []string{"clawdevicepairingrequests"}, resources)
+
+	verbs, _, _ := unstructured.NestedStringSlice(rule, "verbs")
+	assert.Equal(t, []string{"create", "get"}, verbs)
+}
+
+func TestDevicePairingRBACRoleBinding(t *testing.T) {
+	reconciler := createClawReconciler()
+	instance := testClawWithCredentials(testCredentials())
+	objects, err := reconciler.buildKustomizedObjects(instance)
+	require.NoError(t, err)
+
+	rbName := testInstanceName + "-device-pairing"
+	var dpRB *unstructured.Unstructured
+	for _, obj := range objects {
+		if obj.GetKind() == "RoleBinding" && obj.GetName() == rbName {
+			dpRB = obj
+			break
+		}
+	}
+	require.NotNil(t, dpRB, "device-pairing RoleBinding not found")
+
+	roleRefKind, found, err := unstructured.NestedString(dpRB.Object, "roleRef", "kind")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "Role", roleRefKind, "roleRef.kind should be Role, not ClusterRole")
+
+	roleRefName, found, err := unstructured.NestedString(dpRB.Object, "roleRef", "name")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, rbName, roleRefName)
 }
 
 func TestDevicePairingReconciliation(t *testing.T) {
@@ -611,5 +612,38 @@ func TestDevicePairingReconciliation(t *testing.T) {
 				ownerRef.Controller != nil &&
 				*ownerRef.Controller
 		}, "device-pairing ServiceAccount should have correct owner reference")
+	})
+
+	t.Run("should delete legacy device-pairing ClusterRole on reconcile", func(t *testing.T) {
+		const resourceName = testInstanceName
+		ctx := context.Background()
+
+		t.Cleanup(func() {
+			legacyCR := &rbacv1.ClusterRole{}
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: resourceName + "-device-pairing"}, legacyCR)
+			_ = k8sClient.Delete(ctx, legacyCR)
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		legacyCR := &rbacv1.ClusterRole{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: resourceName + "-device-pairing",
+			},
+			Rules: []rbacv1.PolicyRule{
+				{
+					APIGroups: []string{"claw.sandbox.redhat.com"},
+					Resources: []string{"clawdevicepairingrequests"},
+					Verbs:     []string{"create", "get"},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, legacyCR), "failed to create legacy ClusterRole")
+
+		createClawInstance(t, ctx, resourceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: resourceName + "-device-pairing"}, &rbacv1.ClusterRole{})
+		assert.True(t, apierrors.IsNotFound(err), "legacy ClusterRole should be deleted after reconcile")
 	})
 }

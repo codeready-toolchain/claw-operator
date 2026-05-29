@@ -36,3 +36,14 @@ When device pairing is disabled or the Claw instance is deleted, the cleanup fun
 #### Scenario: Cleanup handles missing Role gracefully
 - **WHEN** the cleanup function runs and the Role does not exist
 - **THEN** the cleanup SHALL succeed without error (NotFound errors are ignored)
+
+### Requirement: Legacy ClusterRole is cleaned up on upgrade
+On every reconcile, the controller SHALL attempt to delete the legacy ClusterRole named `{instance}-device-pairing` that was created by previous versions of the operator. This runs unconditionally regardless of whether device pairing is enabled or disabled.
+
+#### Scenario: Legacy ClusterRole exists from a previous operator version
+- **WHEN** the operator reconciles a Claw instance and a ClusterRole named `{instance}-device-pairing` exists
+- **THEN** the ClusterRole SHALL be deleted
+
+#### Scenario: Legacy ClusterRole does not exist
+- **WHEN** the operator reconciles a Claw instance and no ClusterRole named `{instance}-device-pairing` exists
+- **THEN** the reconcile SHALL proceed without error (NotFound errors are ignored)

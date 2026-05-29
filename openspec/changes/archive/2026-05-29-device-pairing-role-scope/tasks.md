@@ -17,8 +17,15 @@
 - [x] 3.1 Update the kubebuilder RBAC marker to reference `roles` instead of `clusterroles` (verify no other code path requires `clusterroles` first)
 - [x] 3.2 Run `make manifests` to regenerate RBAC and CRD manifests
 
-## 4. Validation
+## 4. Legacy ClusterRole Cleanup
 
-- [x] 4.1 Run `make build` to verify compilation
-- [x] 4.2 Run `make lint` to check for lint issues
-- [x] 4.3 Run `make test` to verify existing tests pass
+- [x] 4.1 Add `cleanupLegacyDevicePairingClusterRole` function that deletes the legacy ClusterRole `{instance}-device-pairing` (NotFound errors ignored)
+- [x] 4.2 Call `cleanupLegacyDevicePairingClusterRole` unconditionally in `Reconcile` before the device-pairing disable check
+- [x] 4.3 Add kubebuilder RBAC marker for `clusterroles` with `get;delete` verbs
+- [x] 4.4 Run `make manifests` to regenerate RBAC
+
+## 5. Validation
+
+- [ ] 5.1 Run `make build` to verify compilation
+- [ ] 5.2 Run `make lint` to check for lint issues
+- [ ] 5.3 Run `make test` to verify existing tests pass

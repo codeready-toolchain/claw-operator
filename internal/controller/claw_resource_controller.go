@@ -407,6 +407,7 @@ type ClawResourceReconciler struct {
 	ImagePullPolicy    string
 }
 
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws,verbs=get;list;watch
 // +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws/status,verbs=get;update;patch
@@ -451,6 +452,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := r.Status().Update(ctx, instance); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to persist Idle condition removal: %w", err)
 		}
+	}
+
+	// Delete legacy ClusterRole left by pre-Role versions of the operator
+	if err := r.cleanupLegacyDevicePairingClusterRole(ctx, instance.Name); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to clean up legacy device-pairing ClusterRole: %w", err)
 	}
 
 	// Clean up device-pairing resources if device pairing is now disabled
@@ -1109,6 +1115,25 @@ func newDevicePairingRoleUnstructured(instanceName, ns string) *unstructured.Uns
 	u.SetName(instanceName + "-device-pairing")
 	u.SetNamespace(ns)
 	return u
+}
+
+func (r *ClawResourceReconciler) cleanupLegacyDevicePairingClusterRole(ctx context.Context, instanceName string) error {
+	logger := log.FromContext(ctx)
+	legacyCR := &unstructured.Unstructured{}
+	legacyCR.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "rbac.authorization.k8s.io",
+		Version: "v1",
+		Kind:    "ClusterRole",
+	})
+	legacyCR.SetName(instanceName + "-device-pairing")
+	if err := r.Delete(ctx, legacyCR); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete legacy device-pairing ClusterRole %q: %w", legacyCR.GetName(), err)
+	}
+	logger.Info("Deleted legacy device-pairing ClusterRole", "name", legacyCR.GetName())
+	return nil
 }
 
 // injectRouteHostIntoDevicePairingRoute replaces the OPENCLAW_ROUTE_HOST placeholder
