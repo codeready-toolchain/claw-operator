@@ -270,6 +270,8 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 			instance.Status.GatewayURL = routeURL
 			if !shouldDisableDevicePairing(instance.Spec.Auth) {
 				instance.Status.DevicePairingURL = buildDevicePairingURL(routeURL, "")
+			} else {
+				instance.Status.DevicePairingURL = "" // probably overkill, but just in case
 			}
 		} else {
 			token := r.getGatewayToken(ctx, instance.Namespace, instance.Name)
@@ -278,6 +280,8 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 			instance.Status.GatewayURL = gatewayURL
 			if !shouldDisableDevicePairing(instance.Spec.Auth) {
 				instance.Status.DevicePairingURL = buildDevicePairingURL(routeURL, token)
+			} else {
+				instance.Status.DevicePairingURL = "" // probably overkill, but just in case
 			}
 		}
 	} else {

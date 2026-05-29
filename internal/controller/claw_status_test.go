@@ -373,6 +373,43 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			assert.Nil(t, condition, "DevicePairingConfigured should not be set when device pairing is disabled")
 		})
 
+		t.Run("should clear stale DevicePairingURL when device pairing is later disabled", func(t *testing.T) {
+			t.Cleanup(func() {
+				deleteAndWaitAllResources(t, namespace)
+			})
+
+			// 1. Create instance with device pairing enabled (default)
+			createClawInstance(t, ctx, resourceName, namespace)
+			reconciler := createClawReconciler()
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			// 2. Make all deployments ready (including device-pairing)
+			setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			// 3. Simulate a stale DevicePairingURL from a previous reconcile
+			// (in envtest there's no Route CRD so URLs are empty; inject a stale value directly)
+			updatedInstance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+			updatedInstance.Status.DevicePairingURL = "https://stale-host/integration/device-pairing/#token=stale"
+			require.NoError(t, k8sClient.Status().Update(ctx, updatedInstance))
+
+			// 4. Disable device pairing
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+			updatedInstance.Spec.Auth = &clawv1alpha1.AuthSpec{
+				DisableDevicePairing: boolPtr(true),
+			}
+			require.NoError(t, k8sClient.Update(ctx, updatedInstance))
+
+			// 5. Reconcile again
+			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+			// 6. Verify DevicePairingURL is cleared
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+			assert.Empty(t, updatedInstance.Status.DevicePairingURL,
+				"DevicePairingURL should be cleared when device pairing is disabled")
+		})
+
 		t.Run("should keep Ready False when claw and proxy are ready but device-pairing is not", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)

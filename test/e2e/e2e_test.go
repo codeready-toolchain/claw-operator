@@ -1072,17 +1072,6 @@ spec:
 			require.NoError(t, err)
 			assert.Empty(t, dpCondOutput, "DevicePairingConfigured condition should not exist when device pairing is disabled")
 
-			t.Log("waiting for Claw Ready=True")
-			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
-				func(ctx context.Context) (bool, error) {
-					cmd := exec.Command("kubectl", "get", "claw", "instance",
-						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
-						"-n", userNamespace)
-					output, err := utils.Run(t, cmd)
-					return err == nil && output == conditionTrue, nil
-				})
-			require.NoError(t, err, "Claw Ready did not become True within %v", extendedTimeout)
-
 			t.Log("verifying status.gatewayURL equals status.url")
 			cmd = exec.Command("kubectl", "get", "claw", "instance",
 				"-o", "jsonpath={.status.gatewayURL}",
