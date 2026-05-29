@@ -1204,6 +1204,9 @@ func injectProviders(config map[string]any, instance *clawv1alpha1.Claw) error {
 			}
 			providers[cred.Provider] = entry
 			for _, companion := range companionProviders[cred.Provider] {
+				if _, exists := providers[companion]; exists {
+					return fmt.Errorf("duplicate provider %q (companion of %q) in credentials", companion, cred.Provider)
+				}
 				providers[companion] = map[string]any{
 					"baseUrl": info.Upstream + info.BasePath,
 					"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
