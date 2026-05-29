@@ -25,12 +25,27 @@ The controller SHALL NOT call `injectRouteHostIntoDevicePairingRoute()` or attem
 - **THEN** the controller SHALL skip the `injectRouteHostIntoDevicePairingRoute()` call
 - **THEN** the controller SHALL skip the `applyRouteByName()` call for the device-pairing Route
 
+### Requirement: Device pairing resources are recreated when re-enabled
+When `spec.auth.disableDevicePairing` is toggled from `true` back to `false`, the controller SHALL recreate all device-pairing resources through the normal Kustomize build and server-side apply flow.
+
+#### Scenario: Re-enable device pairing after disable
+- **WHEN** a Claw CR has `spec.auth.disableDevicePairing: true` and the device-pairing resources do not exist
+- **AND** the user patches `spec.auth.disableDevicePairing` to `false`
+- **THEN** the controller SHALL create a Deployment named `{instance}-device-pairing`
+- **THEN** the controller SHALL create a Service named `{instance}-device-pairing`
+- **THEN** the controller SHALL create a ServiceAccount named `{instance}-device-pairing`
+
+#### Scenario: Re-enable after field removal
+- **WHEN** a Claw CR has `spec.auth.disableDevicePairing: true` and the device-pairing resources do not exist
+- **AND** the user removes the `disableDevicePairing` field entirely (leaving auth mode as token)
+- **THEN** the controller SHALL create all device-pairing resources as normal
+
 ### Requirement: Previously deployed device-pairing resources are cleaned up
 When device pairing transitions from enabled to disabled, the controller SHALL delete any previously-deployed device-pairing resources to avoid leaving orphaned resources in the cluster.
 
 #### Scenario: Cleanup on disable toggle
 - **WHEN** a Claw CR previously had device pairing enabled (resources exist) and `spec.auth.disableDevicePairing` is changed to `true`
-- **THEN** the controller SHALL delete the device-pairing Deployment, Service, ServiceAccount, RoleBinding, and Route
+- **THEN** the controller SHALL delete the device-pairing Deployment, Service, ServiceAccount, ClusterRole, RoleBinding, and Route
 - **THEN** NotFound errors during deletion SHALL be silently ignored (idempotent)
 
 #### Scenario: Cleanup is idempotent

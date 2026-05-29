@@ -392,6 +392,86 @@ func TestDevicePairingReconciliation(t *testing.T) {
 		}, "device-pairing Deployment should be deleted after disabling")
 	})
 
+	t.Run("should recreate device-pairing resources when toggled back to false", func(t *testing.T) {
+		const resourceName = testInstanceName
+		ctx := context.Background()
+
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = resourceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = testCredentials()
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+			DisableDevicePairing: boolPtr(true),
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		// Verify device-pairing resources do NOT exist
+		dpDeployment := &appsv1.Deployment{}
+		err := k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getDevicePairingDeploymentName(resourceName),
+			Namespace: namespace,
+		}, dpDeployment)
+		assert.True(t, apierrors.IsNotFound(err),
+			"device-pairing Deployment should not exist when disabled")
+
+		dpService := &corev1.Service{}
+		err = k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getDevicePairingServiceName(resourceName),
+			Namespace: namespace,
+		}, dpService)
+		assert.True(t, apierrors.IsNotFound(err),
+			"device-pairing Service should not exist when disabled")
+
+		dpSA := &corev1.ServiceAccount{}
+		err = k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getDevicePairingServiceAccountName(resourceName),
+			Namespace: namespace,
+		}, dpSA)
+		assert.True(t, apierrors.IsNotFound(err),
+			"device-pairing ServiceAccount should not exist when disabled")
+
+		// Toggle disableDevicePairing to false
+		require.NoError(t, k8sClient.Get(ctx,
+			client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+			DisableDevicePairing: boolPtr(false),
+		}
+		require.NoError(t, k8sClient.Update(ctx, instance))
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		// Verify device-pairing resources ARE now created
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getDevicePairingDeploymentName(resourceName),
+				Namespace: namespace,
+			}, dpDeployment) == nil
+		}, "device-pairing Deployment should be created after re-enabling")
+
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getDevicePairingServiceName(resourceName),
+				Namespace: namespace,
+			}, dpService) == nil
+		}, "device-pairing Service should be created after re-enabling")
+
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getDevicePairingServiceAccountName(resourceName),
+				Namespace: namespace,
+			}, dpSA) == nil
+		}, "device-pairing ServiceAccount should be created after re-enabling")
+	})
+
 	t.Run("should create device-pairing resources after reconcile", func(t *testing.T) {
 		const resourceName = testInstanceName
 		ctx := context.Background()

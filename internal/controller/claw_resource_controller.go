@@ -423,6 +423,7 @@ type ClawResourceReconciler struct {
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes/custom-host,verbs=create;update
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile manages the complete lifecycle of resources for Claw instances
 func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) { //nolint:gocyclo
@@ -1059,6 +1060,7 @@ func (r *ClawResourceReconciler) cleanupDevicePairingResources(ctx context.Conte
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: getDevicePairingServiceAccountName(name), Namespace: ns}},
 		newDevicePairingRouteUnstructured(name, ns),
 		newDevicePairingRoleBindingUnstructured(name, ns),
+		newDevicePairingClusterRoleUnstructured(name),
 	}
 
 	for _, obj := range resources {
@@ -1097,6 +1099,17 @@ func newDevicePairingRoleBindingUnstructured(instanceName, ns string) *unstructu
 	})
 	u.SetName(getDevicePairingRoleBindingName(instanceName))
 	u.SetNamespace(ns)
+	return u
+}
+
+func newDevicePairingClusterRoleUnstructured(instanceName string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "rbac.authorization.k8s.io",
+		Version: "v1",
+		Kind:    ClusterRoleKind,
+	})
+	u.SetName(instanceName + "-device-pairing")
 	return u
 }
 
