@@ -52,6 +52,8 @@ The proxy sits between the gateway and external APIs, injecting credentials into
 
 **Vertex AI path**: credentials with `type: gcp` and a non-google `provider` (e.g., anthropic) use the native Vertex AI SDK rather than gateway routing. The operator creates a stub ADC (Application Default Credentials) ConfigMap so google-auth-library can bootstrap, and the proxy intercepts token refresh requests to vend real tokens.
 
+**Companion providers**: OpenClaw sometimes routes models through internal provider names that differ from the user-facing provider. For example, GPT-5.x models (gpt-5.5, gpt-5.4, gpt-5.4-mini) are routed through an internal `openai-codex` provider rather than `openai`. The `companionProviders` map in `claw_providers.go` handles this: when `injectProviders` creates a provider entry, it also creates entries for any companions with the same `baseUrl` and placeholder API key. This ensures the proxy handles credential injection for all models without requiring users to configure additional providers. Companion keys are checked for collisions with the same error path as primary providers.
+
 ## NetworkPolicy and Egress Rules
 
 The operator creates three NetworkPolicies per instance: `{instance}-ingress` (gateway ingress from OpenShift routers), `{instance}-egress` (gateway egress to proxy + DNS), and `{instance}-proxy-egress` (proxy egress to HTTPS + DNS). These enforce a defense-in-depth posture where the gateway can only reach external services through the proxy.

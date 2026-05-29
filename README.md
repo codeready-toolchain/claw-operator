@@ -129,15 +129,29 @@ oc create namespace $NS
 
 ### 3. Create a Credential Secret
 
+#### Google Gemini
+
+Get your API key from [Google AI Studio](https://aistudio.google.com/apikey).
+
 ```sh
 oc create secret generic gemini-api-key \
   --from-literal=api-key=YOUR_GEMINI_API_KEY \
   -n $NS
 ```
 
-Get your API key from [Google AI Studio](https://aistudio.google.com/apikey).
+#### OpenAI
+
+Get your API key from the [OpenAI Platform](https://platform.openai.com/api-keys).
+
+```sh
+oc create secret generic openai-api-key \
+  --from-literal=api-key=YOUR_OPENAI_API_KEY \
+  -n $NS
+```
 
 ### 4. Create a Claw Instance
+
+#### Google Gemini
 
 Apply the sample CR, or use the inline version below:
 
@@ -163,7 +177,28 @@ spec:
 EOF
 ```
 
-For known providers (`google`, `anthropic`), the operator infers `domain` and `apiKey` automatically. For other LLM providers, messaging channels, MCP servers, and more, see the [User Guide](docs/user-guide.md).
+#### OpenAI
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials:
+    - name: openai
+      type: bearer
+      secretRef:
+        - name: openai-api-key
+          key: api-key
+      provider: openai
+      domain: "api.openai.com"
+EOF
+```
+
+For known providers (`google`, `anthropic`), the operator infers `domain` and `apiKey` automatically. For `openai` and `xai`, you must provide a `domain` since they use `type: bearer`. For other LLM providers, messaging channels, MCP servers, and more, see the [User Guide](docs/user-guide.md).
 
 Wait for it to become ready and get the URL and gateway token:
 

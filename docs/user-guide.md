@@ -116,6 +116,8 @@ spec:
 EOF
 ```
 
+> **GPT-5.x models:** OpenClaw routes newer GPT models (gpt-5.5, gpt-5.4, gpt-5.4-mini) through an internal provider called `openai-codex`. The operator handles this automatically — when you configure an `openai` credential, a companion `openai-codex` provider entry is created with the same endpoint and credentials. No additional configuration is needed.
+
 ### xAI (Grok)
 
 Uses the xAI API with a bearer token.
