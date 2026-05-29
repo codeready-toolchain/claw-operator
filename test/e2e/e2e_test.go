@@ -1087,18 +1087,13 @@ spec:
 			assert.Equal(t, statusURL, gatewayURL, "status.gatewayURL should equal status.url")
 
 			// On Kind (no Route CRD), URLs are empty because getRouteURL returns "".
-			// On OpenShift, URLs contain the Route host. Assert structure when non-empty.
-			if gatewayURL != "" {
-				t.Log("verifying status.devicePairingURL is empty when device pairing is disabled")
-				cmd = exec.Command("kubectl", "get", "claw", "instance",
-					"-o", "jsonpath={.status.devicePairingURL}",
-					"-n", userNamespace)
-				devicePairingURL, err := utils.Run(t, cmd)
-				require.NoError(t, err)
-				assert.Empty(t, devicePairingURL, "status.devicePairingURL should be empty when disableDevicePairing=true")
-			} else {
-				t.Log("Route CRD not available (Kind cluster), skipping URL content assertions")
-			}
+			t.Log("verifying status.devicePairingURL is empty when device pairing is disabled")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.devicePairingURL}",
+				"-n", userNamespace)
+			devicePairingURL, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Empty(t, devicePairingURL, "status.devicePairingURL should be empty when disableDevicePairing=true")
 
 			t.Log("verifying claw and proxy Deployments DO exist")
 			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
