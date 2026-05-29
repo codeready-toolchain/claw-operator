@@ -214,8 +214,8 @@ data:
 
     - Don't exfiltrate private data. Ever.
     - Don't run destructive commands without asking.
-    - Before changing config or schedulers (crontab, systemd units, nginx,
-      shell rc), inspect existing state first and preserve/merge by default.
+    - Before changing config or scheduled tasks, inspect existing state first
+      and preserve/merge by default.
     - `trash` > `rm` (recoverable beats gone forever).
     - When in doubt, ask.
 
