@@ -59,7 +59,7 @@ func (r *ClawResourceReconciler) handleIdle(ctx context.Context, instance *clawv
 	alreadyIdled := idleCond != nil && idleCond.Status == metav1.ConditionTrue &&
 		readyCond != nil && readyCond.Status == metav1.ConditionFalse &&
 		readyCond.Reason == clawv1alpha1.ConditionReasonIdle &&
-		instance.Status.URL == ""
+		instance.Status.URL == "" //nolint:staticcheck // deprecated but still checked
 
 	if alreadyIdled {
 		return ctrl.Result{}, nil
@@ -69,7 +69,9 @@ func (r *ClawResourceReconciler) handleIdle(ctx context.Context, instance *clawv
 		clawv1alpha1.ConditionReasonIdledByRequest, "Instance scaled to zero by spec.idle")
 	setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
 		clawv1alpha1.ConditionReasonIdle, "Instance is idled — set spec.idle to false to resume")
-	instance.Status.URL = ""
+	instance.Status.URL = "" //nolint:staticcheck // deprecated but still populated
+	instance.Status.GatewayURL = ""
+	instance.Status.DevicePairingURL = ""
 
 	if err := r.Status().Update(ctx, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update status after idling: %w", err)

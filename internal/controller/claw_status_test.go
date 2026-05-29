@@ -636,7 +636,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
+				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
+				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
+				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
 			})
 
 			t.Run("should keep status.url empty when only claw deployment is ready", func(t *testing.T) {
@@ -691,7 +693,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
+				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
+				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
+				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
 			})
 
 			t.Run("should keep status.url empty when only proxy deployment is ready", func(t *testing.T) {
@@ -746,7 +750,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
+				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
+				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
+				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
 			})
 
 			t.Run("should clear status.url when deployments transition from ready to not ready", func(t *testing.T) {
@@ -813,7 +819,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
+				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
+				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
+				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
 			})
 
 			t.Run("should not set status.url when Route does not exist (vanilla Kubernetes)", func(t *testing.T) {
@@ -856,7 +864,9 @@ func TestOpenClawStatusConditions(t *testing.T) {
 
 				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
-				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url")
+				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
+				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
+				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
 			})
 
 			t.Run("should set status.url with token fragment when deployments are ready and Route exists", func(t *testing.T) {
@@ -1011,12 +1021,12 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				updatedInstance := &clawv1alpha1.Claw{}
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 
-				assert.NotEmpty(t, updatedInstance.Status.URL, "expected non-empty status.url")
+				assert.NotEmpty(t, updatedInstance.Status.URL, "expected non-empty status.url") //nolint:staticcheck
 				expectedPrefix := "https://" + routeHost
-				assert.True(t, strings.HasPrefix(updatedInstance.Status.URL, expectedPrefix), "status.url should have prefix %s", expectedPrefix)
-				assert.Contains(t, updatedInstance.Status.URL, "#token=")
+				assert.True(t, strings.HasPrefix(updatedInstance.Status.URL, expectedPrefix), "status.url should have prefix %s", expectedPrefix) //nolint:staticcheck
+				assert.Contains(t, updatedInstance.Status.URL, "#token=")                                                                         //nolint:staticcheck
 
-				urlParts := strings.Split(updatedInstance.Status.URL, "#token=")
+				urlParts := strings.Split(updatedInstance.Status.URL, "#token=") //nolint:staticcheck
 				require.Len(t, urlParts, 2, "URL should have exactly one #token= fragment")
 				assert.Equal(t, "https://"+routeHost, urlParts[0], "URL host part")
 				assert.NotEmpty(t, urlParts[1], "token should not be empty")
@@ -1027,6 +1037,10 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				assert.NotEmpty(t, expectedToken, "expected non-empty gateway token")
 
 				assert.Equal(t, expectedToken, urlParts[1], "URL token")
+
+				assert.Equal(t, updatedInstance.Status.URL, updatedInstance.Status.GatewayURL, "gatewayURL should equal url") //nolint:staticcheck
+				assert.Equal(t, "https://"+routeHost+"/integration/device-pairing/#token="+encodeFragmentValue(expectedToken),
+					updatedInstance.Status.DevicePairingURL, "devicePairingURL should include device-pairing path")
 
 				_ = k8sClient.Delete(ctx, route)
 
@@ -1094,7 +1108,9 @@ func TestOpenClawURLStatusField(t *testing.T) {
 
 			updatedInstance := &clawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated Claw instance")
-			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL")
+			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL") //nolint:staticcheck
+			assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty GatewayURL")
+			assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty DevicePairingURL")
 		})
 
 		t.Run("should leave URL field empty when Route does not exist", func(t *testing.T) {
@@ -1137,7 +1153,9 @@ func TestOpenClawURLStatusField(t *testing.T) {
 
 			updatedInstance := &clawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated Claw instance")
-			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL")
+			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL") //nolint:staticcheck
+			assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty GatewayURL")
+			assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty DevicePairingURL")
 		})
 
 		t.Run("should include https:// scheme in URL format", func(t *testing.T) {
@@ -1293,7 +1311,7 @@ func TestURLConstructionWithTokenFragment(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := buildClawURL(tt.routeURL, tt.token)
+				result := buildGatewayURL(tt.routeURL, tt.token)
 				assert.Equal(t, tt.expected, result, "URL construction result")
 			})
 		}
@@ -1303,11 +1321,57 @@ func TestURLConstructionWithTokenFragment(t *testing.T) {
 		routeURL := "https://claw-default.apps.cluster.example.com"
 		token := "64chartoken1234567890abcdef64chartoken1234567890abcdef123456"
 
-		result := buildClawURL(routeURL, token)
+		result := buildGatewayURL(routeURL, token)
 
 		expected := "https://claw-default.apps.cluster.example.com#token=64chartoken1234567890abcdef64chartoken1234567890abcdef123456"
 		assert.Equal(t, expected, result, "URL construction result")
 		assert.True(t, strings.HasPrefix(result, "https://"), "expected result to start with https://")
 		assert.Contains(t, result, "#token=")
 	})
+}
+
+func TestDevicePairingURLConstruction(t *testing.T) {
+	tests := []struct {
+		name     string
+		routeURL string
+		token    string
+		expected string
+	}{
+		{
+			name:     "should insert device-pairing path before token fragment",
+			routeURL: "https://claw-route.apps.example.com",
+			token:    "abc123def456",
+			expected: "https://claw-route.apps.example.com/integration/device-pairing/#token=abc123def456",
+		},
+		{
+			name:     "should return device-pairing path without fragment when token is empty",
+			routeURL: "https://claw-route.apps.example.com",
+			token:    "",
+			expected: "https://claw-route.apps.example.com/integration/device-pairing/",
+		},
+		{
+			name:     "should return empty string when route URL is empty",
+			routeURL: "",
+			token:    "abc123def456",
+			expected: "",
+		},
+		{
+			name:     "should return empty string when both route and token are empty",
+			routeURL: "",
+			token:    "",
+			expected: "",
+		},
+		{
+			name:     "should percent-encode special characters in token",
+			routeURL: "https://claw-route.apps.example.com",
+			token:    "token+with=special&chars#fragment",
+			expected: "https://claw-route.apps.example.com/integration/device-pairing/#token=token%2Bwith%3Dspecial%26chars%23fragment",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildDevicePairingURL(tt.routeURL, tt.token)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

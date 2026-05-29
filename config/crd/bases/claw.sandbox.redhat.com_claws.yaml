@@ -796,12 +796,23 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              devicePairingURL:
+                description: |-
+                  DevicePairingURL is the HTTPS URL for the device pairing application.
+                  Only populated when device pairing is enabled (disableDevicePairing is not true).
+                type: string
               gatewayTokenSecretRef:
                 description: GatewayTokenSecretRef is the name of the Secret containing
                   the gateway authentication token
                 type: string
+              gatewayURL:
+                description: GatewayURL is the HTTPS URL for accessing the Claw gateway,
+                  including the auth token fragment when applicable
+                type: string
               url:
-                description: URL is the HTTPS URL for accessing the Claw instance
+                description: |-
+                  Deprecated: Use GatewayURL instead. Will be removed in a future version.
+                  URL is the HTTPS URL for accessing the Claw instance
                 type: string
             type: object
         type: object

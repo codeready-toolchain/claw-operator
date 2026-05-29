@@ -937,6 +937,47 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 					return err == nil && output == conditionTrue, nil
 				})
 			require.NoError(t, err, "DevicePairingConfigured did not become True within %v", defaultTimeout)
+
+			t.Log("waiting for Claw Ready=True")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw Ready did not become True within %v", extendedTimeout)
+
+			t.Log("verifying status.gatewayURL equals status.url")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.gatewayURL}",
+				"-n", userNamespace)
+			gatewayURL, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.url}",
+				"-n", userNamespace)
+			statusURL, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, statusURL, gatewayURL, "status.gatewayURL should equal status.url")
+
+			// On Kind (no Route CRD), URLs are empty because getRouteURL returns "".
+			// On OpenShift, URLs contain the Route host. Assert structure when non-empty.
+			if gatewayURL != "" {
+				t.Log("verifying status.devicePairingURL contains device-pairing path")
+				cmd = exec.Command("kubectl", "get", "claw", "instance",
+					"-o", "jsonpath={.status.devicePairingURL}",
+					"-n", userNamespace)
+				devicePairingURL, err := utils.Run(t, cmd)
+				require.NoError(t, err)
+				assert.NotEmpty(t, devicePairingURL, "status.devicePairingURL should not be empty when device pairing is enabled")
+				assert.Contains(t, devicePairingURL, "/integration/device-pairing/",
+					"devicePairingURL should contain /integration/device-pairing/ path")
+			} else {
+				t.Log("Route CRD not available (Kind cluster), skipping URL content assertions")
+			}
 		})
 
 		t.Run("should not deploy device-pairing when disableDevicePairing is true", func(t *testing.T) {
@@ -1030,6 +1071,45 @@ spec:
 			dpCondOutput, err := utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Empty(t, dpCondOutput, "DevicePairingConfigured condition should not exist when device pairing is disabled")
+
+			t.Log("waiting for Claw Ready=True")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw Ready did not become True within %v", extendedTimeout)
+
+			t.Log("verifying status.gatewayURL equals status.url")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.gatewayURL}",
+				"-n", userNamespace)
+			gatewayURL, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.url}",
+				"-n", userNamespace)
+			statusURL, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, statusURL, gatewayURL, "status.gatewayURL should equal status.url")
+
+			// On Kind (no Route CRD), URLs are empty because getRouteURL returns "".
+			// On OpenShift, URLs contain the Route host. Assert structure when non-empty.
+			if gatewayURL != "" {
+				t.Log("verifying status.devicePairingURL is empty when device pairing is disabled")
+				cmd = exec.Command("kubectl", "get", "claw", "instance",
+					"-o", "jsonpath={.status.devicePairingURL}",
+					"-n", userNamespace)
+				devicePairingURL, err := utils.Run(t, cmd)
+				require.NoError(t, err)
+				assert.Empty(t, devicePairingURL, "status.devicePairingURL should be empty when disableDevicePairing=true")
+			} else {
+				t.Log("Route CRD not available (Kind cluster), skipping URL content assertions")
+			}
 
 			t.Log("verifying claw and proxy Deployments DO exist")
 			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
@@ -1458,13 +1538,27 @@ spec:
 			require.NoError(t, err)
 			assert.Equal(t, "Idle", readyReason, "Ready reason should be Idle")
 
-			t.Log("verifying status.url is cleared when idled")
+			t.Log("verifying status URLs are cleared when idled")
 			cmd = exec.Command("kubectl", "get", "claw", "instance",
 				"-o", "jsonpath={.status.url}",
 				"-n", userNamespace)
 			urlOutput, err := utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Empty(t, urlOutput, "status.url should be empty when idled")
+
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.gatewayURL}",
+				"-n", userNamespace)
+			gwURLOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Empty(t, gwURLOutput, "status.gatewayURL should be empty when idled")
+
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.devicePairingURL}",
+				"-n", userNamespace)
+			dpURLOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Empty(t, dpURLOutput, "status.devicePairingURL should be empty when idled")
 
 			t.Log("verifying all pods are terminated")
 			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,

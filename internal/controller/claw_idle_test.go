@@ -116,7 +116,9 @@ func TestClawIdling(t *testing.T) {
 		assert.Equal(t, metav1.ConditionFalse, readyCond.Status)
 		assert.Equal(t, clawv1alpha1.ConditionReasonIdle, readyCond.Reason)
 
-		assert.Empty(t, instance.Status.URL, "status.url should be cleared when idled")
+		assert.Empty(t, instance.Status.URL, "status.url should be cleared when idled") //nolint:staticcheck
+		assert.Empty(t, instance.Status.GatewayURL, "status.gatewayURL should be cleared when idled")
+		assert.Empty(t, instance.Status.DevicePairingURL, "status.devicePairingURL should be cleared when idled")
 	})
 
 	t.Run("should restore normal operation on unidle", func(t *testing.T) {

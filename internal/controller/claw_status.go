@@ -208,10 +208,10 @@ func encodeFragmentValue(v string) string {
 	return url.QueryEscape(v)
 }
 
-// buildClawURL constructs the Claw status URL by appending the gateway token
+// buildGatewayURL constructs the Claw status URL by appending the gateway token
 // as a URL fragment if both routeURL and token are provided.
 // Returns empty string if routeURL is empty.
-func buildClawURL(routeURL, token string) string {
+func buildGatewayURL(routeURL, token string) string {
 	if routeURL == "" {
 		return ""
 	}
@@ -219,6 +219,17 @@ func buildClawURL(routeURL, token string) string {
 		return routeURL
 	}
 	return routeURL + "#token=" + encodeFragmentValue(token)
+}
+
+func buildDevicePairingURL(routeURL, token string) string {
+	if routeURL == "" {
+		return ""
+	}
+	base := routeURL + "/integration/device-pairing/"
+	if token == "" {
+		return base
+	}
+	return base + "#token=" + encodeFragmentValue(token)
 }
 
 // updateStatus updates the Claw status with current deployment conditions
@@ -246,7 +257,7 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 	// Expose gateway secret name in status
 	instance.Status.GatewayTokenSecretRef = getGatewaySecretName(instance.Name)
 
-	// Populate URL field only when both deployments are ready
+	// Populate URL fields only when all deployments are ready
 	if ready {
 		routeURL, err := r.getRouteURL(ctx, instance)
 		if err != nil {
@@ -255,14 +266,25 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 
 		// Password mode: URL has no token fragment (password is entered in the UI)
 		if instance.Spec.Auth != nil && instance.Spec.Auth.Mode == clawv1alpha1.AuthModePassword {
-			instance.Status.URL = routeURL
+			instance.Status.URL = routeURL //nolint:staticcheck // deprecated but still populated
+			instance.Status.GatewayURL = routeURL
+			if !shouldDisableDevicePairing(instance.Spec.Auth) {
+				instance.Status.DevicePairingURL = buildDevicePairingURL(routeURL, "")
+			}
 		} else {
 			token := r.getGatewayToken(ctx, instance.Namespace, instance.Name)
-			instance.Status.URL = buildClawURL(routeURL, token)
+			gatewayURL := buildGatewayURL(routeURL, token)
+			instance.Status.URL = gatewayURL //nolint:staticcheck // deprecated but still populated
+			instance.Status.GatewayURL = gatewayURL
+			if !shouldDisableDevicePairing(instance.Spec.Auth) {
+				instance.Status.DevicePairingURL = buildDevicePairingURL(routeURL, token)
+			}
 		}
 	} else {
-		// Clear URL when deployments are not ready
-		instance.Status.URL = ""
+		// Clear URLs when deployments are not ready
+		instance.Status.URL = "" //nolint:staticcheck // deprecated but still populated
+		instance.Status.GatewayURL = ""
+		instance.Status.DevicePairingURL = ""
 	}
 
 	// Update status subresource
