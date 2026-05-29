@@ -73,6 +73,13 @@ const (
 	// Gateway networking
 	gatewayPort              = 18789
 	gatewayLocalhostFallback = "http://localhost:18789"
+	// InstanceLabelKey is the label that identifies all resources managed by
+	// a specific Claw instance. Used for cache filtering (ConfigMaps, PVCs,
+	// Deployments) and multi-instance discrimination. The Secret informer
+	// uses a Transform instead: operator-owned Secrets (with this label) keep
+	// full .Data in cache; user-owned Secrets have .Data stripped — their
+	// data is read on-demand via UserSecretReader.
+	InstanceLabelKey = "claw.sandbox.redhat.com/instance"
 
 	// Kubernetes resource kinds
 	RouteKind                 = "Route"
@@ -97,11 +104,24 @@ func sanitizeLabelValue(name string) string {
 	return name[:maxLen-9] + "-" + hash
 }
 
+// setInstanceLabel adds the claw.sandbox.redhat.com/instance label to a typed
+// Kubernetes object. Used for controller-managed resources created outside of
+// Kustomize (gateway secret, proxy CA, proxy ConfigMap, etc.) so they are
+// visible to the label-filtered informer cache.
+func setInstanceLabel(obj client.Object, instanceName string) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels[InstanceLabelKey] = sanitizeLabelValue(instanceName)
+	obj.SetLabels(labels)
+}
+
 // injectInstanceLabels adds the claw.sandbox.redhat.com/instance label to all resources
 // and injects it into Deployment/Service/NetworkPolicy selectors for multi-instance discrimination.
 // Resource names are already set via CLAW_INSTANCE_NAME template replacement in buildKustomizedObjects.
 func injectInstanceLabels(objects []*unstructured.Unstructured, instanceName string) error {
-	instanceLabel := "claw.sandbox.redhat.com/instance"
+	instanceLabel := InstanceLabelKey
 	labelValue := sanitizeLabelValue(instanceName)
 
 	for _, obj := range objects {
@@ -377,7 +397,11 @@ func getDevicePairingServiceAccountName(instanceName string) string {
 // ClawResourceReconciler reconciles all resources for Claw
 type ClawResourceReconciler struct {
 	client.Client
-	Scheme             *runtime.Scheme
+	Scheme *runtime.Scheme
+	// UserSecretReader reads user-owned Secrets directly from the API server,
+	// bypassing the informer cache (where Transform has stripped .Data).
+	// Operator-owned Secrets keep full .Data in cache and use r.Get().
+	UserSecretReader   client.Reader
 	ProxyImage         string
 	KubectlImage       string
 	OTelCollectorImage string
@@ -1408,30 +1432,27 @@ func (r *ClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// findClawsReferencingSecret maps a Secret to all Claw CRs that reference it
+// findClawsReferencingSecret maps a Secret change to the Claw(s) that need
+// re-reconciliation. Operator-owned Secrets (with an owner ref pointing to a
+// Claw) are handled by Owns(&corev1.Secret{}) and skipped here. For
+// user-owned Secrets, we scan Claw CRs for name references.
 func (r *ClawResourceReconciler) findClawsReferencingSecret(ctx context.Context, obj client.Object) []reconcile.Request {
-	secret, ok := obj.(*corev1.Secret)
-	if !ok {
-		return nil
-	}
-
-	// Skip operator-managed secrets (owned by a Claw controller).
-	// These are already handled by Owns(&corev1.Secret{}) in the controller setup.
-	if metav1.GetControllerOf(secret) != nil &&
-		metav1.GetControllerOf(secret).Kind == ClawResourceKind {
+	// Operator-managed secret — handled by Owns(), skip.
+	if owner := metav1.GetControllerOf(obj); owner != nil &&
+		owner.Kind == ClawResourceKind {
 		return nil
 	}
 
 	// List all Claw CRs in the same namespace
 	openClawList := &clawv1alpha1.ClawList{}
-	if err := r.List(ctx, openClawList, client.InNamespace(secret.Namespace)); err != nil {
+	if err := r.List(ctx, openClawList, client.InNamespace(obj.GetNamespace())); err != nil {
 		return nil
 	}
 
 	// Find Claw CRs that reference this Secret (via credentials or MCP envFrom)
 	var requests []reconcile.Request
 	for _, instance := range openClawList.Items {
-		if clawReferencesSecret(instance, secret.Name) {
+		if clawReferencesSecret(instance, obj.GetName()) {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      instance.Name,

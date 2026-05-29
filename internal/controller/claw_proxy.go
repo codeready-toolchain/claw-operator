@@ -316,6 +316,7 @@ func (r *ClawResourceReconciler) applyProxyConfigMap(ctx context.Context, instan
 	cm.SetName(getProxyConfigMapName(instance.Name))
 	cm.SetNamespace(instance.Namespace)
 	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
+	setInstanceLabel(cm, instance.Name)
 	cm.Data = map[string]string{
 		"proxy-config.json": string(configJSON),
 	}
@@ -530,7 +531,7 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 	for _, cred := range instance.Spec.Credentials {
 		for _, ref := range cred.SecretRef {
 			secret := &corev1.Secret{}
-			if err := r.Get(ctx, client.ObjectKey{
+			if err := r.UserSecretReader.Get(ctx, client.ObjectKey{
 				Namespace: instance.Namespace,
 				Name:      ref.Name,
 			}, secret); err != nil {
@@ -546,7 +547,7 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 
 	if ws := instance.Spec.WebSearch; ws != nil && ws.SecretRef != nil {
 		secret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{
+		if err := r.UserSecretReader.Get(ctx, client.ObjectKey{
 			Namespace: instance.Namespace,
 			Name:      ws.SecretRef.Name,
 		}, secret); err != nil {
@@ -605,6 +606,7 @@ func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *cla
 	secret.SetName(secretName)
 	secret.SetNamespace(instance.Namespace)
 	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+	setInstanceLabel(secret, instance.Name)
 	secret.Data = map[string][]byte{
 		"ca.crt": certPEM,
 		"ca.key": keyPEM,

@@ -105,6 +105,7 @@ func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, in
 	cm.SetName(configMapName)
 	cm.SetNamespace(instance.Namespace)
 	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
+	setInstanceLabel(cm, instance.Name)
 	cm.Data = map[string]string{
 		"adc.json": `{"type":"authorized_user","client_id":"stub.apps.googleusercontent.com","client_secret":"stub","refresh_token":"proxy-managed-token"}`,
 	}
@@ -575,7 +576,7 @@ func (r *ClawResourceReconciler) stampMcpSecretVersionAnnotation(
 		spec := instance.Spec.McpServers[serverName]
 		for _, ef := range spec.EnvFrom {
 			secret := &corev1.Secret{}
-			if err := r.Get(ctx, client.ObjectKey{
+			if err := r.UserSecretReader.Get(ctx, client.ObjectKey{
 				Namespace: instance.Namespace,
 				Name:      ef.SecretRef.Name,
 			}, secret); err != nil {

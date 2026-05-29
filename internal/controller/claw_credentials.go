@@ -170,11 +170,11 @@ func (r *ClawResourceReconciler) doCreateGatewaySecret(ctx context.Context, inst
 	secret.SetName(secretName)
 	secret.SetNamespace(instance.Namespace)
 	secret.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
+	setInstanceLabel(secret, instance.Name)
 	secret.Data = map[string][]byte{
 		GatewayTokenKeyName: []byte(token),
 	}
 
-	// Set owner reference for garbage collection
 	if err := controllerutil.SetControllerReference(instance, secret, r.Scheme); err != nil {
 		return fmt.Errorf("failed to set controller reference on gateway secret: %w", err)
 	}
@@ -221,7 +221,7 @@ func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instanc
 			var credFailed bool
 			for _, ref := range cred.SecretRef {
 				secret := &corev1.Secret{}
-				if err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: ref.Name}, secret); err != nil {
+				if err := r.UserSecretReader.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: ref.Name}, secret); err != nil {
 					if apierrors.IsNotFound(err) {
 						errs = append(errs, fmt.Errorf("credential %q: Secret %q not found", cred.Name, ref.Name))
 					} else {
@@ -459,6 +459,7 @@ func (r *ClawResourceReconciler) applySanitizedKubeconfig(ctx context.Context, i
 	cm.SetName(configMapName)
 	cm.SetNamespace(instance.Namespace)
 	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
+	setInstanceLabel(cm, instance.Name)
 	cm.Data = map[string]string{
 		"config": string(sanitized),
 	}

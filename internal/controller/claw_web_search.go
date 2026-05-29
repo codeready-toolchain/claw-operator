@@ -92,7 +92,7 @@ func (r *ClawResourceReconciler) validateWebSearchConfig(
 		}
 
 		secret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{
+		if err := r.UserSecretReader.Get(ctx, client.ObjectKey{
 			Namespace: instance.Namespace,
 			Name:      ws.SecretRef.Name,
 		}, secret); err != nil {

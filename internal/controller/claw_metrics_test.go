@@ -878,6 +878,7 @@ func TestMetricsIntegration(t *testing.T) {
 		reconciler := &ClawResourceReconciler{
 			Client:             k8sClient,
 			Scheme:             k8sClient.Scheme(),
+			UserSecretReader:   k8sClient,
 			OTelCollectorImage: customImage,
 		}
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)

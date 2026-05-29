@@ -27,12 +27,18 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -184,6 +190,15 @@ func main() {
 		})
 	}
 
+	instanceLabelReq, err := labels.NewRequirement(
+		controller.InstanceLabelKey, selection.Exists, nil,
+	)
+	if err != nil {
+		setupLog.Error(err, "failed to build instance label requirement")
+		os.Exit(1)
+	}
+	instanceLabelSelector := labels.NewSelector().Add(*instanceLabelReq)
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
@@ -191,6 +206,32 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "33f671a1.claw.sandbox.redhat.com",
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.ConfigMap{}:             {Label: instanceLabelSelector},
+				&corev1.PersistentVolumeClaim{}: {Label: instanceLabelSelector},
+				&appsv1.Deployment{}:            {Label: instanceLabelSelector},
+				// Secrets use a Transform instead of a label filter so
+				// the structured informer sees ALL Secrets (including
+				// unlabeled user Secrets referenced by credentials).
+				// Operator-owned Secrets are kept intact; user-owned
+				// Secrets have payload fields stripped to save memory
+				// — their data is read on-demand via UserSecretReader.
+				&corev1.Secret{}: {
+					Transform: func(obj interface{}) (interface{}, error) {
+						if secret, ok := obj.(*corev1.Secret); ok {
+							if _, hasLabel := secret.Labels[controller.InstanceLabelKey]; !hasLabel {
+								secret.Data = nil
+								secret.StringData = nil
+								delete(secret.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
+								secret.ManagedFields = nil
+							}
+						}
+						return obj, nil
+					},
+				},
+			},
+		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -217,6 +258,7 @@ func main() {
 	if err = (&controller.ClawResourceReconciler{
 		Client:             mgr.GetClient(),
 		Scheme:             mgr.GetScheme(),
+		UserSecretReader:   controller.NewLoggingUserSecretReader(mgr.GetAPIReader()),
 		ProxyImage:         os.Getenv("PROXY_IMAGE"),
 		KubectlImage:       os.Getenv("KUBECTL_IMAGE"),
 		OTelCollectorImage: os.Getenv("OTEL_COLLECTOR_IMAGE"),
