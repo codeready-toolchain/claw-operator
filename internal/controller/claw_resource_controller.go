@@ -1197,10 +1197,18 @@ func injectProviders(config map[string]any, instance *clawv1alpha1.Claw) error {
 				return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
 			}
 			info := resolveProviderInfo(cred)
-			providers[cred.Provider] = map[string]any{
+			entry := map[string]any{
 				"baseUrl": info.Upstream + info.BasePath,
 				"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
 				"models":  []any{},
+			}
+			providers[cred.Provider] = entry
+			for _, companion := range companionProviders[cred.Provider] {
+				providers[companion] = map[string]any{
+					"baseUrl": info.Upstream + info.BasePath,
+					"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
+					"models":  []any{},
+				}
 			}
 		}
 	}
