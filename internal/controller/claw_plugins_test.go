@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,6 +137,31 @@ func TestGeneratePluginInstallScript(t *testing.T) {
 	t.Run("should not contain blanket rm -rf extensions", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
 		assert.NotContains(t, script, "rm -rf /home/node/.openclaw/extensions")
+	})
+
+	t.Run("should order phases correctly: cleanup before snapshot before install before record", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
+		cleanupIdx := strings.Index(script, `rm -rf "$EXT/$dir"`)
+		snapshotIdx := strings.Index(script, `/tmp/before-plugins.txt`)
+		installIdx := strings.Index(script, "openclaw plugins install")
+		recordIdx := strings.Index(script, `comm -13`)
+
+		require.Greater(t, cleanupIdx, 0, "cleanup phase should be present")
+		require.Greater(t, snapshotIdx, 0, "snapshot phase should be present")
+		require.Greater(t, installIdx, 0, "install phase should be present")
+		require.Greater(t, recordIdx, 0, "record phase should be present")
+
+		assert.Less(t, cleanupIdx, snapshotIdx, "cleanup should come before snapshot")
+		assert.Less(t, snapshotIdx, installIdx, "snapshot should come before install")
+		assert.Less(t, installIdx, recordIdx, "install should come before record")
+	})
+
+	t.Run("should use consistent extensions path variable across all phases", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
+		assert.Contains(t, script, `EXT="/home/node/.openclaw/extensions"`)
+		assert.Contains(t, script, `rm -rf "$EXT/$dir"`)
+		assert.Contains(t, script, `mkdir -p "$EXT"`)
+		assert.Contains(t, script, `ls "$EXT"`)
 	})
 }
 
@@ -281,6 +307,23 @@ func TestConfigurePluginsInitContainer(t *testing.T) {
 		assert.Contains(t, script, "set -e")
 		assert.Contains(t, script, "openclaw plugins install clawhub:'@openclaw/matrix'")
 		assert.Contains(t, script, "openclaw plugins install clawhub:'@openclaw/diagnostics-otel'")
+	})
+
+	t.Run("should include manifest-tracked cleanup in init container script", func(t *testing.T) {
+		objects := makeTestDeploymentForPlugins()
+		instance := testClawWithPlugins([]string{"@openclaw/matrix"})
+
+		require.NoError(t, configurePluginsInitContainer(objects, instance, instance.Spec.Plugins))
+
+		initContainers, _, _ := unstructured.NestedSlice(
+			objects[0].Object, "spec", "template", "spec", "initContainers",
+		)
+		pluginInit := initContainers[3].(map[string]any)
+		command := pluginInit["command"].([]any)
+		script := command[2].(string)
+		assert.Contains(t, script, `.operator-managed`)
+		assert.Contains(t, script, `comm -13 /tmp/before-plugins.txt`)
+		assert.NotContains(t, script, "rm -rf /home/node/.openclaw/extensions")
 	})
 
 	t.Run("should no-op when plugins are empty", func(t *testing.T) {
