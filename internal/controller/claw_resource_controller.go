@@ -781,7 +781,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	if err := injectAllowedEgress(objects, instance); err != nil {
 		return fmt.Errorf("failed to inject allowed egress rules: %w", err)
 	}
-	if err := stampGatewayConfigHash(objects, instance.Name, instance.Spec.Plugins); err != nil {
+	if err := stampGatewayConfigHash(objects, instance.Name, effectivePlugins(instance)); err != nil {
 		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
 	}
 	return nil
@@ -836,8 +836,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 			return fmt.Errorf("failed to configure metrics sidecar: %w", err)
 		}
 	}
-	if pluginsEnabled(instance) {
-		if err := configurePluginsInitContainer(objects, instance); err != nil {
+	plugins := effectivePlugins(instance)
+	if len(plugins) > 0 {
+		if err := configurePluginsInitContainer(objects, instance, plugins); err != nil {
 			return fmt.Errorf("failed to configure plugins init container: %w", err)
 		}
 	}

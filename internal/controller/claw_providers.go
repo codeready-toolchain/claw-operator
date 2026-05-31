@@ -55,6 +55,11 @@ type providerDefaults struct {
 	// this provider. Each companion must itself be defined in knownProviders.
 	Companions []string
 
+	// VertexPlugin is the ClawHub package spec for the OpenClaw plugin
+	// required when this provider is used via the Vertex AI SDK path.
+	// Empty means no plugin is needed (provider is handled natively).
+	VertexPlugin string
+
 	// Models is the hardcoded model catalog for this provider.
 	// Order matters: the first model becomes the default primary when this
 	// provider is the first configured credential in the Claw CR; remaining
@@ -82,10 +87,11 @@ var knownProviders = map[string]providerDefaults{
 		},
 	},
 	"anthropic": {
-		Domain:    "api.anthropic.com",
-		Header:    "x-api-key",
-		API:       "anthropic-messages",
-		VertexAPI: "anthropic-messages",
+		Domain:       "api.anthropic.com",
+		Header:       "x-api-key",
+		API:          "anthropic-messages",
+		VertexAPI:    "anthropic-messages",
+		VertexPlugin: "@openclaw/anthropic-vertex-provider",
 		Models: []modelEntry{
 			{Name: "claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
 			{Name: "claude-opus-4-8", Alias: "Claude Opus 4.8"},
