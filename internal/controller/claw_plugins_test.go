@@ -98,7 +98,7 @@ func TestGeneratePluginInstallScript(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
 		assert.Contains(t, script, `MANIFEST="$EXT/.operator-managed"`)
 		assert.Contains(t, script, `if [ -f "$MANIFEST" ]; then`)
-		assert.Contains(t, script, `rm -rf "$EXT/$dir"`)
+		assert.Contains(t, script, `rm -rf -- "$target"`)
 		assert.Contains(t, script, `rm -f "$MANIFEST"`)
 	})
 
@@ -139,9 +139,15 @@ func TestGeneratePluginInstallScript(t *testing.T) {
 		assert.NotContains(t, script, "rm -rf /home/node/.openclaw/extensions")
 	})
 
+	t.Run("should guard against path traversal in manifest entries", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
+		assert.Contains(t, script, `""|.|..|*/*|*..*)`)
+		assert.Contains(t, script, `[ -e "$target" ] || continue`)
+	})
+
 	t.Run("should order phases correctly: cleanup before snapshot before install before record", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
-		cleanupIdx := strings.Index(script, `rm -rf "$EXT/$dir"`)
+		cleanupIdx := strings.Index(script, `rm -rf -- "$target"`)
 		snapshotIdx := strings.Index(script, `/tmp/before-plugins.txt`)
 		installIdx := strings.Index(script, "openclaw plugins install")
 		recordIdx := strings.Index(script, `comm -13`)
@@ -159,7 +165,7 @@ func TestGeneratePluginInstallScript(t *testing.T) {
 	t.Run("should use consistent extensions path variable across all phases", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
 		assert.Contains(t, script, `EXT="/home/node/.openclaw/extensions"`)
-		assert.Contains(t, script, `rm -rf "$EXT/$dir"`)
+		assert.Contains(t, script, `target="$EXT/$dir"`)
 		assert.Contains(t, script, `mkdir -p "$EXT"`)
 		assert.Contains(t, script, `ls "$EXT"`)
 	})

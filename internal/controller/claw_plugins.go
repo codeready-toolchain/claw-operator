@@ -84,7 +84,12 @@ EXT="/home/node/.openclaw/extensions"
 MANIFEST="$EXT/.operator-managed"
 if [ -f "$MANIFEST" ]; then
   while IFS= read -r dir; do
-    [ -n "$dir" ] && rm -rf "$EXT/$dir"
+    case "$dir" in
+      ""|.|..|*/*|*..*) continue ;;
+    esac
+    target="$EXT/$dir"
+    [ -e "$target" ] || continue
+    rm -rf -- "$target"
   done < "$MANIFEST"
   rm -f "$MANIFEST"
 fi
