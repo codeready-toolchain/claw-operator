@@ -23,6 +23,95 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+// modelEntry defines a single model with its API name and human-readable alias.
+type modelEntry struct {
+	Name  string
+	Alias string
+}
+
+// providerDefaults centralizes all per-provider knowledge for the operator.
+// Adding a new first-class provider means adding a single entry here instead
+// of updating multiple independent maps.
+type providerDefaults struct {
+	// Credential defaults (apiKey type only; ignored for other cred types).
+	Domain string // e.g. "generativelanguage.googleapis.com"
+	Header string // e.g. "x-goog-api-key"
+
+	// OpenClaw wire format API identifier. Empty means the provider uses the
+	// OpenClaw default (openai-completions), which is correct for
+	// OpenAI-compatible providers like openai and xai.
+	API string // direct path, e.g. "google-generative-ai"
+
+	// Wire format for the Vertex AI SDK path. Only used when usesVertexSDK()
+	// is true (non-Google GCP credentials).
+	VertexAPI string // e.g. "anthropic-messages"
+
+	// BasePath is appended to the upstream host in resolveProviderInfo().
+	// Non-empty only for providers whose native API sits under a sub-path
+	// (e.g. "/v1beta" for Google's Gemini REST API).
+	BasePath string
+
+	// Companions are additional provider entries auto-injected alongside
+	// this provider. Each companion must itself be defined in knownProviders.
+	Companions []string
+
+	// Models is the hardcoded model catalog for this provider.
+	// Order matters: the first model becomes the default primary when this
+	// provider is the first configured credential in the Claw CR; remaining
+	// models become the fallback chain.
+	Models []modelEntry
+}
+
+// knownProviders is the single source of truth for all per-provider
+// configuration in the operator. Credential defaults, wire format, model
+// catalog, companion relationships, and routing info are all defined here.
+//
+// Providers not in this map (e.g., "openrouter", custom providers) still
+// work -- they just get no defaults, no API override (OpenClaw defaults to
+// openai-completions), and no model catalog.
+var knownProviders = map[string]providerDefaults{
+	"google": {
+		Domain:   "generativelanguage.googleapis.com",
+		Header:   "x-goog-api-key",
+		API:      "google-generative-ai",
+		BasePath: "/v1beta",
+		Models: []modelEntry{
+			{Name: "gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
+			{Name: "gemini-3.1-pro-preview", Alias: "Gemini 3.1 Pro"},
+			{Name: "gemini-3.1-flash-lite", Alias: "Gemini 3.1 Flash Lite"},
+		},
+	},
+	"anthropic": {
+		Domain:    "api.anthropic.com",
+		Header:    "x-api-key",
+		API:       "anthropic-messages",
+		VertexAPI: "anthropic-messages",
+		Models: []modelEntry{
+			{Name: "claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
+			{Name: "claude-opus-4-8", Alias: "Claude Opus 4.8"},
+			{Name: "claude-opus-4-7", Alias: "Claude Opus 4.7"},
+			{Name: "claude-opus-4-6", Alias: "Claude Opus 4.6"},
+		},
+	},
+	"openai": {
+		Companions: []string{"openai-codex"},
+		Models: []modelEntry{
+			{Name: "gpt-5.5", Alias: "GPT-5.5"},
+			{Name: "gpt-5.4", Alias: "GPT-5.4"},
+			{Name: "gpt-5.4-mini", Alias: "GPT-5.4 Mini"},
+		},
+	},
+	"openai-codex": {
+		API: "openai-codex-responses",
+	},
+	"xai": {
+		Models: []modelEntry{
+			{Name: "grok-4.3", Alias: "Grok 4.3"},
+			{Name: "grok-4.20", Alias: "Grok 4.20"},
+		},
+	},
+}
+
 // usesVertexSDK returns true when a credential should use the native Vertex AI SDK
 // instead of a gateway proxy route. This applies to non-Google GCP providers (e.g.,
 // Anthropic via Vertex AI), where the provider's SDK format doesn't match Vertex AI's
@@ -40,28 +129,19 @@ func vertexAIBaseURL(location string) string {
 	return "https://" + location + "-aiplatform.googleapis.com"
 }
 
-// vertexProviderAPIMapping maps provider names to their OpenClaw API identifiers for Vertex AI.
-var vertexProviderAPIMapping = map[string]string{
-	"anthropic": "anthropic-messages",
-}
-
-// apiKeyProviderDefault holds the default domain and header for a known provider using type: apiKey.
-type apiKeyProviderDefault struct {
-	Domain string
-	Header string
-}
-
-// knownAPIKeyProviders maps provider names to their default domain and header.
-var knownAPIKeyProviders = map[string]apiKeyProviderDefault{
-	"google":    {Domain: "generativelanguage.googleapis.com", Header: "x-goog-api-key"},
-	"anthropic": {Domain: "api.anthropic.com", Header: "x-api-key"},
-}
-
-// companionProviders maps a primary provider to additional provider entries that
-// OpenClaw requires. Some models (e.g., gpt-5.x) are routed through a different
-// internal provider name; the companion entry ensures credentials are available.
-var companionProviders = map[string][]string{
-	"openai": {"openai-codex"},
+// buildProviderEntry constructs an OpenClaw provider config entry with the
+// correct wire format API baked in. This avoids the "build map then mutate"
+// pattern that led to the missing api field bug.
+func buildProviderEntry(provider, baseURL, apiKey string) map[string]any {
+	entry := map[string]any{
+		"baseUrl": baseURL,
+		"apiKey":  apiKey,
+		"models":  []any{},
+	}
+	if api := knownProviders[provider].API; api != "" {
+		entry["api"] = api
+	}
+	return entry
 }
 
 // resolveProviderDefaults fills in missing Domain and APIKey fields for known providers.
@@ -70,11 +150,11 @@ var companionProviders = map[string][]string{
 func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
 	switch cred.Type {
 	case clawv1alpha1.CredentialTypeAPIKey:
-		if defaults, ok := knownAPIKeyProviders[cred.Provider]; ok {
+		if defaults, ok := knownProviders[cred.Provider]; ok && defaults.Domain != "" {
 			if cred.Domain == "" {
 				cred.Domain = defaults.Domain
 			}
-			if cred.APIKey == nil {
+			if cred.APIKey == nil && defaults.Header != "" {
 				cred.APIKey = &clawv1alpha1.APIKeyConfig{Header: defaults.Header}
 			}
 		}
@@ -85,15 +165,16 @@ func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
 		}
 
 	case clawv1alpha1.CredentialTypeKubernetes:
-		// Domains are derived from the kubeconfig, not the domain field
 		return nil
 	}
 
 	if cred.Domain == "" {
-		return fmt.Errorf("credential %q: domain is required (no default for provider %q with type %q)", cred.Name, cred.Provider, cred.Type)
+		return fmt.Errorf("credential %q: domain is required (no default for provider %q with type %q)",
+			cred.Name, cred.Provider, cred.Type)
 	}
 	if cred.Type == clawv1alpha1.CredentialTypeAPIKey && cred.APIKey == nil {
-		return fmt.Errorf("credential %q: apiKey config is required (no default for provider %q)", cred.Name, cred.Provider)
+		return fmt.Errorf("credential %q: apiKey config is required (no default for provider %q)",
+			cred.Name, cred.Provider)
 	}
 	return nil
 }
@@ -106,8 +187,8 @@ type providerInfo struct {
 
 // resolveProviderInfo returns the upstream and base path for a credential's provider.
 // GCP credentials route through Vertex AI with the provider name as the publisher
-// (works for google, anthropic, meta, etc.). Google + apiKey uses the Gemini REST API.
-// All other combos: upstream = domain, basePath = "".
+// (works for google, anthropic, meta, etc.). Providers with a BasePath in
+// knownProviders use their native API endpoint. All others: upstream = domain.
 func resolveProviderInfo(cred clawv1alpha1.CredentialSpec) providerInfo {
 	if cred.Type == clawv1alpha1.CredentialTypeGCP && cred.GCP != nil {
 		return providerInfo{
@@ -116,10 +197,14 @@ func resolveProviderInfo(cred clawv1alpha1.CredentialSpec) providerInfo {
 		}
 	}
 
-	if cred.Provider == "google" {
+	if defaults, ok := knownProviders[cred.Provider]; ok && defaults.BasePath != "" {
+		domain := defaults.Domain
+		if domain == "" {
+			domain = strings.TrimPrefix(cred.Domain, ".")
+		}
 		return providerInfo{
-			Upstream: "https://generativelanguage.googleapis.com",
-			BasePath: "/v1beta",
+			Upstream: "https://" + domain,
+			BasePath: defaults.BasePath,
 		}
 	}
 

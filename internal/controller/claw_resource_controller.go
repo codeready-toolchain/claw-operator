@@ -1182,14 +1182,13 @@ func injectProviders(config map[string]any, instance *clawv1alpha1.Claw) error {
 			if _, exists := providers[providerKey]; exists {
 				return fmt.Errorf("duplicate provider %q in credentials", providerKey)
 			}
-			baseURL := vertexAIBaseURL(cred.GCP.Location)
 			entry := map[string]any{
-				"baseUrl":   baseURL,
+				"baseUrl":   vertexAIBaseURL(cred.GCP.Location),
 				"apiKey":    "gcp-vertex-credentials",
 				"maxTokens": 128000,
 				"models":    []any{},
 			}
-			if api, ok := vertexProviderAPIMapping[cred.Provider]; ok {
+			if api := knownProviders[cred.Provider].VertexAPI; api != "" {
 				entry["api"] = api
 			}
 			providers[providerKey] = entry
@@ -1198,21 +1197,13 @@ func injectProviders(config map[string]any, instance *clawv1alpha1.Claw) error {
 				return fmt.Errorf("duplicate provider %q in credentials", cred.Provider)
 			}
 			info := resolveProviderInfo(cred)
-			entry := map[string]any{
-				"baseUrl": info.Upstream + info.BasePath,
-				"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
-				"models":  []any{},
-			}
-			providers[cred.Provider] = entry
-			for _, companion := range companionProviders[cred.Provider] {
+			baseURL := info.Upstream + info.BasePath
+			providers[cred.Provider] = buildProviderEntry(cred.Provider, baseURL, "ah-ah-ah-you-didnt-say-the-magic-word")
+			for _, companion := range knownProviders[cred.Provider].Companions {
 				if _, exists := providers[companion]; exists {
 					return fmt.Errorf("duplicate provider %q (companion of %q) in credentials", companion, cred.Provider)
 				}
-				providers[companion] = map[string]any{
-					"baseUrl": info.Upstream + info.BasePath,
-					"apiKey":  "ah-ah-ah-you-didnt-say-the-magic-word",
-					"models":  []any{},
-				}
+				providers[companion] = buildProviderEntry(companion, baseURL, "ah-ah-ah-you-didnt-say-the-magic-word")
 			}
 		}
 	}
@@ -1264,8 +1255,8 @@ func injectModelCatalog(config map[string]any, instance *clawv1alpha1.Claw) {
 		}
 
 		logicalProvider := strings.TrimSuffix(providerKey, "-vertex")
-		catalog, ok := modelCatalog[logicalProvider]
-		if !ok || len(catalog) == 0 {
+		catalog := providerModelCatalog(logicalProvider)
+		if len(catalog) == 0 {
 			continue
 		}
 

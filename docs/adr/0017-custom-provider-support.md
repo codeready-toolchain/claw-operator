@@ -2,16 +2,17 @@
 
 **Status:** Implemented
 **Date:** 2026-05-29
+**Updated:** 2026-05-31
 
 ---
 
 ## Problem
 
-The operator accepts arbitrary `provider` strings in `spec.credentials[].provider`, but `injectProviders()` unconditionally replaces `models.providers` (always-win tier), and `resolveProviderDefaults()` only auto-fills domain/header defaults for `google` and `anthropic` (via `knownAPIKeyProviders`). Unknown providers require explicit `domain` and `apiKey` config, but even with those set, users cannot control the `baseUrl` path or register models in the catalog — `injectProviders` derives `baseUrl` as `https://<domain>` with no path component.
+The operator accepts arbitrary `provider` strings in `spec.credentials[].provider`, but `injectProviders()` unconditionally replaces `models.providers` (always-win tier), and `resolveProviderDefaults()` only auto-fills domain/header defaults for providers listed in `knownProviders` (currently `google` and `anthropic`). Unknown providers require explicit `domain` and `apiKey` config, but even with those set, users cannot control the `baseUrl` path or register models in the catalog — `injectProviders` derives `baseUrl` as `https://<domain>` with no path component.
 
 This blocks:
 - Self-hosted models (vLLM, Ollama, TGI, LiteLLM) that need a path prefix (e.g., `/v1`)
-- Populating the model catalog for providers outside the hardcoded `modelCatalog` (`google`, `anthropic`, `openai`, `xai`)
+- Populating the model catalog for providers outside the hardcoded `knownProviders` registry (`google`, `anthropic`, `openai`, `xai`)
 - The Dev Sandbox dashboard's "Custom / Self-Hosted" provider option
 
 ---
@@ -20,7 +21,7 @@ This blocks:
 
 Two complementary changes that together give full custom provider support:
 
-1. **Accept arbitrary `provider` strings on credentials** — any credential with a `provider` value automatically generates both a proxy route and a `models.providers` entry. `resolveProviderDefaults()` auto-fills domain/header only for `google` and `anthropic` (`knownAPIKeyProviders`); all other providers require explicit `domain` (and `apiKey` config when `type: apiKey`).
+1. **Accept arbitrary `provider` strings on credentials** — any credential with a `provider` value automatically generates both a proxy route and a `models.providers` entry. `resolveProviderDefaults()` auto-fills domain/header only for providers in `knownProviders` (currently `google` and `anthropic`); all other providers require explicit `domain` (and `apiKey` config when `type: apiKey`).
 
 2. **Add `spec.customProviders` CRD field** — a typed, validated struct for custom OpenAI-compatible providers with explicit `baseUrl`, model list, and credential linkage. This is the primary interface for dashboards and GitOps.
 
@@ -55,7 +56,7 @@ When `provider` is set directly on a credential (the quick path), `injectProvide
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Provider validation | Arbitrary `provider` strings with explicit requirements | `resolveProviderDefaults()` auto-fills only for `knownAPIKeyProviders` (`google`, `anthropic`); others require explicit `domain` and type-specific config |
+| Provider validation | Arbitrary `provider` strings with explicit requirements | `resolveProviderDefaults()` auto-fills only for providers in `knownProviders` (`google`, `anthropic`); others require explicit `domain` and type-specific config |
 | Custom provider API | Dedicated `spec.customProviders` field | Typed, validated struct is dashboard-friendly and GitOps-friendly; avoids fighting the always-overwrite tier via `spec.config.raw` |
 | Wire format selection | Include optional `api` enum field | Negligible cost; covers Ollama native, Anthropic endpoints, and OpenAI Responses without falling back to raw config that fights the operator's overwrite behavior |
 | API enum values | `openai-completions`, `openai-responses`, `anthropic-messages`, `ollama` | Maps directly to OpenClaw's supported wire formats; forward-compatible (new values are non-breaking) |
@@ -80,7 +81,7 @@ When `provider` is set directly on a credential (the quick path), `injectProvide
 
 ### `spec.credentials[].provider` — relaxed
 
-The `provider` field accepts any string. `resolveProviderDefaults()` auto-fills domain and header only for providers in `knownAPIKeyProviders` (currently `google` and `anthropic`) when `type: apiKey`. All other providers pass through but require explicit `domain` (and `apiKey` config when `type: apiKey`). The model catalog (`modelCatalog`) populates the model picker for `google`, `anthropic`, `openai`, and `xai`; providers not in the catalog are silently skipped for model registration.
+The `provider` field accepts any string. `resolveProviderDefaults()` auto-fills domain and header only for providers in `knownProviders` (currently `google` and `anthropic`) when `type: apiKey`. All other providers pass through but require explicit `domain` (and `apiKey` config when `type: apiKey`). The model catalog (defined in the `Models` field of each `knownProviders` entry) populates the model picker for `google`, `anthropic`, `openai`, and `xai`; providers not in the registry are silently skipped for model registration.
 
 ---
 
@@ -226,6 +227,6 @@ spec:
 ## Backward Compatibility
 
 - Existing CRs with any `provider` value continue to work identically — `injectProviders()` already accepted arbitrary strings.
-- `resolveProviderDefaults()` still auto-infers domain/header for `google` and `anthropic` (via `knownAPIKeyProviders`) — this logic is untouched.
+- `resolveProviderDefaults()` still auto-infers domain/header for `google` and `anthropic` (via `knownProviders`) — this logic is untouched.
 - The model catalog still populates models for `google`, `anthropic`, `openai`, and `xai`.
 - `spec.customProviders` is optional with no default — existing CRs are unaffected.

@@ -25,6 +25,136 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+// --- Registry consistency tests ---
+
+func TestKnownProvidersConsistency(t *testing.T) {
+	const googleProvider = "google"
+
+	t.Run("companions must be defined in knownProviders", func(t *testing.T) {
+		for provider, defaults := range knownProviders {
+			for _, companion := range defaults.Companions {
+				_, ok := knownProviders[companion]
+				assert.True(t, ok,
+					"provider %q declares companion %q which is not defined in knownProviders",
+					provider, companion)
+			}
+		}
+	})
+
+	t.Run("companions must have explicit API set", func(t *testing.T) {
+		for provider, defaults := range knownProviders {
+			for _, companion := range defaults.Companions {
+				cDefaults := knownProviders[companion]
+				assert.NotEmpty(t, cDefaults.API,
+					"provider %q declares companion %q which has no API — "+
+						"companions use a non-standard wire format by definition, so API must be set",
+					provider, companion)
+			}
+		}
+	})
+
+	t.Run("providers with Domain must also have Header", func(t *testing.T) {
+		for provider, defaults := range knownProviders {
+			if defaults.Domain != "" {
+				assert.NotEmpty(t, defaults.Header,
+					"provider %q has Domain %q but no Header for apiKey injection",
+					provider, defaults.Domain)
+			}
+		}
+	})
+
+	t.Run("VertexAPI is only set on providers that are usable via Vertex SDK", func(t *testing.T) {
+		for provider, defaults := range knownProviders {
+			if defaults.VertexAPI != "" && provider == googleProvider {
+				t.Errorf("provider %q has VertexAPI set but google uses Vertex AI directly, not through the SDK path", provider)
+			}
+		}
+	})
+
+	t.Run("Vertex-capable providers with non-default wire format must have VertexAPI", func(t *testing.T) {
+		// Only check providers that users can configure with type: gcp.
+		// Skip google (uses Vertex directly, not the SDK path) and
+		// companion-only providers (never appear as cred.Provider on GCP creds).
+		isCompanion := map[string]bool{}
+		for _, defaults := range knownProviders {
+			for _, c := range defaults.Companions {
+				isCompanion[c] = true
+			}
+		}
+
+		for provider, defaults := range knownProviders {
+			if provider == googleProvider || isCompanion[provider] {
+				continue
+			}
+			if defaults.API != "" && defaults.VertexAPI == "" {
+				assert.Fail(t,
+					"provider %q has API=%q (non-default wire format) but no VertexAPI — "+
+						"if this provider is used via Vertex SDK, it will fall back to openai-completions",
+					provider, defaults.API)
+			}
+		}
+	})
+
+	t.Run("model entries have non-empty Name and Alias", func(t *testing.T) {
+		for provider, defaults := range knownProviders {
+			for i, m := range defaults.Models {
+				assert.NotEmpty(t, m.Name, "provider %q model[%d] has empty Name", provider, i)
+				assert.NotEmpty(t, m.Alias, "provider %q model[%d] has empty Alias", provider, i)
+			}
+		}
+	})
+}
+
+// --- buildProviderEntry tests ---
+
+func TestBuildProviderEntry(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		wantAPI  string
+	}{
+		{name: "google uses native Gemini API", provider: "google", wantAPI: "google-generative-ai"},
+		{name: "anthropic uses Messages API", provider: "anthropic", wantAPI: "anthropic-messages"},
+		{name: "openai-codex uses Codex responses API", provider: "openai-codex", wantAPI: "openai-codex-responses"},
+		{name: "openai uses OpenClaw default wire format", provider: "openai", wantAPI: ""},
+		{name: "xai uses OpenClaw default wire format", provider: "xai", wantAPI: ""},
+		{name: "unknown provider uses OpenClaw default", provider: "custom-llm", wantAPI: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := buildProviderEntry(tt.provider, "https://example.com", "test-key")
+			assert.Equal(t, "https://example.com", entry["baseUrl"])
+			assert.Equal(t, "test-key", entry["apiKey"])
+			assert.Equal(t, []any{}, entry["models"])
+
+			if tt.wantAPI == "" {
+				assert.NotContains(t, entry, "api")
+				return
+			}
+			assert.Equal(t, tt.wantAPI, entry["api"])
+		})
+	}
+}
+
+// --- providerModelCatalog tests ---
+
+func TestProviderModelCatalog(t *testing.T) {
+	t.Run("returns models for known provider", func(t *testing.T) {
+		models := providerModelCatalog("google")
+		require.NotEmpty(t, models)
+		assert.Equal(t, "gemini-3.5-flash", models[0].Name)
+	})
+
+	t.Run("returns nil for unknown provider", func(t *testing.T) {
+		assert.Nil(t, providerModelCatalog("openrouter"))
+	})
+
+	t.Run("returns nil for provider with no models", func(t *testing.T) {
+		assert.Nil(t, providerModelCatalog("openai-codex"))
+	})
+}
+
 // --- Vertex AI base URL tests ---
 
 func TestVertexAIBaseURL(t *testing.T) {
@@ -193,6 +323,16 @@ func TestResolveProviderInfo(t *testing.T) {
 			wantUpstream: "https://custom.ai",
 			wantBasePath: "",
 		},
+		{
+			name: "known provider without BasePath uses domain directly",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "openai",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Domain:   "api.openai.com",
+			},
+			wantUpstream: "https://api.openai.com",
+			wantBasePath: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -335,6 +475,27 @@ func TestResolveProviderDefaults(t *testing.T) {
 				Type: clawv1alpha1.CredentialTypeKubernetes,
 			},
 			wantDomain: "",
+		},
+		{
+			name: "known provider without Domain defaults requires explicit domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "grok",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "xai",
+			},
+			wantErr: "domain is required",
+		},
+		{
+			name: "known provider without Domain defaults succeeds with explicit values",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gpt",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "openai",
+				Domain:   "api.openai.com",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization"},
+			},
+			wantDomain: "api.openai.com",
+			wantHeader: "Authorization",
 		},
 	}
 

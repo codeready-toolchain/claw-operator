@@ -117,7 +117,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 		assert.Equal(t, "https://us-central1-aiplatform.googleapis.com", mv["baseUrl"])
 		assert.Equal(t, "gcp-vertex-credentials", mv["apiKey"])
 		assert.Equal(t, 128000, mv["maxTokens"])
-		assert.NotContains(t, mv, "api", "meta has no api mapping in vertexProviderAPIMapping")
+		assert.NotContains(t, mv, "api", "meta has no VertexAPI in knownProviders")
 	})
 
 	t.Run("should reject duplicate vertex providers", func(t *testing.T) {
@@ -160,6 +160,7 @@ func TestInjectProviders(t *testing.T) {
 		require.Contains(t, providers, "google")
 		google := providers["google"].(map[string]any)
 		assert.Equal(t, "https://generativelanguage.googleapis.com/v1beta", google["baseUrl"])
+		assert.Equal(t, "google-generative-ai", google["api"])
 		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", google["apiKey"])
 	})
 
@@ -187,6 +188,7 @@ func TestInjectProviders(t *testing.T) {
 		assert.Contains(t, providers, "anthropic")
 		anthropic := providers["anthropic"].(map[string]any)
 		assert.Equal(t, "https://api.anthropic.com", anthropic["baseUrl"])
+		assert.Equal(t, "anthropic-messages", anthropic["api"])
 	})
 
 	t.Run("should leave providers empty when no provider is set", func(t *testing.T) {
@@ -226,6 +228,28 @@ func TestInjectProviders(t *testing.T) {
 		require.Contains(t, providers, "google")
 		google := providers["google"].(map[string]any)
 		assert.Equal(t, "https://europe-west1-aiplatform.googleapis.com/v1/projects/my-proj/locations/europe-west1/publishers/google", google["baseUrl"])
+		assert.Equal(t, "google-generative-ai", google["api"])
+	})
+
+	t.Run("should set api for anthropic apiKey credential", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "claude",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "anthropic",
+				Domain:   "api.anthropic.com",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "x-api-key"},
+			},
+		}
+
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "anthropic")
+		anthropic := providers["anthropic"].(map[string]any)
+		assert.Equal(t, "https://api.anthropic.com", anthropic["baseUrl"])
+		assert.Equal(t, "anthropic-messages", anthropic["api"])
 	})
 
 	t.Run("should skip pathToken credentials even with provider set", func(t *testing.T) {
@@ -280,6 +304,8 @@ func TestInjectProviders(t *testing.T) {
 		codex := providers["openai-codex"].(map[string]any)
 		openai := providers["openai"].(map[string]any)
 		assert.Equal(t, openai["baseUrl"], codex["baseUrl"])
+		assert.Equal(t, "openai-codex-responses", codex["api"])
+		assert.NotContains(t, openai, "api", "OpenAI-compatible providers use OpenClaw default wire format")
 		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", codex["apiKey"])
 	})
 
@@ -295,6 +321,49 @@ func TestInjectProviders(t *testing.T) {
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "openai-codex")
 	})
+
+	t.Run("should omit api field for xai (openai-compatible provider)", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "grok",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "xai",
+				Domain:   "api.x.ai",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization"},
+			},
+		}
+
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "xai")
+		xai := providers["xai"].(map[string]any)
+		assert.Equal(t, "https://api.x.ai", xai["baseUrl"])
+		assert.NotContains(t, xai, "api", "xai is OpenAI-compatible and should use the default wire format")
+	})
+
+	t.Run("should handle unknown provider without api field", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "custom",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "openrouter",
+				Domain:   "openrouter.ai",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization"},
+			},
+		}
+
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "openrouter")
+		entry := providers["openrouter"].(map[string]any)
+		assert.Equal(t, "https://openrouter.ai", entry["baseUrl"])
+		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", entry["apiKey"])
+		assert.NotContains(t, entry, "api", "unknown providers should use OpenClaw default wire format")
+	})
 }
 
 // --- Model catalog injection tests ---
@@ -309,7 +378,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-		assert.Len(t, models, len(modelCatalog["google"]))
+		assert.Len(t, models, len(providerModelCatalog("google")))
 		assert.Contains(t, models, "google/gemini-3.5-flash")
 		entry := models["google/gemini-3.5-flash"].(map[string]any)
 		assert.Equal(t, "Gemini 3.5 Flash", entry["alias"])
@@ -325,7 +394,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-		expectedCount := len(modelCatalog["google"]) + len(modelCatalog["anthropic"])
+		expectedCount := len(providerModelCatalog("google")) + len(providerModelCatalog("anthropic"))
 		assert.Len(t, models, expectedCount)
 		assert.Contains(t, models, "google/gemini-3.5-flash")
 		assert.Contains(t, models, "anthropic/claude-sonnet-4-6")
@@ -362,7 +431,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
 		assert.Contains(t, models, "anthropic/claude-sonnet-4-6")
 		assert.Contains(t, models, "anthropic-vertex/claude-sonnet-4-6")
-		expectedCount := len(modelCatalog["anthropic"]) * 2
+		expectedCount := len(providerModelCatalog("anthropic")) * 2
 		assert.Len(t, models, expectedCount)
 	})
 
@@ -450,7 +519,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
 		entry := models["google/gemini-3.5-flash"].(map[string]any)
 		assert.Equal(t, "My Custom Alias", entry["alias"])
-		assert.Len(t, models, len(modelCatalog["google"]))
+		assert.Len(t, models, len(providerModelCatalog("google")))
 	})
 
 	t.Run("user primary wins over catalog default", func(t *testing.T) {
@@ -484,9 +553,9 @@ func TestInjectModelCatalog(t *testing.T) {
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
 		fallbacks, ok := model["fallbacks"].([]any)
 		require.True(t, ok, "fallbacks should be set")
-		require.Len(t, fallbacks, len(modelCatalog["google"])-1, "fallbacks should contain all non-primary models")
+		require.Len(t, fallbacks, len(providerModelCatalog("google"))-1, "fallbacks should contain all non-primary models")
 		for i, fb := range fallbacks {
-			assert.Equal(t, "google/"+modelCatalog["google"][i+1].Name, fb)
+			assert.Equal(t, "google/"+providerModelCatalog("google")[i+1].Name, fb)
 		}
 	})
 
@@ -519,7 +588,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
-		assert.Equal(t, "anthropic-vertex/"+modelCatalog["anthropic"][0].Name, model["primary"])
+		assert.Equal(t, "anthropic-vertex/"+providerModelCatalog("anthropic")[0].Name, model["primary"])
 		fallbacks, ok := model["fallbacks"].([]any)
 		require.True(t, ok, "fallbacks should be set for vertex credentials")
 		for _, f := range fallbacks {
@@ -567,7 +636,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-		assert.Len(t, models, len(modelCatalog["google"]))
+		assert.Len(t, models, len(providerModelCatalog("google")))
 		assert.Contains(t, models, "google/gemini-3.5-flash")
 		assert.Contains(t, models, "google/gemini-3.1-flash-lite")
 		proEntry := models["google/gemini-3.1-pro-preview"].(map[string]any)
