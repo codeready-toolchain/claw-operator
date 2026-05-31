@@ -48,7 +48,7 @@ Detailed architecture reference: @docs/architecture.md
 ## Key Directories
 
 - `api/v1alpha1/` -- CRD types (`claw_types.go`, `clawdevicepairingrequest_types.go`). Condition/annotation constants live here
-- `internal/controller/` -- Reconciler + tests. Key files: `claw_resource_controller.go` (main reconciler), `claw_credentials.go` (credential validation, gateway secret), `claw_providers.go` (provider defaults/routing), `claw_proxy.go` (proxy config), `claw_deployment.go` (deployment configuration), `claw_status.go` (status updates), `claw_models.go` (model catalog), `claw_auth.go` (auth mode + device pairing)
+- `internal/controller/` -- Reconciler + tests. Key files: `claw_resource_controller.go` (main reconciler), `claw_credentials.go` (credential validation, gateway secret), `claw_providers.go` (centralized `knownProviders` registry, provider defaults/routing), `claw_proxy.go` (proxy config), `claw_deployment.go` (deployment configuration), `claw_status.go` (status updates), `claw_models.go` (model catalog accessor, delegates to `knownProviders`), `claw_auth.go` (auth mode + device pairing)
 - `internal/proxy/` -- MITM proxy library
 - `internal/assets/manifests/` -- Embedded Kustomize manifests (two components: `claw/`, `claw-proxy/`)
 - `cmd/main.go` -- Manager entrypoint (reads `PROXY_IMAGE`, `KUBECTL_IMAGE`, `IMAGE_PULL_POLICY` env vars)

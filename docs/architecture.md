@@ -46,11 +46,13 @@ The proxy sits between the gateway and external APIs, injecting credentials into
 
 **Why two CONNECT modes?** Most domains need MITM for credential injection, path filtering, or header injection. But some protocols (WhatsApp Noise handshake, certain WebSocket tunnels) break under TLS interception. Domains with `type: none` and no path/header restrictions use a direct CONNECT tunnel instead.
 
-**Provider defaults**: known providers (google, anthropic, openai, openrouter, xai) have pre-configured domain and apiKey header defaults. Users only need to specify `provider` and `secretRef` — the operator infers the rest. Explicit values always take precedence as an escape hatch.
+**Provider defaults**: The `knownProviders` registry in `claw_providers.go` centralizes all per-provider knowledge: credential defaults (domain, header), wire format API identifier, Vertex AI SDK config, companion relationships, and model catalog. For `google` and `anthropic`, users only need `provider` and `secretRef` — the operator infers domain and apiKey header. For `openai` and `xai`, domain must be explicit (they use `type: bearer`). Providers not in the registry (e.g., `openrouter`, custom providers) still work but require fully explicit configuration. Explicit values always take precedence as an escape hatch.
+
+**Wire format API**: Each provider in `knownProviders` declares the OpenClaw wire format API it requires (e.g., `google-generative-ai` for Google, `anthropic-messages` for Anthropic, `openai-codex-responses` for the internal openai-codex companion). `buildProviderEntry()` bakes the correct `api` field into every `models.providers` entry at generation time. Providers using the OpenClaw default (`openai-completions`) — like `openai`, `xai`, and unknown providers — omit the field entirely.
 
 **Channel defaults**: known channels (telegram, discord, slack, whatsapp) have pre-configured domain, credential type, companion routes, and placeholder tokens. Users only need to specify `channel` and `secretRef` — the operator infers proxy config and injects channel enablement into `operator.json`. This mirrors the `provider` pattern for LLM credentials. Explicit values always take precedence as an escape hatch.
 
-**Vertex AI path**: credentials with `type: gcp` and a non-google `provider` (e.g., anthropic) use the native Vertex AI SDK rather than gateway routing. The operator creates a stub ADC (Application Default Credentials) ConfigMap so google-auth-library can bootstrap, and the proxy intercepts token refresh requests to vend real tokens.
+**Vertex AI path**: credentials with `type: gcp` and a non-google `provider` (e.g., anthropic) use the native Vertex AI SDK rather than gateway routing. The operator creates a stub ADC (Application Default Credentials) ConfigMap so google-auth-library can bootstrap, and the proxy intercepts token refresh requests to vend real tokens. Providers that require an external OpenClaw plugin for the Vertex SDK path (declared via `VertexPlugin` in `knownProviders`) are auto-installed — `effectivePlugins()` merges these implicit plugins with explicit `spec.plugins` entries, deduplicating where both are declared.
 
 **Companion providers**: OpenClaw sometimes routes models through internal provider names that differ from the user-facing provider. For example, GPT-5.x models (gpt-5.5, gpt-5.4, gpt-5.4-mini) are routed through an internal `openai-codex` provider rather than `openai`. The `knownProviders` registry in `claw_providers.go` declares these relationships via the `Companions` field: when `injectProviders` creates a provider entry, it also creates entries for any companions with the same `baseUrl` and placeholder API key (using `buildProviderEntry` to ensure the correct wire format API is set). This ensures the proxy handles credential injection for all models without requiring users to configure additional providers. Companion keys are checked for collisions with the same error path as primary providers.
 
@@ -78,4 +80,12 @@ Two Kustomize components under `internal/assets/manifests/`:
 The proxy ConfigMap is intentionally excluded from Kustomize (file prefixed with `_`). It's applied directly by the controller because its content is generated dynamically from resolved credentials, not from a static template.
 
 Both components share the `app.kubernetes.io/name: claw` label applied via their respective `kustomization.yaml` files.
+
+## Recreate Deployment Rollout Guard
+
+The gateway Deployment uses `strategy: Recreate` (not `RollingUpdate`) because it holds a PVC. Server-side apply with `Force: true` increments the Deployment's `generation` on every patch — even when the desired state is identical — which triggers the Recreate controller to kill the running pod and start a new one. On a busy reconciliation loop this means unnecessary downtime.
+
+To avoid this, `isRecreateDeploymentUnchanged()` computes a SHA-256 hash of the desired `spec.template` and compares it against a `claw.sandbox.redhat.com/desired-template-hash` annotation on the live Deployment. If the hash matches and `spec.replicas` is unchanged, the apply is skipped entirely. On first apply (or any change), the new hash is stamped onto the desired object's annotations before SSA applies it.
+
+The replicas check handles the idle/unidle case: an external idler may scale the Deployment to 0, and the operator needs to restore replicas even if the template is identical.
 
