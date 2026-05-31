@@ -103,6 +103,17 @@ func TestKnownProvidersConsistency(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("providers with VertexAPI must have VertexPlugin", func(t *testing.T) {
+		for provider, defaults := range knownProviders {
+			if defaults.VertexAPI != "" {
+				assert.NotEmpty(t, defaults.VertexPlugin,
+					"provider %q has VertexAPI=%q but no VertexPlugin — "+
+						"the external plugin won't be auto-installed for Vertex SDK credentials",
+					provider, defaults.VertexAPI)
+			}
+		}
+	})
 }
 
 // --- buildProviderEntry tests ---
@@ -332,6 +343,16 @@ func TestResolveProviderInfo(t *testing.T) {
 			},
 			wantUpstream: "https://api.openai.com",
 			wantBasePath: "",
+		},
+		{
+			name: "explicit domain overrides default for provider with BasePath",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "google",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Domain:   "gemini-proxy.internal",
+			},
+			wantUpstream: "https://gemini-proxy.internal",
+			wantBasePath: "/v1beta",
 		},
 	}
 

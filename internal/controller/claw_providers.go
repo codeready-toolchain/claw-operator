@@ -204,9 +204,9 @@ func resolveProviderInfo(cred clawv1alpha1.CredentialSpec) providerInfo {
 	}
 
 	if defaults, ok := knownProviders[cred.Provider]; ok && defaults.BasePath != "" {
-		domain := defaults.Domain
+		domain := strings.TrimPrefix(cred.Domain, ".")
 		if domain == "" {
-			domain = strings.TrimPrefix(cred.Domain, ".")
+			domain = defaults.Domain
 		}
 		return providerInfo{
 			Upstream: "https://" + domain,
