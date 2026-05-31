@@ -93,25 +93,49 @@ func TestPluginsEnabled(t *testing.T) {
 // --- generatePluginInstallScript tests ---
 
 func TestGeneratePluginInstallScript(t *testing.T) {
-	t.Run("should generate script for single plugin", func(t *testing.T) {
+	t.Run("should contain manifest cleanup phase", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
-		assert.Equal(t, "set -e; rm -rf /home/node/.openclaw/extensions; openclaw plugins install clawhub:'@openclaw/matrix'", script)
+		assert.Contains(t, script, `MANIFEST="$EXT/.operator-managed"`)
+		assert.Contains(t, script, `if [ -f "$MANIFEST" ]; then`)
+		assert.Contains(t, script, `rm -rf "$EXT/$dir"`)
+		assert.Contains(t, script, `rm -f "$MANIFEST"`)
 	})
 
-	t.Run("should generate script for multiple plugins", func(t *testing.T) {
+	t.Run("should contain pre-install snapshot phase", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
+		assert.Contains(t, script, `mkdir -p "$EXT"`)
+		assert.Contains(t, script, `ls "$EXT" 2>/dev/null | sort > /tmp/before-plugins.txt`)
+	})
+
+	t.Run("should contain diff-record phase", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
+		assert.Contains(t, script, `ls "$EXT" | sort | comm -13 /tmp/before-plugins.txt - > "$MANIFEST"`)
+	})
+
+	t.Run("should generate install command for single plugin", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
+		assert.Contains(t, script, "openclaw plugins install clawhub:'@openclaw/matrix'")
+	})
+
+	t.Run("should generate install commands for multiple plugins", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix", "@openclaw/diagnostics-otel"})
-		expected := "set -e; rm -rf /home/node/.openclaw/extensions; openclaw plugins install clawhub:'@openclaw/matrix'; openclaw plugins install clawhub:'@openclaw/diagnostics-otel'"
-		assert.Equal(t, expected, script)
+		assert.Contains(t, script, "openclaw plugins install clawhub:'@openclaw/matrix'")
+		assert.Contains(t, script, "openclaw plugins install clawhub:'@openclaw/diagnostics-otel'")
 	})
 
 	t.Run("should escape single quotes in plugin names", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"foo'bar"})
-		assert.Equal(t, "set -e; rm -rf /home/node/.openclaw/extensions; openclaw plugins install clawhub:'foo'\\''bar'", script)
+		assert.Contains(t, script, "openclaw plugins install clawhub:'foo'\\''bar'")
 	})
 
 	t.Run("should escape shell metacharacters", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"foo; rm -rf /"})
 		assert.Contains(t, script, "'foo; rm -rf /'")
+	})
+
+	t.Run("should not contain blanket rm -rf extensions", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
+		assert.NotContains(t, script, "rm -rf /home/node/.openclaw/extensions")
 	})
 }
 

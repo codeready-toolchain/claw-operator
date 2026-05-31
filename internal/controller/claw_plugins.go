@@ -79,12 +79,24 @@ func requiredProviderPlugins(instance *clawv1alpha1.Claw) []string {
 
 func generatePluginInstallScript(plugins []string) string {
 	var b strings.Builder
-	b.WriteString("set -e; rm -rf /home/node/.openclaw/extensions")
+	b.WriteString(`set -e
+EXT="/home/node/.openclaw/extensions"
+MANIFEST="$EXT/.operator-managed"
+if [ -f "$MANIFEST" ]; then
+  while IFS= read -r dir; do
+    [ -n "$dir" ] && rm -rf "$EXT/$dir"
+  done < "$MANIFEST"
+  rm -f "$MANIFEST"
+fi
+mkdir -p "$EXT"
+ls "$EXT" 2>/dev/null | sort > /tmp/before-plugins.txt
+`)
 	for _, pkg := range plugins {
 		escaped := "'" + strings.ReplaceAll(pkg, "'", "'\\''") + "'"
-		b.WriteString("; openclaw plugins install clawhub:")
-		b.WriteString(escaped)
+		fmt.Fprintf(&b, "openclaw plugins install clawhub:%s\n", escaped)
 	}
+	b.WriteString(`ls "$EXT" | sort | comm -13 /tmp/before-plugins.txt - > "$MANIFEST"
+`)
 	return b.String()
 }
 

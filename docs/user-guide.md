@@ -1530,17 +1530,31 @@ When `spec.plugins` is non-empty, the operator adds an `init-plugins` init conta
 
 ### How it works
 
-The `init-plugins` container runs after the proxy is available and before the gateway starts. It downloads packages from ClawHub/npm through the MITM proxy, writing them to the PVC at `/home/node/.openclaw`.
+The `init-plugins` container runs after the proxy is available and before the gateway starts. It downloads packages from ClawHub/npm through the MITM proxy, writing them to the PVC at `/home/node/.openclaw/extensions`.
 
 ```
 init-volume → init-config → wait-for-proxy → init-plugins → gateway
 ```
 
+The operator uses **manifest-tracked selective cleanup** to manage plugins without disturbing user-installed plugins:
+
+1. Reads `.operator-managed` (a manifest file tracking previously operator-installed directories)
+2. Removes only the directories listed in that manifest
+3. Installs the current set of declared plugins
+4. Records newly-created directories in the manifest
+
+This means:
+
+- **User-installed plugins are preserved** — plugins installed via the OpenClaw UI or CLI at runtime survive pod restarts
+- **Removed plugins are cleaned up** — removing a plugin from `spec.plugins` uninstalls its files on the next pod restart
+- **Crash-safe** — if the pod dies mid-install, the next restart treats it as a first run (installs everything, records the manifest)
+
 Changing the plugin list triggers a pod rollout (the operator includes the plugin list in the config hash annotation).
 
 ### Limitations
 
-Removing a plugin from `spec.plugins` prevents it from being installed on new pods but does **not** uninstall it from the existing PVC. To fully remove a plugin, either delete the PVC (the operator will recreate it) or manually remove the plugin files.
+- The operator only manages plugins declared in `spec.plugins`. User-installed plugins are never touched by the operator (not upgraded, not removed).
+- If a user manually installs the same plugin that is also declared in `spec.plugins`, the operator takes ownership of it on the next restart.
 
 ---
 
