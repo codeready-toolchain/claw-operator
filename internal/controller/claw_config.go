@@ -133,6 +133,13 @@ func enforceInfrastructureKeys(config map[string]any) {
 	ensureNestedMap(gateway, configKeyControlUI)["enabled"] = true
 }
 
+// disableUpdateCheck prevents the gateway from showing the misleading
+// "update available" banner. The operator pins the container image, so
+// users cannot self-update via the OpenClaw UI.
+func disableUpdateCheck(config map[string]any) {
+	setNestedValue(config, false, "update", "checkOnStart")
+}
+
 // enforceTrustedProxies appends the required RFC1918 ranges to any user-provided
 // trustedProxies, deduplicating entries.
 func enforceTrustedProxies(config map[string]any) {
