@@ -79,7 +79,7 @@ func requiredProviderPlugins(instance *clawv1alpha1.Claw) []string {
 
 func generatePluginInstallScript(plugins []string) string {
 	var b strings.Builder
-	b.WriteString("set -e")
+	b.WriteString("set -e; rm -rf /home/node/.openclaw/extensions")
 	for _, pkg := range plugins {
 		escaped := "'" + strings.ReplaceAll(pkg, "'", "'\\''") + "'"
 		b.WriteString("; openclaw plugins install clawhub:")

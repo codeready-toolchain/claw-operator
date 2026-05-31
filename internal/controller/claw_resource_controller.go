@@ -1000,6 +1000,19 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 	appliedCount := 0
 
 	for _, obj := range objects {
+		if obj.GetKind() == DeploymentKind {
+			strategy, _, _ := unstructured.NestedString(obj.Object, "spec", "strategy", "type")
+			if strategy == "Recreate" {
+				unchanged, err := r.isRecreateDeploymentUnchanged(ctx, obj)
+				if err != nil {
+					logger.V(1).Info("Could not compare deployment spec, will apply", "name", obj.GetName(), "error", err)
+				} else if unchanged {
+					appliedCount++
+					continue
+				}
+			}
+		}
+
 		if err := r.Patch(ctx, obj, client.Apply, &client.PatchOptions{
 			FieldManager: "claw-operator",
 			Force:        ptr.To(true),
@@ -1015,6 +1028,66 @@ func (r *ClawResourceReconciler) applyResources(ctx context.Context, objects []*
 	}
 	logger.Info("Successfully applied resources", "count", appliedCount)
 	return appliedCount, nil
+}
+
+// isRecreateDeploymentUnchanged checks whether the desired spec.template for a
+// Recreate-strategy Deployment matches what was last applied by comparing a SHA-256
+// hash of the desired template against the hash stamped on the live Deployment's
+// metadata.annotations. It also compares spec.replicas to handle idle/unidle transitions.
+// This prevents SSA Force from triggering generation increments (and thus unnecessary
+// pod-killing rollouts) when the operator's output is identical.
+//
+// When the hashes differ (or on first apply), the new hash is stamped onto the desired
+// object's metadata.annotations before returning, so the subsequent SSA apply persists it.
+func (r *ClawResourceReconciler) isRecreateDeploymentUnchanged(ctx context.Context, desired *unstructured.Unstructured) (bool, error) {
+	spec, ok := desired.Object["spec"].(map[string]any)
+	if !ok {
+		return false, nil
+	}
+	template, ok := spec["template"]
+	if !ok {
+		return false, nil
+	}
+	templateBytes, err := json.Marshal(template)
+	if err != nil {
+		return false, err
+	}
+	desiredHash := fmt.Sprintf("%x", sha256.Sum256(templateBytes))
+
+	current := &unstructured.Unstructured{}
+	current.SetGroupVersionKind(desired.GroupVersionKind())
+	key := client.ObjectKey{Namespace: desired.GetNamespace(), Name: desired.GetName()}
+	if err := r.Get(ctx, key, current); err != nil {
+		stampDesiredTemplateHash(desired, desiredHash)
+		return false, err
+	}
+
+	// Replicas lives outside spec.template — compare separately to handle idle/unidle.
+	desiredReplicas, _, _ := unstructured.NestedFieldNoCopy(desired.Object, "spec", "replicas")
+	currentReplicas, _, _ := unstructured.NestedFieldNoCopy(current.Object, "spec", "replicas")
+	if fmt.Sprint(desiredReplicas) != fmt.Sprint(currentReplicas) {
+		stampDesiredTemplateHash(desired, desiredHash)
+		return false, nil
+	}
+
+	currentAnnotations := current.GetAnnotations()
+	if currentAnnotations[clawv1alpha1.AnnotationKeyDesiredTemplateHash] == desiredHash {
+		return true, nil
+	}
+
+	stampDesiredTemplateHash(desired, desiredHash)
+	return false, nil
+}
+
+// stampDesiredTemplateHash sets the desired-template-hash annotation on the
+// Deployment's own metadata (not the pod template).
+func stampDesiredTemplateHash(obj *unstructured.Unstructured, hash string) {
+	ann := obj.GetAnnotations()
+	if ann == nil {
+		ann = make(map[string]string)
+	}
+	ann[clawv1alpha1.AnnotationKeyDesiredTemplateHash] = hash
+	obj.SetAnnotations(ann)
 }
 
 // applyRouteByName applies only the Route with the given name from provided objects.

@@ -74,6 +74,11 @@ const (
 	AnnotationSuffixSecretVersion    = "-secret-version"
 	AnnotationPrefixMcpSecretVersion = "claw.sandbox.redhat.com/mcp-"
 	AnnotationSuffixMcpSecretVersion = "-secret-version"
+
+	// AnnotationKeyDesiredTemplateHash is stamped on a Deployment's own metadata.annotations
+	// (not the pod template) to record what the operator last applied. Used to skip
+	// redundant SSA Force patches on Recreate-strategy Deployments.
+	AnnotationKeyDesiredTemplateHash = "claw.sandbox.redhat.com/desired-template-hash"
 )
 
 // Condition reasons for Claw status.

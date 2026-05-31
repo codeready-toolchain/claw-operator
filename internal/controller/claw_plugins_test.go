@@ -95,18 +95,18 @@ func TestPluginsEnabled(t *testing.T) {
 func TestGeneratePluginInstallScript(t *testing.T) {
 	t.Run("should generate script for single plugin", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
-		assert.Equal(t, "set -e; openclaw plugins install clawhub:'@openclaw/matrix'", script)
+		assert.Equal(t, "set -e; rm -rf /home/node/.openclaw/extensions; openclaw plugins install clawhub:'@openclaw/matrix'", script)
 	})
 
 	t.Run("should generate script for multiple plugins", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix", "@openclaw/diagnostics-otel"})
-		expected := "set -e; openclaw plugins install clawhub:'@openclaw/matrix'; openclaw plugins install clawhub:'@openclaw/diagnostics-otel'"
+		expected := "set -e; rm -rf /home/node/.openclaw/extensions; openclaw plugins install clawhub:'@openclaw/matrix'; openclaw plugins install clawhub:'@openclaw/diagnostics-otel'"
 		assert.Equal(t, expected, script)
 	})
 
 	t.Run("should escape single quotes in plugin names", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"foo'bar"})
-		assert.Equal(t, "set -e; openclaw plugins install clawhub:'foo'\\''bar'", script)
+		assert.Equal(t, "set -e; rm -rf /home/node/.openclaw/extensions; openclaw plugins install clawhub:'foo'\\''bar'", script)
 	})
 
 	t.Run("should escape shell metacharacters", func(t *testing.T) {

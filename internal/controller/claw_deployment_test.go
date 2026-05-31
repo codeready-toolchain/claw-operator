@@ -1122,3 +1122,292 @@ func TestMcpAnnotationKey(t *testing.T) {
 		assert.Regexp(t, `^[0-9a-f]{12}$`, key, "should only contain valid hex chars regardless of input")
 	})
 }
+
+// --- Desired template hash (Recreate rollout guard) tests ---
+
+func TestStampDesiredTemplateHash(t *testing.T) {
+	t.Run("should set annotation on object with no existing annotations", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+		obj.SetName("test")
+		stampDesiredTemplateHash(obj, "abc123")
+		assert.Equal(t, "abc123", obj.GetAnnotations()[clawv1alpha1.AnnotationKeyDesiredTemplateHash])
+	})
+
+	t.Run("should preserve existing annotations", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+		obj.SetName("test")
+		obj.SetAnnotations(map[string]string{"existing": "value"})
+		stampDesiredTemplateHash(obj, "def456")
+		ann := obj.GetAnnotations()
+		assert.Equal(t, "def456", ann[clawv1alpha1.AnnotationKeyDesiredTemplateHash])
+		assert.Equal(t, "value", ann["existing"])
+	})
+}
+
+func TestIsRecreateDeploymentUnchanged(t *testing.T) {
+	ctx := context.Background()
+
+	makeDeployment := func(name, ns, image string) *unstructured.Unstructured {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind(DeploymentKind))
+		obj.SetName(name)
+		obj.SetNamespace(ns)
+		obj.Object["spec"] = map[string]any{
+			"replicas": int64(1),
+			"selector": map[string]any{
+				"matchLabels": map[string]any{"app": "claw"},
+			},
+			"strategy": map[string]any{"type": "Recreate"},
+			"template": map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]any{"app": "claw"},
+					"annotations": map[string]any{
+						clawv1alpha1.AnnotationKeyGatewayConfigHash: "somehash",
+					},
+				},
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name":  "gateway",
+							"image": image,
+						},
+					},
+				},
+			},
+		}
+		return obj
+	}
+
+	t.Run("should return false and stamp hash when deployment does not exist", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		desired := makeDeployment("nonexistent-deploy", namespace, "ghcr.io/openclaw/openclaw:slim")
+
+		unchanged, err := reconciler.isRecreateDeploymentUnchanged(ctx, desired)
+		assert.Error(t, err)
+		assert.False(t, unchanged)
+		assert.NotEmpty(t, desired.GetAnnotations()[clawv1alpha1.AnnotationKeyDesiredTemplateHash],
+			"hash should be stamped on desired even when current doesn't exist")
+	})
+
+	t.Run("should return false on first apply then true on identical second reconcile", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		deployName := fmt.Sprintf("hash-test-%s", "idempotent")
+
+		desired1 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		unchanged, err := reconciler.isRecreateDeploymentUnchanged(ctx, desired1)
+		assert.Error(t, err, "should error because deployment doesn't exist yet")
+		assert.False(t, unchanged)
+
+		// Apply the deployment with the stamped hash
+		require.NoError(t, k8sClient.Patch(ctx, desired1, client.Apply, &client.PatchOptions{
+			FieldManager: "claw-operator",
+			Force:        ptrTo(true),
+		}))
+
+		// Second reconcile with identical template
+		desired2 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		unchanged, err = reconciler.isRecreateDeploymentUnchanged(ctx, desired2)
+		assert.NoError(t, err)
+		assert.True(t, unchanged, "should detect no change on identical template")
+	})
+
+	t.Run("should return false when image changes", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		deployName := fmt.Sprintf("hash-test-%s", "image-change")
+
+		desired1 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:v1")
+		_, _ = reconciler.isRecreateDeploymentUnchanged(ctx, desired1)
+		require.NoError(t, k8sClient.Patch(ctx, desired1, client.Apply, &client.PatchOptions{
+			FieldManager: "claw-operator",
+			Force:        ptrTo(true),
+		}))
+
+		desired2 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:v2")
+		unchanged, err := reconciler.isRecreateDeploymentUnchanged(ctx, desired2)
+		assert.NoError(t, err)
+		assert.False(t, unchanged, "image change should be detected")
+		assert.NotEmpty(t, desired2.GetAnnotations()[clawv1alpha1.AnnotationKeyDesiredTemplateHash],
+			"new hash should be stamped on desired")
+	})
+
+	t.Run("should return false when pod template annotation changes", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		deployName := fmt.Sprintf("hash-test-%s", "ann-change")
+
+		desired1 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		_, _ = reconciler.isRecreateDeploymentUnchanged(ctx, desired1)
+		require.NoError(t, k8sClient.Patch(ctx, desired1, client.Apply, &client.PatchOptions{
+			FieldManager: "claw-operator",
+			Force:        ptrTo(true),
+		}))
+
+		// Change the gateway-config-hash annotation (simulates config change)
+		desired2 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		require.NoError(t, unstructured.SetNestedField(desired2.Object, "newhash",
+			"spec", "template", "metadata", "annotations", clawv1alpha1.AnnotationKeyGatewayConfigHash))
+
+		unchanged, err := reconciler.isRecreateDeploymentUnchanged(ctx, desired2)
+		assert.NoError(t, err)
+		assert.False(t, unchanged, "annotation change should be detected")
+	})
+
+	t.Run("should return false when new container is added", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		deployName := fmt.Sprintf("hash-test-%s", "new-container")
+
+		desired1 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		_, _ = reconciler.isRecreateDeploymentUnchanged(ctx, desired1)
+		require.NoError(t, k8sClient.Patch(ctx, desired1, client.Apply, &client.PatchOptions{
+			FieldManager: "claw-operator",
+			Force:        ptrTo(true),
+		}))
+
+		// Add a sidecar container
+		desired2 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		containers, _, _ := unstructured.NestedSlice(desired2.Object, "spec", "template", "spec", "containers")
+		containers = append(containers, map[string]any{
+			"name":  "sidecar",
+			"image": "otel/collector:latest",
+		})
+		require.NoError(t, unstructured.SetNestedSlice(desired2.Object, containers, "spec", "template", "spec", "containers"))
+
+		unchanged, err := reconciler.isRecreateDeploymentUnchanged(ctx, desired2)
+		assert.NoError(t, err)
+		assert.False(t, unchanged, "adding a container should be detected")
+	})
+
+	t.Run("should return false when volume is added", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		deployName := fmt.Sprintf("hash-test-%s", "new-volume")
+
+		desired1 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		_, _ = reconciler.isRecreateDeploymentUnchanged(ctx, desired1)
+		require.NoError(t, k8sClient.Patch(ctx, desired1, client.Apply, &client.PatchOptions{
+			FieldManager: "claw-operator",
+			Force:        ptrTo(true),
+		}))
+
+		// Add a volume to template spec
+		desired2 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		require.NoError(t, unstructured.SetNestedSlice(desired2.Object, []any{
+			map[string]any{
+				"name":     "new-vol",
+				"emptyDir": map[string]any{},
+			},
+		}, "spec", "template", "spec", "volumes"))
+
+		unchanged, err := reconciler.isRecreateDeploymentUnchanged(ctx, desired2)
+		assert.NoError(t, err)
+		assert.False(t, unchanged, "adding a volume should be detected")
+	})
+
+	t.Run("should return false when replicas changes (idle/unidle)", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		deployName := fmt.Sprintf("hash-test-%s", "replicas")
+
+		// Apply with replicas=1
+		desired1 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		_, _ = reconciler.isRecreateDeploymentUnchanged(ctx, desired1)
+		require.NoError(t, k8sClient.Patch(ctx, desired1, client.Apply, &client.PatchOptions{
+			FieldManager: "claw-operator",
+			Force:        ptrTo(true),
+		}))
+
+		// Simulate idler scaling to 0 (external actor modifies replicas)
+		idled := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		require.NoError(t, unstructured.SetNestedField(idled.Object, int64(0), "spec", "replicas"))
+		require.NoError(t, k8sClient.Patch(ctx, idled, client.Apply, &client.PatchOptions{
+			FieldManager: "idler",
+			Force:        ptrTo(true),
+		}))
+
+		// Operator wants replicas=1 again (unidle) — template unchanged, but replicas differs
+		desired2 := makeDeployment(deployName, namespace, "ghcr.io/openclaw/openclaw:slim")
+		unchanged, err := reconciler.isRecreateDeploymentUnchanged(ctx, desired2)
+		assert.NoError(t, err)
+		assert.False(t, unchanged, "replicas change should be detected even if template hash matches")
+	})
+
+	t.Run("should produce a valid 64-char hex hash", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		desired := makeDeployment("hash-test-format", namespace, "ghcr.io/openclaw/openclaw:slim")
+		_, _ = reconciler.isRecreateDeploymentUnchanged(ctx, desired)
+
+		hash := desired.GetAnnotations()[clawv1alpha1.AnnotationKeyDesiredTemplateHash]
+		assert.Regexp(t, `^[0-9a-f]{64}$`, hash, "hash should be a 64-char hex SHA-256")
+	})
+}
+
+// --- Desired template hash integration test (full reconcile loop) ---
+
+func TestDesiredTemplateHashIntegration(t *testing.T) {
+	const resourceName = testInstanceName
+	ctx := context.Background()
+
+	t.Run("should stamp desired-template-hash on gateway deployment metadata", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		createClawInstance(t, ctx, resourceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "gateway Deployment should be created")
+
+		hash, exists := deployment.Annotations[clawv1alpha1.AnnotationKeyDesiredTemplateHash]
+		assert.True(t, exists, "desired-template-hash should be on Deployment metadata.annotations")
+		assert.Regexp(t, `^[0-9a-f]{64}$`, hash, "hash should be a 64-char hex SHA-256")
+	})
+
+	t.Run("should not re-apply gateway deployment on idempotent reconcile", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		createClawInstance(t, ctx, resourceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "gateway Deployment should be created")
+
+		gen1 := deployment.Generation
+
+		// Second reconcile — should skip the Recreate deployment
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getClawDeploymentName(testInstanceName),
+			Namespace: namespace,
+		}, deployment))
+
+		assert.Equal(t, gen1, deployment.Generation,
+			"generation should not increment on idempotent reconcile")
+	})
+}
+
+func ptrTo[T any](v T) *T { return &v }
