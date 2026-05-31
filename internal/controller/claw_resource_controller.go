@@ -722,6 +722,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 
 	enforceInfrastructureKeys(config)
 	enforceTrustedProxies(config)
+	disableUpdateCheck(config)
 	injectRouteHost(config, routeHost)
 	injectAuthMode(config, instance)
 	if err := injectProviders(config, instance); err != nil {
