@@ -354,6 +354,16 @@ func TestResolveProviderInfo(t *testing.T) {
 			wantUpstream: "https://gemini-proxy.internal",
 			wantBasePath: "/v1beta",
 		},
+		{
+			name: "route pattern domain falls back to default for provider with BasePath",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "google",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Domain:   ".googleapis.com",
+			},
+			wantUpstream: "https://generativelanguage.googleapis.com",
+			wantBasePath: "/v1beta",
+		},
 	}
 
 	for _, tt := range tests {

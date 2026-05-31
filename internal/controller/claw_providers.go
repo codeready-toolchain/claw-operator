@@ -204,8 +204,8 @@ func resolveProviderInfo(cred clawv1alpha1.CredentialSpec) providerInfo {
 	}
 
 	if defaults, ok := knownProviders[cred.Provider]; ok && defaults.BasePath != "" {
-		domain := strings.TrimPrefix(cred.Domain, ".")
-		if domain == "" {
+		domain := cred.Domain
+		if domain == "" || strings.HasPrefix(domain, ".") {
 			domain = defaults.Domain
 		}
 		return providerInfo{
