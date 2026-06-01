@@ -1357,6 +1357,12 @@ func TestDeploymentCreateOrUpdateIntegration(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		createClawInstance(t, ctx, resourceName, namespace)
+
+		instance := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
+		require.NoError(t, k8sClient.Update(ctx, instance))
+
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
@@ -1385,6 +1391,12 @@ func TestDeploymentCreateOrUpdateIntegration(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		createClawInstance(t, ctx, resourceName, namespace)
+
+		instance := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
+		require.NoError(t, k8sClient.Update(ctx, instance))
+
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 

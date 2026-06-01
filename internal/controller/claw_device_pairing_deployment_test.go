@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -74,9 +75,12 @@ func TestDevicePairingDeployment(t *testing.T) {
 		assert.True(t, foundProxyDeployment, "proxy Deployment should be present")
 	})
 
-	t.Run("buildKustomizedObjects includes device-pairing resources", func(t *testing.T) {
+	t.Run("buildKustomizedObjects includes device-pairing resources when enabled", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials(testCredentials())
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+			DisableDevicePairing: boolPtr(false),
+		}
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err, "buildKustomizedObjects failed")
 
@@ -102,6 +106,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 	t.Run("CLAW_INSTANCE_NAME replacement works for device-pairing resources", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials(testCredentials())
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
@@ -115,6 +120,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 	t.Run("device-pairing Route has correct path", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials(testCredentials())
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
@@ -170,6 +176,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 	t.Run("device-pairing Deployment has correct security context", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials(testCredentials())
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
@@ -204,6 +211,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 	t.Run("device-pairing Deployment references correct ServiceAccount", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials(testCredentials())
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
@@ -225,6 +233,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 	t.Run("device-pairing Deployment has NAMESPACE and CLAW_INSTANCE env vars", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials(testCredentials())
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
@@ -276,6 +285,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 	t.Run("device-pairing resources have app.kubernetes.io/name label", func(t *testing.T) {
 		reconciler := createClawReconciler()
 		instance := testClawWithCredentials(testCredentials())
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
 		objects, err := reconciler.buildKustomizedObjects(instance)
 		require.NoError(t, err)
 
@@ -299,6 +309,7 @@ func TestDevicePairingDeployment(t *testing.T) {
 func TestDevicePairingRBACRole(t *testing.T) {
 	reconciler := createClawReconciler()
 	instance := testClawWithCredentials(testCredentials())
+	instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
 	objects, err := reconciler.buildKustomizedObjects(instance)
 	require.NoError(t, err)
 
@@ -339,6 +350,7 @@ func TestDevicePairingRBACRole(t *testing.T) {
 func TestDevicePairingRBACRoleBinding(t *testing.T) {
 	reconciler := createClawReconciler()
 	instance := testClawWithCredentials(testCredentials())
+	instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
 	objects, err := reconciler.buildKustomizedObjects(instance)
 	require.NoError(t, err)
 
@@ -361,6 +373,89 @@ func TestDevicePairingRBACRoleBinding(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Equal(t, rbName, roleRefName)
+}
+
+func TestDevicePairingDefaultDisabled(t *testing.T) {
+	t.Run("buildKustomizedObjects excludes device-pairing resources with default auth", func(t *testing.T) {
+		reconciler := createClawReconciler()
+		instance := testClawWithCredentials(testCredentials())
+		objects, err := reconciler.buildKustomizedObjects(instance)
+		require.NoError(t, err, "buildKustomizedObjects failed")
+
+		devicePairingKinds := map[string]string{
+			"ServiceAccount": getDevicePairingServiceAccountName(testInstanceName),
+			"Deployment":     getDevicePairingDeploymentName(testInstanceName),
+			"Service":        getDevicePairingServiceName(testInstanceName),
+			"Route":          getDevicePairingRouteName(testInstanceName),
+		}
+
+		for kind, name := range devicePairingKinds {
+			for _, obj := range objects {
+				if obj.GetKind() == kind && obj.GetName() == name {
+					t.Errorf("unexpected %s/%s when auth is nil (device pairing disabled by default)", kind, name)
+				}
+			}
+		}
+
+		var foundClawDeployment, foundProxyDeployment bool
+		for _, obj := range objects {
+			if obj.GetKind() == DeploymentKind && obj.GetName() == getClawDeploymentName(testInstanceName) {
+				foundClawDeployment = true
+			}
+			if obj.GetKind() == DeploymentKind && obj.GetName() == getProxyDeploymentName(testInstanceName) {
+				foundProxyDeployment = true
+			}
+		}
+		assert.True(t, foundClawDeployment, "claw Deployment should be present")
+		assert.True(t, foundProxyDeployment, "proxy Deployment should be present")
+	})
+
+	t.Run("should not create device-pairing resources with default auth after reconcile", func(t *testing.T) {
+		const resourceName = testInstanceName
+		ctx := context.Background()
+
+		t.Cleanup(func() {
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		createClawInstance(t, ctx, resourceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(resourceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "claw Deployment should be created")
+
+		dpDeployment := &appsv1.Deployment{}
+		err := k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getDevicePairingDeploymentName(resourceName),
+			Namespace: namespace,
+		}, dpDeployment)
+		assert.True(t, apierrors.IsNotFound(err), "device-pairing Deployment should not exist with default auth")
+
+		dpService := &corev1.Service{}
+		err = k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getDevicePairingServiceName(resourceName),
+			Namespace: namespace,
+		}, dpService)
+		assert.True(t, apierrors.IsNotFound(err), "device-pairing Service should not exist with default auth")
+
+		dpSA := &corev1.ServiceAccount{}
+		err = k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getDevicePairingServiceAccountName(resourceName),
+			Namespace: namespace,
+		}, dpSA)
+		assert.True(t, apierrors.IsNotFound(err), "device-pairing ServiceAccount should not exist with default auth")
+
+		updatedInstance := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+		condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeDevicePairingConfigured)
+		assert.Nil(t, condition, "DevicePairingConfigured should not be set with default auth")
+	})
 }
 
 func TestDevicePairingReconciliation(t *testing.T) {
@@ -428,8 +523,13 @@ func TestDevicePairingReconciliation(t *testing.T) {
 			deleteAndWaitAllResources(t, namespace)
 		})
 
-		// Create with device pairing enabled (default)
+		// Create with device pairing explicitly enabled
 		createClawInstance(t, ctx, resourceName, namespace)
+		instance := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
+		require.NoError(t, k8sClient.Update(ctx, instance))
+
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
@@ -443,7 +543,6 @@ func TestDevicePairingReconciliation(t *testing.T) {
 		}, "device-pairing Deployment should be created initially")
 
 		// Toggle disableDevicePairing to true
-		instance := &clawv1alpha1.Claw{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
 		instance.Spec.Auth = &clawv1alpha1.AuthSpec{
 			DisableDevicePairing: boolPtr(true),
@@ -550,6 +649,11 @@ func TestDevicePairingReconciliation(t *testing.T) {
 		})
 
 		createClawInstance(t, ctx, resourceName, namespace)
+		instance := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
+		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
+		require.NoError(t, k8sClient.Update(ctx, instance))
+
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
@@ -587,6 +691,11 @@ func TestDevicePairingReconciliation(t *testing.T) {
 		})
 
 		createClawInstance(t, ctx, resourceName, namespace)
+		inst := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, inst))
+		inst.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
+		require.NoError(t, k8sClient.Update(ctx, inst))
+
 		reconciler := &ClawResourceReconciler{
 			Client:           k8sClient,
 			Scheme:           scheme.Scheme,

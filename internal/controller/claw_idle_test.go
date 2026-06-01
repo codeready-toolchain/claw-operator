@@ -43,12 +43,13 @@ func TestClawIdling(t *testing.T) {
 
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
-		// Verify deployments exist with replicas > 0
-		for _, name := range []string{
+		coreDeployments := []string{
 			getClawDeploymentName(testInstanceName),
 			getProxyDeploymentName(testInstanceName),
-			getDevicePairingDeploymentName(testInstanceName),
-		} {
+		}
+
+		// Verify deployments exist with replicas > 0
+		for _, name := range coreDeployments {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
 				return k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployment) == nil
@@ -66,11 +67,7 @@ func TestClawIdling(t *testing.T) {
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		// All deployments should be scaled to 0
-		for _, name := range []string{
-			getClawDeploymentName(testInstanceName),
-			getProxyDeploymentName(testInstanceName),
-			getDevicePairingDeploymentName(testInstanceName),
-		} {
+		for _, name := range coreDeployments {
 			deployment := &appsv1.Deployment{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployment))
 			require.NotNil(t, deployment.Spec.Replicas, "replicas should be set on %s", name)
@@ -87,7 +84,7 @@ func TestClawIdling(t *testing.T) {
 		reconciler := createClawReconciler()
 
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
-		setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+		setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		// Verify Ready=True before idling
@@ -154,11 +151,10 @@ func TestClawIdling(t *testing.T) {
 		idleCond = meta.FindStatusCondition(instance.Status.Conditions, clawv1alpha1.ConditionTypeIdle)
 		assert.Nil(t, idleCond, "Idle condition should be removed after unidle")
 
-		// Deployments should be back to replicas 1
+		// Deployments should be back to replicas 1 (device pairing disabled by default)
 		for _, name := range []string{
 			getClawDeploymentName(testInstanceName),
 			getProxyDeploymentName(testInstanceName),
-			getDevicePairingDeploymentName(testInstanceName),
 		} {
 			deployment := &appsv1.Deployment{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployment))
@@ -199,7 +195,6 @@ func TestClawIdling(t *testing.T) {
 		for _, name := range []string{
 			getClawDeploymentName(testInstanceName),
 			getProxyDeploymentName(testInstanceName),
-			getDevicePairingDeploymentName(testInstanceName),
 		} {
 			deployment := &appsv1.Deployment{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployment))
@@ -253,7 +248,7 @@ func TestClawIdling(t *testing.T) {
 
 		// Phase 1: Ready
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
-		setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+		setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		instance := &clawv1alpha1.Claw{}
@@ -282,7 +277,7 @@ func TestClawIdling(t *testing.T) {
 		instance.Spec.Idle = false
 		require.NoError(t, k8sClient.Update(ctx, instance))
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
-		setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+		setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: testInstanceName, Namespace: namespace}, instance))

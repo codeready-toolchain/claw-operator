@@ -842,9 +842,24 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			createLabeledSecret(t, "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value")
 
-			t.Log("applying the Claw CR")
-			cmd = exec.Command("kubectl", "apply", "-f",
-				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
+			t.Log("applying the Claw CR with device pairing enabled")
+			dpCRYAML := `apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  auth:
+    disableDevicePairing: false
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+      provider: google
+`
+			cmd = exec.Command("kubectl", "apply", "-f", "-", "-n", userNamespace)
+			cmd.Stdin = strings.NewReader(dpCRYAML)
 			_, err := utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
 
@@ -1224,12 +1239,14 @@ spec:
 			createLabeledSecret(t, "gemini-api-key",
 				"--from-literal=api-key=test-api-key-value")
 
-			t.Log("applying Claw CR with device pairing enabled (default)")
+			t.Log("applying Claw CR with device pairing explicitly enabled")
 			crYAML := `apiVersion: claw.sandbox.redhat.com/v1alpha1
 kind: Claw
 metadata:
   name: instance
 spec:
+  auth:
+    disableDevicePairing: false
   credentials:
     - name: gemini
       type: apiKey

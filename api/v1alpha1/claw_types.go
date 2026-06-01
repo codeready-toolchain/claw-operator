@@ -333,7 +333,8 @@ type AuthSpec struct {
 
 	// DisableDevicePairing disables browser device identity checks
 	// (maps to gateway.controlUi.dangerouslyDisableDeviceAuth upstream).
-	// Defaults to true when mode is "password", false when mode is "token".
+	// Defaults to true (device pairing is disabled by default).
+	// Set to false to enable device pairing.
 	// +optional
 	DisableDevicePairing *bool `json:"disableDevicePairing,omitempty"`
 }
@@ -481,8 +482,9 @@ type ClawSpec struct {
 	Config *ConfigSpec `json:"config,omitempty"`
 
 	// Auth configures gateway authentication. Defaults to token-based
-	// authentication with device pairing. Set mode to "password" for
-	// shared-password access without per-device identity.
+	// authentication with device pairing disabled. Set mode to "password" for
+	// shared-password access, or set disableDevicePairing to false to enable
+	// device pairing.
 	// +optional
 	Auth *AuthSpec `json:"auth,omitempty"`
 

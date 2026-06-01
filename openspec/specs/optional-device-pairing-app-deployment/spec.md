@@ -15,7 +15,7 @@ The controller SHALL NOT build, render, or apply any `claw-device-pairing` Kusto
 
 #### Scenario: Claw CR with disableDevicePairing unset
 - **WHEN** a Claw CR is created without the `spec.auth.disableDevicePairing` field
-- **THEN** the controller SHALL create all device-pairing resources as normal (default behavior preserved)
+- **THEN** the controller SHALL NOT create device-pairing resources (device pairing is disabled by default)
 
 ### Requirement: Device pairing Route injection is skipped when disabled
 The controller SHALL NOT call `injectRouteHostIntoDevicePairingRoute()` or attempt to apply the device-pairing Route when device pairing is disabled.
@@ -35,10 +35,10 @@ When `spec.auth.disableDevicePairing` is toggled from `true` back to `false`, th
 - **THEN** the controller SHALL create a Service named `{instance}-device-pairing`
 - **THEN** the controller SHALL create a ServiceAccount named `{instance}-device-pairing`
 
-#### Scenario: Re-enable after field removal
+#### Scenario: Field removal keeps pairing disabled
 - **WHEN** a Claw CR has `spec.auth.disableDevicePairing: true` and the device-pairing resources do not exist
-- **AND** the user removes the `disableDevicePairing` field entirely (leaving auth mode as token)
-- **THEN** the controller SHALL create all device-pairing resources as normal
+- **AND** the user removes the `disableDevicePairing` field entirely
+- **THEN** the controller SHALL NOT create device-pairing resources (disabled by default)
 
 ### Requirement: Previously deployed device-pairing resources are cleaned up
 When device pairing transitions from enabled to disabled, the controller SHALL delete any previously-deployed device-pairing resources to avoid leaving orphaned resources in the cluster.
@@ -72,6 +72,6 @@ The e2e test suite SHALL include a test case verifying that a Claw CR with `spec
 - **THEN** no device-pairing RoleBinding SHALL exist
 - **THEN** the Claw instance SHALL eventually reach `Ready=True`
 
-#### Scenario: E2E enabled device pairing (existing behavior preserved)
-- **WHEN** a Claw CR is applied without `spec.auth.disableDevicePairing` and valid credentials
+#### Scenario: E2E enabled device pairing
+- **WHEN** a Claw CR is applied with `spec.auth.disableDevicePairing: false` and valid credentials
 - **THEN** the device-pairing Deployment SHALL be created alongside the claw and proxy Deployments
