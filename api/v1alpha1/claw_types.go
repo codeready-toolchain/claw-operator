@@ -236,6 +236,7 @@ type CredentialSpec struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.command) || !has(self.url)",message="command and url are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="!has(self.url) || !has(self.envFrom) || size(self.envFrom) == 0",message="envFrom is only allowed for stdio MCP servers (command), not HTTP (url)"
 // +kubebuilder:validation:XValidation:rule="!has(self.transport) || has(self.url)",message="transport is only allowed for HTTP MCP servers (url)"
+// +kubebuilder:validation:XValidation:rule="!has(self.credentialRef) || has(self.url)",message="credentialRef is only allowed for HTTP MCP servers (url)"
 type McpServerSpec struct {
 	// Command is the executable for a stdio MCP server.
 	// +optional
@@ -265,6 +266,13 @@ type McpServerSpec struct {
 	// Use only when the proxy-placeholder pattern (tier 2) is not viable.
 	// +optional
 	EnvFrom []McpEnvFromSecret `json:"envFrom,omitempty"`
+
+	// CredentialRef is the name of a credential in spec.credentials that
+	// handles proxy routing and authentication for this MCP server's domain.
+	// Only valid for HTTP MCP servers (url). The proxy injects credentials
+	// so the gateway never sees raw tokens.
+	// +optional
+	CredentialRef string `json:"credentialRef,omitempty"`
 }
 
 // McpEnvFromSecret maps a Kubernetes Secret key to an environment variable
@@ -409,14 +417,22 @@ type ServiceMonitorSpec struct {
 	Interval string `json:"interval,omitempty"`
 }
 
-// NetworkPolicySpec configures additional NetworkPolicy rules beyond
-// the operator's auto-generated defaults.
-type NetworkPolicySpec struct {
-	// AllowedEgress appends raw egress rules to the gateway NetworkPolicy.
-	// Use for targets the operator cannot auto-detect: tracing collectors,
-	// databases, webhooks, etc. Rules are appended to {instance}-egress.
+// NetworkSpec configures network behavior for the gateway pod.
+type NetworkSpec struct {
+	// InClusterBypass controls whether the gateway pod can directly reach
+	// in-cluster Kubernetes services, bypassing the MITM proxy.
+	// When false (default), all egress goes through the proxy.
+	// When true, .svc and .svc.cluster.local traffic bypasses the proxy.
 	// +optional
-	AllowedEgress []networkingv1.NetworkPolicyEgressRule `json:"allowedEgress,omitempty"`
+	// +kubebuilder:default=false
+	InClusterBypass *bool `json:"inClusterBypass,omitempty"`
+
+	// AdditionalEgress appends raw NetworkPolicy egress rules to the
+	// gateway's egress policy for targets the operator can't auto-detect:
+	// tracing collectors, databases, webhooks, etc.
+	// Rules are appended to {instance}-egress.
+	// +optional
+	AdditionalEgress []networkingv1.NetworkPolicyEgressRule `json:"additionalEgress,omitempty"`
 }
 
 // CustomProviderAPI selects the wire format for a custom provider.
@@ -519,10 +535,11 @@ type ClawSpec struct {
 	// +optional
 	Metrics *MetricsSpec `json:"metrics,omitempty"`
 
-	// NetworkPolicy configures additional NetworkPolicy rules.
+	// Network configures network behavior for the gateway pod.
+	// Controls in-cluster proxy bypass and additional egress rules.
 	// MCP server egress rules are auto-generated from spec.mcpServers URLs.
 	// +optional
-	NetworkPolicy *NetworkPolicySpec `json:"networkPolicy,omitempty"`
+	Network *NetworkSpec `json:"network,omitempty"`
 
 	// Plugins lists OpenClaw plugins to install via an init container before
 	// the gateway starts. Each entry is a package name (e.g. "@openclaw/matrix").

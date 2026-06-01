@@ -167,7 +167,7 @@ func configurePluginsInitContainer(
 				map[string]any{"name": "NPM_CONFIG_CACHE", "value": "/home/node/.cache/npm"},
 				map[string]any{"name": "HTTP_PROXY", "value": proxyHost},
 				map[string]any{"name": "HTTPS_PROXY", "value": proxyHost},
-				map[string]any{"name": "NO_PROXY", "value": "localhost,127.0.0.1,.svc,.svc.cluster.local"},
+				map[string]any{"name": "NO_PROXY", "value": pluginsNoProxy(instance)},
 				map[string]any{"name": "NODE_EXTRA_CA_CERTS", "value": "/etc/proxy-ca/ca.crt"},
 			},
 			"resources": map[string]any{
@@ -212,4 +212,13 @@ func configurePluginsInitContainer(
 		return nil
 	}
 	return fmt.Errorf("claw deployment not found in manifests")
+}
+
+// pluginsNoProxy returns the NO_PROXY value for the plugins init container.
+func pluginsNoProxy(instance *clawv1alpha1.Claw) string {
+	base := "localhost,127.0.0.1"
+	if inClusterBypassEnabled(instance) {
+		return base + noProxySuffix
+	}
+	return base
 }

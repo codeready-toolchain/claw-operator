@@ -1498,3 +1498,137 @@ func TestMcpServerDomainExtraction(t *testing.T) {
 		}
 	})
 }
+
+func TestMcpCredentialRefRoutes(t *testing.T) {
+	const mcpServerDomain = "mcp-server"
+
+	t.Run("should generate credential-injecting route for MCP with credentialRef", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "mcp-auth",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "mcp-token", Key: "token"}},
+				Domain:    mcpServerDomain,
+			},
+		}
+		mcpServers := map[string]clawv1alpha1.McpServerSpec{
+			"my-server": {URL: "http://mcp-server:8080/mcp", CredentialRef: "mcp-auth"},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), mcpServers, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		var found bool
+		for _, r := range cfg.Routes {
+			if r.Domain == mcpServerDomain && r.Injector == injectorBearer {
+				found = true
+				assert.Equal(t, credEnvVarName("mcp-auth"), r.EnvVar)
+			}
+		}
+		assert.True(t, found, "should have a bearer route for mcp-server domain")
+	})
+
+	t.Run("should skip passthrough for MCP with credentialRef", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "mcp-auth",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "mcp-token", Key: "token"}},
+				Domain:    mcpServerDomain,
+			},
+		}
+		mcpServers := map[string]clawv1alpha1.McpServerSpec{
+			"authed":   {URL: "http://mcp-server:8080/mcp", CredentialRef: "mcp-auth"},
+			"unauthed": {URL: "http://other-server:8080/mcp"},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), mcpServers, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		for _, r := range cfg.Routes {
+			if r.Domain == mcpServerDomain {
+				assert.NotEqual(t, injectorNone, r.Injector,
+					"mcp-server should not have a passthrough route")
+			}
+			if r.Domain == "other-server" {
+				assert.Equal(t, injectorNone, r.Injector,
+					"other-server should have a passthrough route")
+			}
+		}
+	})
+
+	t.Run("should error when credentialRef references nonexistent credential", func(t *testing.T) {
+		mcpServers := map[string]clawv1alpha1.McpServerSpec{
+			"my-server": {URL: "http://mcp-server:8080/mcp", CredentialRef: "nonexistent"},
+		}
+
+		_, err := generateProxyConfig(nil, mcpServers, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "nonexistent")
+	})
+
+	t.Run("should not duplicate route when credential already covers the domain", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "mcp-auth",
+				Type:      clawv1alpha1.CredentialTypeBearer,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "mcp-token", Key: "token"}},
+				Domain:    mcpServerDomain,
+			},
+		}
+		mcpServers := map[string]clawv1alpha1.McpServerSpec{
+			"my-server": {URL: "http://mcp-server:8080/mcp", CredentialRef: "mcp-auth"},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), mcpServers, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		count := 0
+		for _, r := range cfg.Routes {
+			if r.Domain == mcpServerDomain {
+				count++
+			}
+		}
+		assert.Equal(t, 1, count,
+			"domain should appear once (from credential), not duplicated by credentialRef")
+	})
+
+	t.Run("should generate apiKey route for MCP credentialRef", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "mcp-key",
+				Type:      clawv1alpha1.CredentialTypeAPIKey,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "key-secret", Key: "key"}},
+				Domain:    mcpServerDomain,
+				APIKey:    &clawv1alpha1.APIKeyConfig{Header: "X-API-Key"},
+			},
+		}
+		mcpServers := map[string]clawv1alpha1.McpServerSpec{
+			"my-server": {URL: "http://mcp-server:8080/mcp", CredentialRef: "mcp-key"},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), mcpServers, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		var found bool
+		for _, r := range cfg.Routes {
+			if r.Domain == mcpServerDomain && r.Injector == injectorAPIKey {
+				found = true
+				assert.Equal(t, "X-API-Key", r.Header)
+			}
+		}
+		assert.True(t, found, "should have an api_key route for mcp-server")
+	})
+}

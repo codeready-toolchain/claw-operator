@@ -409,6 +409,13 @@ spec:
                     command:
                       description: Command is the executable for a stdio MCP server.
                       type: string
+                    credentialRef:
+                      description: |-
+                        CredentialRef is the name of a credential in spec.credentials that
+                        handles proxy routing and authentication for this MCP server's domain.
+                        Only valid for HTTP MCP servers (url). The proxy injects credentials
+                        so the gateway never sees raw tokens.
+                      type: string
                     env:
                       additionalProperties:
                         type: string
@@ -481,6 +488,8 @@ spec:
                       == 0'
                   - message: transport is only allowed for HTTP MCP servers (url)
                     rule: '!has(self.transport) || has(self.url)'
+                  - message: credentialRef is only allowed for HTTP MCP servers (url)
+                    rule: '!has(self.credentialRef) || has(self.url)'
                 description: |-
                   McpServers declares MCP servers injected into OpenClaw's config.
                   Map keys are server names as they appear in the mcp.servers config.
@@ -517,16 +526,18 @@ spec:
                         type: string
                     type: object
                 type: object
-              networkPolicy:
+              network:
                 description: |-
-                  NetworkPolicy configures additional NetworkPolicy rules.
+                  Network configures network behavior for the gateway pod.
+                  Controls in-cluster proxy bypass and additional egress rules.
                   MCP server egress rules are auto-generated from spec.mcpServers URLs.
                 properties:
-                  allowedEgress:
+                  additionalEgress:
                     description: |-
-                      AllowedEgress appends raw egress rules to the gateway NetworkPolicy.
-                      Use for targets the operator cannot auto-detect: tracing collectors,
-                      databases, webhooks, etc. Rules are appended to {instance}-egress.
+                      AdditionalEgress appends raw NetworkPolicy egress rules to the
+                      gateway's egress policy for targets the operator can't auto-detect:
+                      tracing collectors, databases, webhooks, etc.
+                      Rules are appended to {instance}-egress.
                     items:
                       description: |-
                         NetworkPolicyEgressRule describes a particular set of traffic that is allowed out of pods
@@ -715,6 +726,14 @@ spec:
                           x-kubernetes-list-type: atomic
                       type: object
                     type: array
+                  inClusterBypass:
+                    default: false
+                    description: |-
+                      InClusterBypass controls whether the gateway pod can directly reach
+                      in-cluster Kubernetes services, bypassing the MITM proxy.
+                      When false (default), all egress goes through the proxy.
+                      When true, .svc and .svc.cluster.local traffic bypasses the proxy.
+                    type: boolean
                 type: object
               plugins:
                 description: |-

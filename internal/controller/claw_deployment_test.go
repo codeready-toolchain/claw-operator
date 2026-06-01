@@ -24,7 +24,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
@@ -1414,6 +1416,194 @@ func TestDeploymentCreateOrUpdateIntegration(t *testing.T) {
 				"%s should have owner references", name)
 			assert.Equal(t, ClawResourceKind, deployment.OwnerReferences[0].Kind,
 				"%s owner should be a Claw", name)
+		}
+	})
+}
+
+// --- NO_PROXY tests ---
+
+const envNoProxy = "NO_PROXY"
+
+func TestConfigureGatewayNoProxy(t *testing.T) {
+	makeGatewayDeploy := func() []*unstructured.Unstructured {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name": ClawGatewayContainerName,
+							"env": []any{
+								map[string]any{"name": "NO_PROXY", "value": "localhost,127.0.0.1," + testInstanceName + "-proxy"},
+								map[string]any{"name": envNoProxyLower, "value": "localhost,127.0.0.1," + testInstanceName + "-proxy"},
+							},
+						},
+					},
+				},
+			},
+		}
+		return []*unstructured.Unstructured{dep}
+	}
+
+	t.Run("should not modify NO_PROXY when bypass is off (default)", func(t *testing.T) {
+		objects := makeGatewayDeploy()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+		}
+
+		require.NoError(t, configureGatewayNoProxy(objects, instance))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		envVars := containers[0].(map[string]any)["env"].([]any)
+		for _, e := range envVars {
+			em := e.(map[string]any)
+			if em["name"] == envNoProxy {
+				assert.NotContains(t, em["value"], ".svc")
+			}
+		}
+	})
+
+	t.Run("should append .svc suffixes when bypass is on", func(t *testing.T) {
+		objects := makeGatewayDeploy()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Network: &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(true)},
+			},
+		}
+
+		require.NoError(t, configureGatewayNoProxy(objects, instance))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		envVars := containers[0].(map[string]any)["env"].([]any)
+
+		for _, e := range envVars {
+			em := e.(map[string]any)
+			name := em["name"].(string)
+			val := em["value"].(string)
+			if name == envNoProxy || name == envNoProxyLower {
+				assert.Contains(t, val, ".svc,.svc.cluster.local")
+			}
+		}
+	})
+
+	t.Run("should not modify NO_PROXY when bypass is explicitly false", func(t *testing.T) {
+		objects := makeGatewayDeploy()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Network: &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(false)},
+			},
+		}
+
+		require.NoError(t, configureGatewayNoProxy(objects, instance))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		envVars := containers[0].(map[string]any)["env"].([]any)
+		for _, e := range envVars {
+			em := e.(map[string]any)
+			if em["name"] == envNoProxy {
+				assert.NotContains(t, em["value"], ".svc")
+			}
+		}
+	})
+}
+
+func TestGatewayNoProxyIntegration(t *testing.T) {
+	t.Run("gateway should not have .svc in NO_PROXY when bypass is off", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		createClawInstance(t, ctx, testInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name: getClawDeploymentName(testInstanceName), Namespace: namespace,
+			}, deployment) == nil
+		}, "gateway deployment should be created")
+
+		for _, c := range deployment.Spec.Template.Spec.Containers {
+			if c.Name != ClawGatewayContainerName {
+				continue
+			}
+			for _, env := range c.Env {
+				if env.Name == envNoProxy || env.Name == envNoProxyLower {
+					assert.NotContains(t, env.Value, ".svc",
+						"%s should not contain .svc when bypass is off", env.Name)
+				}
+			}
+		}
+	})
+
+	t.Run("gateway should have .svc in NO_PROXY when bypass is on", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				Network:     &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(true)},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name: getClawDeploymentName(testInstanceName), Namespace: namespace,
+			}, deployment) == nil
+		}, "gateway deployment should be created")
+
+		for _, c := range deployment.Spec.Template.Spec.Containers {
+			if c.Name != ClawGatewayContainerName {
+				continue
+			}
+			for _, env := range c.Env {
+				if env.Name == envNoProxy || env.Name == envNoProxyLower {
+					assert.Contains(t, env.Value, ".svc,.svc.cluster.local",
+						"%s should contain .svc suffixes when bypass is on", env.Name)
+				}
+			}
+		}
+	})
+}
+
+// --- enableServiceLinks tests ---
+
+func TestEnableServiceLinks(t *testing.T) {
+	t.Run("all deployment manifests should have enableServiceLinks false", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		createClawInstance(t, ctx, testInstanceName, namespace)
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		for _, name := range []string{
+			getClawDeploymentName(testInstanceName),
+			getProxyDeploymentName(testInstanceName),
+		} {
+			deployment := &appsv1.Deployment{}
+			waitFor(t, timeout, interval, func() bool {
+				return k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployment) == nil
+			}, name+" should be created")
+
+			require.NotNil(t, deployment.Spec.Template.Spec.EnableServiceLinks,
+				"%s should have enableServiceLinks set", name)
+			assert.False(t, *deployment.Spec.Template.Spec.EnableServiceLinks,
+				"%s should have enableServiceLinks=false", name)
 		}
 	})
 }

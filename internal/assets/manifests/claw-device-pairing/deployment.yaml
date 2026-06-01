@@ -12,6 +12,7 @@ spec:
       labels:
         app.kubernetes.io/name: claw-device-pairing
     spec:
+      enableServiceLinks: false
       serviceAccountName: CLAW_INSTANCE_NAME-device-pairing
       automountServiceAccountToken: true
       securityContext:

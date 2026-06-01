@@ -52,7 +52,6 @@ var llmAsSearchProviders = map[string]string{
 
 const (
 	placeholderAPIKey   = "ah-ah-ah-you-didnt-say-the-magic-word"
-	injectorNone        = "none"
 	webSearchCredPrefix = "websearch"
 )
 

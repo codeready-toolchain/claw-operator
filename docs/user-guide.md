@@ -1408,8 +1408,8 @@ spec:
         entries:
           diagnostics-otel:
             enabled: true
-  networkPolicy:
-    allowedEgress:
+  network:
+    additionalEgress:
       - to:
           - namespaceSelector:
               matchLabels:
@@ -1423,7 +1423,7 @@ The operator injects `metrics: true` and `metricsEndpoint: "http://localhost:431
 
 ## Network Policy
 
-The operator creates strict NetworkPolicies by default: the gateway pod can only reach the MITM proxy (port 8080) and DNS, while the proxy pod can only reach TCP 443 and DNS. This blocks legitimate in-cluster traffic patterns like MCP servers running on custom ports or cross-namespace services.
+The operator creates strict NetworkPolicies by default: the gateway pod can only reach the MITM proxy (port 8080) and DNS, while the proxy pod can only reach TCP 443 and DNS. By default, all egress — including in-cluster traffic — goes through the MITM proxy. Set `spec.network.inClusterBypass: true` to allow the gateway to reach `.svc` and `.svc.cluster.local` directly (bypassing the proxy).
 
 ### Automatic MCP egress rules
 
@@ -1438,7 +1438,7 @@ spec:
       url: http://mcp-customer:9001/mcp
 ```
 
-The operator auto-generates a gateway egress rule allowing traffic to any pod in the same namespace on port 9001.
+When `inClusterBypass` is `false` (default), the operator adds an egress rule to the **proxy** NetworkPolicy so the proxy can reach the MCP server. When `inClusterBypass` is `true`, the rule goes on the **gateway** NetworkPolicy instead.
 
 **Cross-namespace MCP server** (dotted Kubernetes DNS):
 
@@ -1449,15 +1449,15 @@ spec:
       url: http://mcp-server.shared-tools.svc:9001/mcp
 ```
 
-The operator auto-generates a gateway egress rule targeting the `shared-tools` namespace on port 9001. Cross-namespace services must use the `.svc` or `.svc.cluster.local` suffix (e.g., `svc.ns.svc` or `svc.ns.svc.cluster.local`) to match the `NO_PROXY` bypass and connect directly. Bare two-part names (e.g., `svc.ns`) are treated as external because `NO_PROXY` does not bypass them.
+The operator auto-generates an egress rule targeting the `shared-tools` namespace on port 9001 (on the proxy NP when bypass is off, or the gateway NP when bypass is on). Cross-namespace services must use the `.svc` or `.svc.cluster.local` suffix (e.g., `svc.ns.svc` or `svc.ns.svc.cluster.local`). Bare two-part names (e.g., `svc.ns`) are treated as external.
 
 **External MCP on non-443 port** (e.g., `https://mcp.example.com:8443/mcp`): the operator adds port 8443 to the proxy egress NetworkPolicy. External MCP on port 443 needs no change (already allowed).
 
 **Stdio MCP servers** (subprocess, no URL) need no NetworkPolicy changes.
 
-### Escape hatch: `spec.networkPolicy.allowedEgress`
+### Escape hatch: `spec.network.additionalEgress`
 
-For services the operator cannot auto-detect — tracing collectors, databases, webhooks — use `spec.networkPolicy.allowedEgress` to append raw `NetworkPolicyEgressRule` objects to the gateway egress NetworkPolicy:
+For services the operator cannot auto-detect — tracing collectors, databases, webhooks — use `spec.network.additionalEgress` to append raw `NetworkPolicyEgressRule` objects to the gateway egress NetworkPolicy:
 
 ```sh
 oc apply -n $NS -f - <<EOF
@@ -1473,8 +1473,8 @@ spec:
         - name: gemini-api-key
           key: api-key
       provider: google
-  networkPolicy:
-    allowedEgress:
+  network:
+    additionalEgress:
       # Cross-namespace tracing collector (Langfuse)
       - to:
           - namespaceSelector:
@@ -1494,7 +1494,28 @@ EOF
 
 Rules are standard Kubernetes `NetworkPolicyEgressRule` objects validated by the API server on admission. They are appended to the `{instance}-egress` NetworkPolicy alongside the auto-generated MCP rules.
 
-> **Note:** `allowedEgress` only modifies the **gateway** egress NetworkPolicy. For proxy egress customization (rare — only needed for external non-443 services not declared as MCP servers), create supplemental NetworkPolicies directly.
+> **Note:** `additionalEgress` only modifies the **gateway** egress NetworkPolicy. For proxy egress customization (rare — only needed for external non-443 services not declared as MCP servers), create supplemental NetworkPolicies directly.
+
+### MCP credentialRef
+
+For HTTP MCP servers that need authentication, set `credentialRef` to the name of a credential in `spec.credentials`. The proxy injects credentials on the MCP server's behalf, keeping tokens out of the gateway pod:
+
+```yaml
+spec:
+  credentials:
+    - name: mcp-auth
+      type: bearer
+      secretRef:
+        - name: mcp-token-secret
+          key: token
+      domain: mcp-server.tools.svc
+  mcpServers:
+    my-mcp:
+      url: http://mcp-server.tools.svc:8080/mcp
+      credentialRef: mcp-auth
+```
+
+> **Warning:** If `inClusterBypass` is `true` and an in-cluster MCP server has `credentialRef`, the operator sets a warning condition — credentials cannot be injected when traffic bypasses the proxy.
 
 ## Plugins
 

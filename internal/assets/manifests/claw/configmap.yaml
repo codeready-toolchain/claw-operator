@@ -318,9 +318,11 @@ data:
     via `HTTP_PROXY`/`HTTPS_PROXY` environment variables. The proxy blocks any domain
     that is not explicitly configured.
 
-    In-cluster traffic (`.svc`, `.svc.cluster.local`, bare service names) bypasses the
-    proxy via `NO_PROXY` and connects directly. The operator auto-generates
-    NetworkPolicy rules for in-cluster MCP servers declared in `spec.mcpServers`.
+    By default, all egress (including in-cluster) goes through the proxy. When
+    `spec.network.inClusterBypass` is `true`, in-cluster traffic (`.svc`,
+    `.svc.cluster.local`, bare service names) bypasses the proxy via `NO_PROXY`.
+    The operator auto-generates NetworkPolicy rules for in-cluster MCP servers
+    declared in `spec.mcpServers`.
 
     LLM provider credentials (API keys, OAuth tokens, GCP service account tokens) are
     injected by the proxy — you never see real secrets. For non-LLM services that need
@@ -328,7 +330,7 @@ data:
     `type: none` credential entries.
 
     For in-cluster services not covered by MCP auto-egress (tracing collectors,
-    databases, etc.), users can declare `spec.networkPolicy.allowedEgress` rules as
+    databases, etc.), users can declare `spec.network.additionalEgress` rules as
     an escape hatch — raw `NetworkPolicyEgressRule` objects appended to the gateway
     egress NetworkPolicy.
 
@@ -732,11 +734,11 @@ data:
     Use this decision tree:
 
     1. **Is the MCP server HTTP/SSE?** → Tier 1. Add the `url` to `mcpServers`. If
-       it needs auth, add a `credentials` entry for the domain (same as any other
-       external service). If unauthenticated, no `credentials` entry needed — the
-       domain is auto-extracted as a passthrough route. In-cluster HTTP MCP servers
-       (e.g., `http://mcp-server:9001/mcp`) connect directly (not through the proxy)
-       and get automatic NetworkPolicy egress rules from the operator.
+       it needs auth, set `credentialRef` to a `credentials` entry — the proxy injects
+       credentials so the gateway never sees raw tokens. If unauthenticated, no
+       `credentialRef` needed — the domain is auto-extracted as a passthrough route.
+       The operator auto-generates NetworkPolicy egress rules for both in-cluster and
+       external MCP servers.
 
     2. **Is it stdio and you know which domain/auth it uses?** → Tier 2. Add the
        MCP server with a placeholder env var, and add a `credentials` entry for the

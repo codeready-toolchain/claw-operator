@@ -24,9 +24,12 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
@@ -468,9 +471,9 @@ func TestInjectMcpProxyEgressPorts(t *testing.T) {
 	})
 }
 
-// --- injectAllowedEgress tests ---
+// --- injectAdditionalEgress tests ---
 
-func TestInjectAllowedEgress(t *testing.T) {
+func TestInjectAdditionalEgress(t *testing.T) {
 	makeGatewayNP := func() []*unstructured.Unstructured {
 		np := &unstructured.Unstructured{}
 		np.SetKind(NetworkPolicyKind)
@@ -500,8 +503,8 @@ func TestInjectAllowedEgress(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
-				NetworkPolicy: &clawv1alpha1.NetworkPolicySpec{
-					AllowedEgress: []netv1.NetworkPolicyEgressRule{
+				Network: &clawv1alpha1.NetworkSpec{
+					AdditionalEgress: []netv1.NetworkPolicyEgressRule{
 						{
 							To: []netv1.NetworkPolicyPeer{
 								{
@@ -521,7 +524,7 @@ func TestInjectAllowedEgress(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAllowedEgress(objects, instance))
+		require.NoError(t, injectAdditionalEgress(objects, instance))
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		assert.Len(t, egress, 2, "should have original + user rule")
@@ -534,28 +537,28 @@ func TestInjectAllowedEgress(t *testing.T) {
 		assert.Equal(t, "langfuse", matchLabels["kubernetes.io/metadata.name"])
 	})
 
-	t.Run("should be no-op when networkPolicy is nil", func(t *testing.T) {
+	t.Run("should be no-op when network is nil", func(t *testing.T) {
 		objects := makeGatewayNP()
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 		}
 
-		require.NoError(t, injectAllowedEgress(objects, instance))
+		require.NoError(t, injectAdditionalEgress(objects, instance))
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		assert.Len(t, egress, 1)
 	})
 
-	t.Run("should be no-op when allowedEgress is empty", func(t *testing.T) {
+	t.Run("should be no-op when additionalEgress is empty", func(t *testing.T) {
 		objects := makeGatewayNP()
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
-				NetworkPolicy: &clawv1alpha1.NetworkPolicySpec{},
+				Network: &clawv1alpha1.NetworkSpec{},
 			},
 		}
 
-		require.NoError(t, injectAllowedEgress(objects, instance))
+		require.NoError(t, injectAdditionalEgress(objects, instance))
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		assert.Len(t, egress, 1)
@@ -567,8 +570,8 @@ func TestInjectAllowedEgress(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
-				NetworkPolicy: &clawv1alpha1.NetworkPolicySpec{
-					AllowedEgress: []netv1.NetworkPolicyEgressRule{
+				Network: &clawv1alpha1.NetworkSpec{
+					AdditionalEgress: []netv1.NetworkPolicyEgressRule{
 						{
 							Ports: []netv1.NetworkPolicyPort{
 								{Port: &port3000, Protocol: protocolPtr(corev1.ProtocolTCP)},
@@ -579,7 +582,7 @@ func TestInjectAllowedEgress(t *testing.T) {
 			},
 		}
 
-		err := injectAllowedEgress(objects, instance)
+		err := injectAdditionalEgress(objects, instance)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
@@ -591,8 +594,8 @@ func TestInjectAllowedEgress(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
-				NetworkPolicy: &clawv1alpha1.NetworkPolicySpec{
-					AllowedEgress: []netv1.NetworkPolicyEgressRule{
+				Network: &clawv1alpha1.NetworkSpec{
+					AdditionalEgress: []netv1.NetworkPolicyEgressRule{
 						{
 							To: []netv1.NetworkPolicyPeer{
 								{
@@ -620,10 +623,156 @@ func TestInjectAllowedEgress(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectAllowedEgress(objects, instance))
+		require.NoError(t, injectAdditionalEgress(objects, instance))
 
 		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
 		assert.Len(t, egress, 3, "should have original + 2 user rules")
+	})
+}
+
+// --- injectMcpProxyEgressRules tests ---
+
+func TestInjectMcpProxyEgressRules(t *testing.T) {
+	makeProxyNP := func() []*unstructured.Unstructured {
+		np := &unstructured.Unstructured{}
+		np.SetKind(NetworkPolicyKind)
+		np.SetName(getProxyEgressNetworkPolicyName(testInstanceName))
+		np.Object["spec"] = map[string]any{
+			"egress": []any{
+				map[string]any{
+					"ports": []any{
+						map[string]any{"port": int64(443), "protocol": "TCP"},
+					},
+				},
+			},
+		}
+		return []*unstructured.Unstructured{np}
+	}
+
+	t.Run("should append in-cluster targets to proxy NP", func(t *testing.T) {
+		objects := makeProxyNP()
+		targets := []egressTarget{{Port: 9001}}
+
+		require.NoError(t, injectMcpProxyEgressRules(objects, targets, testInstanceName))
+
+		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
+		assert.Len(t, egress, 2, "should have HTTPS rule + in-cluster rule")
+
+		rule := egress[1].(map[string]any)
+		ports := rule["ports"].([]any)
+		assert.Equal(t, int64(9001), ports[0].(map[string]any)["port"])
+	})
+
+	t.Run("should append cross-namespace rule to proxy NP", func(t *testing.T) {
+		objects := makeProxyNP()
+		targets := []egressTarget{{Port: 9001, Namespace: "shared-tools"}}
+
+		require.NoError(t, injectMcpProxyEgressRules(objects, targets, testInstanceName))
+
+		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
+		assert.Len(t, egress, 2)
+
+		rule := egress[1].(map[string]any)
+		to := rule["to"].([]any)
+		toEntry := to[0].(map[string]any)
+		nsSelector := toEntry["namespaceSelector"].(map[string]any)
+		matchLabels := nsSelector["matchLabels"].(map[string]any)
+		assert.Equal(t, "shared-tools", matchLabels["kubernetes.io/metadata.name"])
+	})
+
+	t.Run("should be no-op for external-only targets", func(t *testing.T) {
+		objects := makeProxyNP()
+		targets := []egressTarget{{Port: 8443, External: true}}
+
+		require.NoError(t, injectMcpProxyEgressRules(objects, targets, testInstanceName))
+
+		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
+		assert.Len(t, egress, 1)
+	})
+
+	t.Run("should be no-op with empty targets", func(t *testing.T) {
+		objects := makeProxyNP()
+
+		require.NoError(t, injectMcpProxyEgressRules(objects, nil, testInstanceName))
+
+		egress, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
+		assert.Len(t, egress, 1)
+	})
+
+	t.Run("should return error when NP not found", func(t *testing.T) {
+		err := injectMcpProxyEgressRules(nil, []egressTarget{{Port: 9001}}, testInstanceName)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+// --- validateMcpCredentialRefBypass tests ---
+
+func TestValidateMcpCredentialRefBypass(t *testing.T) {
+	t.Run("should return empty when bypass is off", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "my-ns"},
+			Spec: clawv1alpha1.ClawSpec{
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"in-cluster": {URL: "http://mcp-server:8080/mcp", CredentialRef: "my-cred"},
+				},
+			},
+		}
+		assert.Empty(t, validateMcpCredentialRefBypass(instance))
+	})
+
+	t.Run("should return warning when bypass on and in-cluster MCP has credentialRef", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "my-ns"},
+			Spec: clawv1alpha1.ClawSpec{
+				Network: &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(true)},
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"in-cluster": {URL: "http://mcp-server:8080/mcp", CredentialRef: "my-cred"},
+				},
+			},
+		}
+		warning := validateMcpCredentialRefBypass(instance)
+		assert.Contains(t, warning, "credentialRef")
+		assert.Contains(t, warning, "inClusterBypass")
+	})
+
+	t.Run("should return empty when bypass on but no credentialRef", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "my-ns"},
+			Spec: clawv1alpha1.ClawSpec{
+				Network: &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(true)},
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"in-cluster": {URL: "http://mcp-server:8080/mcp"},
+				},
+			},
+		}
+		assert.Empty(t, validateMcpCredentialRefBypass(instance))
+	})
+
+	t.Run("should return empty when bypass on but MCP is stdio (no URL)", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "my-ns"},
+			Spec: clawv1alpha1.ClawSpec{
+				Network: &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(true)},
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"stdio": {Command: "npx", CredentialRef: "my-cred"},
+				},
+			},
+		}
+		assert.Empty(t, validateMcpCredentialRefBypass(instance))
+	})
+
+	t.Run("should return empty when bypass on and credentialRef is on external MCP", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "my-ns"},
+			Spec: clawv1alpha1.ClawSpec{
+				Network: &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(true)},
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"external": {URL: "https://mcp.example.com/mcp", CredentialRef: "my-cred"},
+				},
+			},
+		}
+		assert.Empty(t, validateMcpCredentialRefBypass(instance))
 	})
 }
 
@@ -656,7 +805,7 @@ func filterExternal(targets []egressTarget) []egressTarget {
 // --- Integration tests (envtest) ---
 
 // createClawInstanceWithMcpServers creates a Claw with credentials + MCP servers.
-func createClawInstanceWithMcpServers(t *testing.T, ctx context.Context, name, ns string, mcpServers map[string]clawv1alpha1.McpServerSpec, np *clawv1alpha1.NetworkPolicySpec) { //nolint:unparam
+func createClawInstanceWithMcpServers(t *testing.T, ctx context.Context, name, ns string, mcpServers map[string]clawv1alpha1.McpServerSpec, net *clawv1alpha1.NetworkSpec) { //nolint:unparam
 	t.Helper()
 	secret := createTestAPIKeySecret(aiModelSecret, ns, aiModelSecretKey, aiModelSecretValue)
 	require.NoError(t, k8sClient.Create(ctx, secret))
@@ -664,16 +813,16 @@ func createClawInstanceWithMcpServers(t *testing.T, ctx context.Context, name, n
 	instance := &clawv1alpha1.Claw{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: clawv1alpha1.ClawSpec{
-			Credentials:   testCredentials(),
-			McpServers:    mcpServers,
-			NetworkPolicy: np,
+			Credentials: testCredentials(),
+			McpServers:  mcpServers,
+			Network:     net,
 		},
 	}
 	require.NoError(t, k8sClient.Create(ctx, instance))
 }
 
 func TestEgressIntegration(t *testing.T) {
-	t.Run("in-cluster MCP adds gateway egress rule", func(t *testing.T) {
+	t.Run("in-cluster MCP adds proxy egress rule when bypass off (default)", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		ctx := context.Background()
 
@@ -681,6 +830,37 @@ func TestEgressIntegration(t *testing.T) {
 			map[string]clawv1alpha1.McpServerSpec{
 				"in-cluster": {URL: "http://mcp-customer:9001/mcp"},
 			}, nil)
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		np := &netv1.NetworkPolicy{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getProxyEgressNetworkPolicyName(testInstanceName),
+				Namespace: namespace,
+			}, np) == nil
+		}, "proxy egress NP should be created")
+
+		foundMcpRule := false
+		for _, rule := range np.Spec.Egress {
+			for _, port := range rule.Ports {
+				if port.Port != nil && port.Port.IntValue() == 9001 {
+					foundMcpRule = true
+				}
+			}
+		}
+		assert.True(t, foundMcpRule, "proxy egress NP should contain port 9001 rule for in-cluster MCP when bypass is off")
+	})
+
+	t.Run("in-cluster MCP adds gateway egress rule when bypass on", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		createClawInstanceWithMcpServers(t, ctx, testInstanceName, namespace,
+			map[string]clawv1alpha1.McpServerSpec{
+				"in-cluster": {URL: "http://mcp-customer:9001/mcp"},
+			}, &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(true)})
 
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
@@ -701,10 +881,10 @@ func TestEgressIntegration(t *testing.T) {
 				}
 			}
 		}
-		assert.True(t, foundMcpRule, "gateway egress NP should contain port 9001 rule for in-cluster MCP")
+		assert.True(t, foundMcpRule, "gateway egress NP should contain port 9001 rule for in-cluster MCP when bypass is on")
 	})
 
-	t.Run("cross-namespace MCP adds namespaceSelector egress rule", func(t *testing.T) {
+	t.Run("cross-namespace MCP adds namespaceSelector to proxy NP when bypass off", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		ctx := context.Background()
 
@@ -719,10 +899,10 @@ func TestEgressIntegration(t *testing.T) {
 		np := &netv1.NetworkPolicy{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      getEgressNetworkPolicyName(testInstanceName),
+				Name:      getProxyEgressNetworkPolicyName(testInstanceName),
 				Namespace: namespace,
 			}, np) == nil
-		}, "gateway egress NP should be created")
+		}, "proxy egress NP should be created")
 
 		foundCrossNS := false
 		for _, rule := range np.Spec.Egress {
@@ -734,9 +914,12 @@ func TestEgressIntegration(t *testing.T) {
 				}
 			}
 		}
-		assert.True(t, foundCrossNS, "gateway egress NP should contain namespaceSelector for shared-tools")
+		assert.True(t, foundCrossNS, "proxy egress NP should contain namespaceSelector for shared-tools when bypass is off")
 	})
 
+}
+
+func TestEgressIntegrationExternalAndAdditional(t *testing.T) {
 	t.Run("external non-443 MCP adds proxy egress port", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		ctx := context.Background()
@@ -768,14 +951,14 @@ func TestEgressIntegration(t *testing.T) {
 		assert.True(t, found8443, "proxy egress NP should contain port 8443")
 	})
 
-	t.Run("allowedEgress appends user rules to gateway NP", func(t *testing.T) {
+	t.Run("additionalEgress appends user rules to gateway NP", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		ctx := context.Background()
 
 		port3000 := intstr.FromInt32(3000)
 		createClawInstanceWithMcpServers(t, ctx, testInstanceName, namespace, nil,
-			&clawv1alpha1.NetworkPolicySpec{
-				AllowedEgress: []netv1.NetworkPolicyEgressRule{
+			&clawv1alpha1.NetworkSpec{
+				AdditionalEgress: []netv1.NetworkPolicyEgressRule{
 					{
 						To: []netv1.NetworkPolicyPeer{
 							{
@@ -814,10 +997,10 @@ func TestEgressIntegration(t *testing.T) {
 				}
 			}
 		}
-		assert.True(t, foundLangfuse, "gateway egress NP should contain allowedEgress rule for langfuse")
+		assert.True(t, foundLangfuse, "gateway egress NP should contain additionalEgress rule for langfuse")
 	})
 
-	t.Run("combined MCP servers and allowedEgress in same reconcile", func(t *testing.T) {
+	t.Run("combined MCP servers and additionalEgress in same reconcile", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		ctx := context.Background()
 
@@ -826,8 +1009,8 @@ func TestEgressIntegration(t *testing.T) {
 			map[string]clawv1alpha1.McpServerSpec{
 				"in-cluster": {URL: "http://mcp-customer:9001/mcp"},
 			},
-			&clawv1alpha1.NetworkPolicySpec{
-				AllowedEgress: []netv1.NetworkPolicyEgressRule{
+			&clawv1alpha1.NetworkSpec{
+				AdditionalEgress: []netv1.NetworkPolicyEgressRule{
 					{
 						To: []netv1.NetworkPolicyPeer{
 							{PodSelector: &metav1.LabelSelector{}},
@@ -842,31 +1025,41 @@ func TestEgressIntegration(t *testing.T) {
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
-		np := &netv1.NetworkPolicy{}
+		proxyNP := &netv1.NetworkPolicy{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getProxyEgressNetworkPolicyName(testInstanceName),
+				Namespace: namespace,
+			}, proxyNP) == nil
+		}, "proxy egress NP should be created")
+
+		foundPort9001 := false
+		for _, rule := range proxyNP.Spec.Egress {
+			for _, port := range rule.Ports {
+				if port.Port != nil && port.Port.IntValue() == 9001 {
+					foundPort9001 = true
+				}
+			}
+		}
+		assert.True(t, foundPort9001, "proxy NP should have MCP auto-egress port 9001 (bypass off)")
+
+		gatewayNP := &netv1.NetworkPolicy{}
 		waitFor(t, timeout, interval, func() bool {
 			return k8sClient.Get(ctx, client.ObjectKey{
 				Name:      getEgressNetworkPolicyName(testInstanceName),
 				Namespace: namespace,
-			}, np) == nil
+			}, gatewayNP) == nil
 		}, "gateway egress NP should be created")
 
-		foundPort9001 := false
 		foundPort5432 := false
-		for _, rule := range np.Spec.Egress {
+		for _, rule := range gatewayNP.Spec.Egress {
 			for _, port := range rule.Ports {
-				if port.Port == nil {
-					continue
-				}
-				switch port.Port.IntValue() {
-				case 9001:
-					foundPort9001 = true
-				case 5432:
+				if port.Port != nil && port.Port.IntValue() == 5432 {
 					foundPort5432 = true
 				}
 			}
 		}
-		assert.True(t, foundPort9001, "gateway NP should have MCP auto-egress port 9001")
-		assert.True(t, foundPort5432, "gateway NP should have allowedEgress port 5432")
+		assert.True(t, foundPort5432, "gateway NP should have additionalEgress port 5432")
 	})
 
 	t.Run("external 443 MCP does not add extra proxy egress port", func(t *testing.T) {
@@ -900,7 +1093,7 @@ func TestEgressIntegration(t *testing.T) {
 		assert.Equal(t, 1, portCount, "proxy NP should have exactly one 443 port (no duplicate)")
 	})
 
-	t.Run("no MCP servers and no allowedEgress leaves NP unchanged", func(t *testing.T) {
+	t.Run("no MCP servers and no additionalEgress leaves NP unchanged", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		ctx := context.Background()
 
@@ -918,5 +1111,44 @@ func TestEgressIntegration(t *testing.T) {
 		}, "gateway egress NP should be created")
 
 		assert.Len(t, np.Spec.Egress, 2, "should only have proxy + DNS rules (no MCP rules added)")
+	})
+
+	t.Run("credentialRef on in-cluster MCP with bypass on sets validation-failed condition", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				Network:     &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(true)},
+				McpServers: map[string]clawv1alpha1.McpServerSpec{
+					"in-cluster": {URL: "http://mcp-server:9001/mcp", CredentialRef: "my-model"},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: client.ObjectKey{Name: testInstanceName, Namespace: namespace},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "credentialRef")
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, updated))
+
+		cond := meta.FindStatusCondition(updated.Status.Conditions,
+			clawv1alpha1.ConditionTypeMcpServersConfigured)
+		require.NotNil(t, cond, "McpServersConfigured condition should be set")
+		assert.Equal(t, metav1.ConditionFalse, cond.Status)
+		assert.Equal(t, clawv1alpha1.ConditionReasonValidationFailed, cond.Reason)
+		assert.Contains(t, cond.Message, "credentialRef")
 	})
 }
