@@ -366,6 +366,8 @@ func mcpCredentialRoutes(
 
 		route := buildCredentialRoute(rc.CredentialSpec)
 		route.Domain = domain
+		route.AllowedPaths = nil
+		route.DefaultHeaders = nil
 		routes = append(routes, route)
 	}
 	return routes, nil

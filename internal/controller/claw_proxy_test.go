@@ -1499,6 +1499,16 @@ func TestMcpServerDomainExtraction(t *testing.T) {
 	})
 }
 
+// findRoute returns the first route matching the given domain, or nil.
+func findRoute(routes []proxyRoute, domain string) *proxyRoute {
+	for i := range routes {
+		if routes[i].Domain == domain {
+			return &routes[i]
+		}
+	}
+	return nil
+}
+
 func TestMcpCredentialRefRoutes(t *testing.T) {
 	const mcpServerDomain = "mcp-server"
 
@@ -1551,16 +1561,15 @@ func TestMcpCredentialRefRoutes(t *testing.T) {
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
 
-		for _, r := range cfg.Routes {
-			if r.Domain == mcpServerDomain {
-				assert.NotEqual(t, injectorNone, r.Injector,
-					"mcp-server should not have a passthrough route")
-			}
-			if r.Domain == "other-server" {
-				assert.Equal(t, injectorNone, r.Injector,
-					"other-server should have a passthrough route")
-			}
-		}
+		mcpRoute := findRoute(cfg.Routes, mcpServerDomain)
+		require.NotNil(t, mcpRoute, "route for %s should exist", mcpServerDomain)
+		assert.NotEqual(t, injectorNone, mcpRoute.Injector,
+			"mcp-server should not have a passthrough route")
+
+		otherRoute := findRoute(cfg.Routes, "other-server")
+		require.NotNil(t, otherRoute, "route for other-server should exist")
+		assert.Equal(t, injectorNone, otherRoute.Injector,
+			"other-server should have a passthrough route")
 	})
 
 	t.Run("should error when credentialRef references nonexistent credential", func(t *testing.T) {

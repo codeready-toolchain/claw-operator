@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/ptr"
@@ -1424,6 +1425,41 @@ func TestDeploymentCreateOrUpdateIntegration(t *testing.T) {
 
 const envNoProxy = "NO_PROXY"
 
+// findEnvValue returns a pointer to the value of the first unstructured env var matching name, or nil.
+func findEnvValue(envVars []any, name string) *string {
+	for _, e := range envVars {
+		em, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		if em["name"] == name {
+			v, _ := em["value"].(string)
+			return &v
+		}
+	}
+	return nil
+}
+
+// findContainer returns the container with the given name from a Deployment, or nil.
+func findContainer(dep *appsv1.Deployment, name string) *corev1.Container {
+	for i := range dep.Spec.Template.Spec.Containers {
+		if dep.Spec.Template.Spec.Containers[i].Name == name {
+			return &dep.Spec.Template.Spec.Containers[i]
+		}
+	}
+	return nil
+}
+
+// findContainerEnv returns the env var with the given name from a container, or nil.
+func findContainerEnv(c *corev1.Container, name string) *corev1.EnvVar {
+	for i := range c.Env {
+		if c.Env[i].Name == name {
+			return &c.Env[i]
+		}
+	}
+	return nil
+}
+
 func TestConfigureGatewayNoProxy(t *testing.T) {
 	makeGatewayDeploy := func() []*unstructured.Unstructured {
 		dep := &unstructured.Unstructured{}
@@ -1457,12 +1493,9 @@ func TestConfigureGatewayNoProxy(t *testing.T) {
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		envVars := containers[0].(map[string]any)["env"].([]any)
-		for _, e := range envVars {
-			em := e.(map[string]any)
-			if em["name"] == envNoProxy {
-				assert.NotContains(t, em["value"], ".svc")
-			}
-		}
+		val := findEnvValue(envVars, envNoProxy)
+		require.NotNil(t, val, "NO_PROXY env var should exist")
+		assert.NotContains(t, *val, ".svc")
 	})
 
 	t.Run("should append .svc suffixes when bypass is on", func(t *testing.T) {
@@ -1479,14 +1512,13 @@ func TestConfigureGatewayNoProxy(t *testing.T) {
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		envVars := containers[0].(map[string]any)["env"].([]any)
 
-		for _, e := range envVars {
-			em := e.(map[string]any)
-			name := em["name"].(string)
-			val := em["value"].(string)
-			if name == envNoProxy || name == envNoProxyLower {
-				assert.Contains(t, val, ".svc,.svc.cluster.local")
-			}
-		}
+		noProxyVal := findEnvValue(envVars, envNoProxy)
+		require.NotNil(t, noProxyVal, "NO_PROXY env var should exist")
+		assert.Contains(t, *noProxyVal, ".svc,.svc.cluster.local")
+
+		noProxyLowerVal := findEnvValue(envVars, envNoProxyLower)
+		require.NotNil(t, noProxyLowerVal, "no_proxy env var should exist")
+		assert.Contains(t, *noProxyLowerVal, ".svc,.svc.cluster.local")
 	})
 
 	t.Run("should not modify NO_PROXY when bypass is explicitly false", func(t *testing.T) {
@@ -1502,12 +1534,9 @@ func TestConfigureGatewayNoProxy(t *testing.T) {
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		envVars := containers[0].(map[string]any)["env"].([]any)
-		for _, e := range envVars {
-			em := e.(map[string]any)
-			if em["name"] == envNoProxy {
-				assert.NotContains(t, em["value"], ".svc")
-			}
-		}
+		val := findEnvValue(envVars, envNoProxy)
+		require.NotNil(t, val, "NO_PROXY env var should exist")
+		assert.NotContains(t, *val, ".svc")
 	})
 }
 
@@ -1527,17 +1556,18 @@ func TestGatewayNoProxyIntegration(t *testing.T) {
 			}, deployment) == nil
 		}, "gateway deployment should be created")
 
-		for _, c := range deployment.Spec.Template.Spec.Containers {
-			if c.Name != ClawGatewayContainerName {
-				continue
-			}
-			for _, env := range c.Env {
-				if env.Name == envNoProxy || env.Name == envNoProxyLower {
-					assert.NotContains(t, env.Value, ".svc",
-						"%s should not contain .svc when bypass is off", env.Name)
-				}
-			}
-		}
+		gatewayContainer := findContainer(deployment, ClawGatewayContainerName)
+		require.NotNil(t, gatewayContainer, "gateway container should exist")
+
+		noProxyEnv := findContainerEnv(gatewayContainer, envNoProxy)
+		require.NotNil(t, noProxyEnv, "NO_PROXY env var should exist on gateway")
+		assert.NotContains(t, noProxyEnv.Value, ".svc",
+			"NO_PROXY should not contain .svc when bypass is off")
+
+		noProxyLowerEnv := findContainerEnv(gatewayContainer, envNoProxyLower)
+		require.NotNil(t, noProxyLowerEnv, "no_proxy env var should exist on gateway")
+		assert.NotContains(t, noProxyLowerEnv.Value, ".svc",
+			"no_proxy should not contain .svc when bypass is off")
 	})
 
 	t.Run("gateway should have .svc in NO_PROXY when bypass is on", func(t *testing.T) {
@@ -1566,17 +1596,18 @@ func TestGatewayNoProxyIntegration(t *testing.T) {
 			}, deployment) == nil
 		}, "gateway deployment should be created")
 
-		for _, c := range deployment.Spec.Template.Spec.Containers {
-			if c.Name != ClawGatewayContainerName {
-				continue
-			}
-			for _, env := range c.Env {
-				if env.Name == envNoProxy || env.Name == envNoProxyLower {
-					assert.Contains(t, env.Value, ".svc,.svc.cluster.local",
-						"%s should contain .svc suffixes when bypass is on", env.Name)
-				}
-			}
-		}
+		gatewayContainer := findContainer(deployment, ClawGatewayContainerName)
+		require.NotNil(t, gatewayContainer, "gateway container should exist")
+
+		noProxyEnv := findContainerEnv(gatewayContainer, envNoProxy)
+		require.NotNil(t, noProxyEnv, "NO_PROXY env var should exist on gateway")
+		assert.Contains(t, noProxyEnv.Value, ".svc,.svc.cluster.local",
+			"NO_PROXY should contain .svc suffixes when bypass is on")
+
+		noProxyLowerEnv := findContainerEnv(gatewayContainer, envNoProxyLower)
+		require.NotNil(t, noProxyLowerEnv, "no_proxy env var should exist on gateway")
+		assert.Contains(t, noProxyLowerEnv.Value, ".svc,.svc.cluster.local",
+			"no_proxy should contain .svc suffixes when bypass is on")
 	})
 }
 
@@ -1587,13 +1618,25 @@ func TestEnableServiceLinks(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		ctx := context.Background()
 
-		createClawInstance(t, ctx, testInstanceName, namespace)
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				Auth:        &clawv1alpha1.AuthSpec{DisableDevicePairing: ptr.To(false)},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 
 		for _, name := range []string{
 			getClawDeploymentName(testInstanceName),
 			getProxyDeploymentName(testInstanceName),
+			getDevicePairingDeploymentName(testInstanceName),
 		} {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
