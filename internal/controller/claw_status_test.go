@@ -261,7 +261,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+			setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
@@ -285,6 +285,11 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			createClawInstance(t, ctx, resourceName, namespace)
+			instance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
+			instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
+			require.NoError(t, k8sClient.Update(ctx, instance))
+
 			reconciler := createClawReconciler()
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
@@ -302,6 +307,11 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			})
 
 			createClawInstance(t, ctx, resourceName, namespace)
+			instance := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
+			instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
+			require.NoError(t, k8sClient.Update(ctx, instance))
+
 			reconciler := createClawReconciler()
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
@@ -378,8 +388,19 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			// 1. Create instance with device pairing enabled (default)
-			createClawInstance(t, ctx, resourceName, namespace)
+			// 1. Create instance with device pairing explicitly enabled
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
+
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			instance.Spec.Credentials = testCredentials()
+			instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+				DisableDevicePairing: boolPtr(false),
+			}
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+
 			reconciler := createClawReconciler()
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
@@ -415,7 +436,18 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				deleteAndWaitAllResources(t, namespace)
 			})
 
-			createClawInstance(t, ctx, resourceName, namespace)
+			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
+
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			instance.Spec.Credentials = testCredentials()
+			instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+				DisableDevicePairing: boolPtr(false),
+			}
+			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
+
 			reconciler := createClawReconciler()
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
@@ -474,7 +506,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				return false
 			}, "initial Ready condition should be set")
 
-			setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+			setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
@@ -820,7 +852,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+				setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 				_, err = reconciler.Reconcile(ctx, ctrl.Request{
 					NamespacedName: client.ObjectKey{
@@ -889,7 +921,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				})
 				require.NoError(t, err, "reconcile failed")
 
-				setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+				setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 				_, err = reconciler.Reconcile(ctx, ctrl.Request{
 					NamespacedName: client.ObjectKey{
@@ -920,6 +952,10 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.Credentials = testCredentials()
+				enablePairing := false
+				instance.Spec.Auth = &clawv1alpha1.AuthSpec{
+					DisableDevicePairing: &enablePairing,
+				}
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
@@ -1178,7 +1214,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			})
 			require.NoError(t, err, "reconcile failed")
 
-			setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
+			setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 
 			_, err = reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: client.ObjectKey{
