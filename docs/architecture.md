@@ -81,11 +81,15 @@ The proxy ConfigMap is intentionally excluded from Kustomize (file prefixed with
 
 Both components share the `app.kubernetes.io/name: claw` label applied via their respective `kustomization.yaml` files.
 
-## Recreate Deployment Rollout Guard
+## Deployment Apply Strategy (CreateOrUpdate)
 
-The gateway Deployment uses `strategy: Recreate` (not `RollingUpdate`) because it holds a PVC. Server-side apply with `Force: true` increments the Deployment's `generation` on every patch — even when the desired state is identical — which triggers the Recreate controller to kill the running pod and start a new one. On a busy reconciliation loop this means unnecessary downtime.
+Deployments are applied via `controllerutil.CreateOrUpdate` rather than server-side apply (SSA). SSA with `Force: true` causes `generation` to increment on every patch — even when the desired state is identical — due to field-ownership transfers between `claw-operator` (Apply) and `kube-controller-manager` (Update). For the gateway Deployment (strategy: Recreate), this triggered unnecessary pod-killing rollouts; for RollingUpdate Deployments, it caused continuous reconciliation loops.
 
-To avoid this, `isRecreateDeploymentUnchanged()` computes a SHA-256 hash of the desired `spec.template` and compares it against a `claw.sandbox.redhat.com/desired-template-hash` annotation on the live Deployment. If the hash matches and `spec.replicas` is unchanged, the apply is skipped entirely. On first apply (or any change), the new hash is stamped onto the desired object's annotations before SSA applies it.
+`CreateOrUpdate` avoids this by comparing before/after state with `DeepEqual` and skipping the Update when nothing changed. All other resources (ConfigMaps, Services, NetworkPolicies, Routes) continue to use SSA, which works correctly for resources without field-ownership conflicts.
 
-The replicas check handles the idle/unidle case: an external idler may scale the Deployment to 0, and the operator needs to restore replicas even if the template is identical.
+A `NormalizeDeployment()` function pre-applies Kubernetes admission defaults (strategy fields, `terminationGracePeriodSeconds`, container `imagePullPolicy`, probe thresholds, etc.) onto the desired spec before comparison. Without this, the operator's desired spec (missing defaulted fields) would always differ from the API server's stored spec (with defaults populated), causing an Update on every reconcile.
+
+The Kustomize-rendered unstructured Deployment is converted to a typed `*appsv1.Deployment` via `runtime.DefaultUnstructuredConverter.FromUnstructured()` at the apply boundary.
+
+See [ADR-0018](adr/0018-centralized-provider-registry.md) for the full decision record.
 
