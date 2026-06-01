@@ -204,6 +204,18 @@ func TestNormalizeContainer(t *testing.T) {
 		assert.Equal(t, corev1.PullAlways, c.ImagePullPolicy)
 	})
 
+	t.Run("defaults ImagePullPolicy to Always for registry-port untagged images", func(t *testing.T) {
+		c := &corev1.Container{Name: "test", Image: "registry:5000/repo/openclaw"}
+		normalizeContainer(c)
+		assert.Equal(t, corev1.PullAlways, c.ImagePullPolicy)
+	})
+
+	t.Run("defaults ImagePullPolicy to IfNotPresent for registry-port tagged images", func(t *testing.T) {
+		c := &corev1.Container{Name: "test", Image: "registry:5000/repo/openclaw:v1"}
+		normalizeContainer(c)
+		assert.Equal(t, corev1.PullIfNotPresent, c.ImagePullPolicy)
+	})
+
 	t.Run("does not overwrite explicit ImagePullPolicy", func(t *testing.T) {
 		c := &corev1.Container{Name: "test", Image: "img:v1", ImagePullPolicy: corev1.PullAlways}
 		normalizeContainer(c)

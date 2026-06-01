@@ -134,7 +134,7 @@ func normalizeContainer(c *corev1.Container) {
 	}
 
 	if c.ImagePullPolicy == "" {
-		if strings.HasSuffix(c.Image, ":latest") || !strings.Contains(c.Image, ":") {
+		if imageHasLatestOrNoTag(c.Image) {
 			c.ImagePullPolicy = corev1.PullAlways
 		} else {
 			c.ImagePullPolicy = corev1.PullIfNotPresent
@@ -171,4 +171,20 @@ func normalizeProbe(p *corev1.Probe) {
 	if p.HTTPGet != nil && p.HTTPGet.Scheme == "" {
 		p.HTTPGet.Scheme = corev1.URISchemeHTTP
 	}
+}
+
+// imageHasLatestOrNoTag returns true if the image reference has no tag or is
+// explicitly tagged ":latest". A colon in the registry host (e.g.
+// "registry:5000/repo") is not treated as a tag separator — only a colon
+// after the last '/' counts.
+func imageHasLatestOrNoTag(image string) bool {
+	if strings.HasSuffix(image, ":latest") {
+		return true
+	}
+	// Look for a tag colon only in the name/tag portion, not the registry host.
+	afterSlash := image
+	if i := strings.LastIndex(image, "/"); i >= 0 {
+		afterSlash = image[i+1:]
+	}
+	return !strings.Contains(afterSlash, ":")
 }
