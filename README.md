@@ -194,7 +194,6 @@ spec:
         - name: openai-api-key
           key: api-key
       provider: openai
-      domain: "api.openai.com"
 EOF
 ```
 

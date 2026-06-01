@@ -154,7 +154,7 @@ func buildProviderEntry(provider, baseURL, apiKey string) map[string]any {
 	return entry
 }
 
-// resolveProviderDefaults fills in missing Domain and APIKey fields for known providers.
+// resolveProviderDefaults fills in missing Domain (and APIKey for apiKey type) for known providers.
 // Explicit values are preserved (escape hatch). Returns an error if required fields
 // are still missing after applying defaults (unknown provider without domain/apiKey).
 func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
@@ -166,6 +166,13 @@ func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
 			}
 			if cred.APIKey == nil && defaults.Header != "" {
 				cred.APIKey = &clawv1alpha1.APIKeyConfig{Header: defaults.Header}
+			}
+		}
+
+	case clawv1alpha1.CredentialTypeBearer:
+		if defaults, ok := knownProviders[cred.Provider]; ok && defaults.Domain != "" {
+			if cred.Domain == "" {
+				cred.Domain = defaults.Domain
 			}
 		}
 

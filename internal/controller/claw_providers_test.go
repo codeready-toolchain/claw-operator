@@ -591,6 +591,33 @@ func TestResolveProviderDefaults(t *testing.T) {
 			wantDomain: "custom-openai-proxy.internal",
 			wantHeader: "Authorization",
 		},
+		{
+			name: "xai bearer fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "grok",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "xai",
+			},
+			wantDomain: "api.x.ai",
+		},
+		{
+			name: "openai bearer fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gpt",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "openai",
+			},
+			wantDomain: "api.openai.com",
+		},
+		{
+			name: "unknown provider bearer without domain errors",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "custom",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "custom-llm",
+			},
+			wantErr: "domain is required",
+		},
 	}
 
 	for _, tt := range tests {
