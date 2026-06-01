@@ -225,17 +225,21 @@ func generateProxyConfig(
 		}
 	}
 
-	// Stable ordering: exact before suffix, alphabetical within each group.
+	// Deterministic ordering: exact before suffix, alphabetical within each group.
 	// Within the same domain, routes with AllowedPaths sort before catch-all routes
 	// so the proxy's MatchRoute picks the specific route first.
+	// Uses SliceStable + Injector tie-breaker to guarantee identical output across reconciles.
 	routeLess := func(a, b proxyRoute) bool {
 		if a.Domain != b.Domain {
 			return a.Domain < b.Domain
 		}
-		return len(a.AllowedPaths) > 0 && len(b.AllowedPaths) == 0
+		if (len(a.AllowedPaths) > 0) != (len(b.AllowedPaths) > 0) {
+			return len(a.AllowedPaths) > 0
+		}
+		return a.Injector < b.Injector
 	}
-	sort.Slice(exact, func(i, j int) bool { return routeLess(exact[i], exact[j]) })
-	sort.Slice(suffix, func(i, j int) bool { return routeLess(suffix[i], suffix[j]) })
+	sort.SliceStable(exact, func(i, j int) bool { return routeLess(exact[i], exact[j]) })
+	sort.SliceStable(suffix, func(i, j int) bool { return routeLess(suffix[i], suffix[j]) })
 
 	cfg := proxyConfig{Routes: append(exact, suffix...)}
 	return json.Marshal(cfg)

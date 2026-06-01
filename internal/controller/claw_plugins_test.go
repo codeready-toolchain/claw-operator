@@ -139,6 +139,12 @@ func TestGeneratePluginInstallScript(t *testing.T) {
 		assert.NotContains(t, script, "rm -rf /home/node/.openclaw/extensions")
 	})
 
+	t.Run("should clean all extension dirs when no manifest exists", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
+		assert.Contains(t, script, "else")
+		assert.Contains(t, script, `find "$EXT" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +`)
+	})
+
 	t.Run("should guard against path traversal in manifest entries", func(t *testing.T) {
 		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
 		assert.Contains(t, script, `""|.|..|*/*|*..*)`)

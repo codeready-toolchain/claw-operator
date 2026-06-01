@@ -92,6 +92,11 @@ if [ -f "$MANIFEST" ]; then
     rm -rf -- "$target"
   done < "$MANIFEST"
   rm -f "$MANIFEST"
+else
+  # No manifest from a previous successful install — clean all extension
+  # dirs to avoid "plugin already exists" errors from orphaned directories
+  # left by pods killed mid-install or pre-manifest operator versions.
+  find "$EXT" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
 fi
 mkdir -p "$EXT"
 ls "$EXT" 2>/dev/null | sort > /tmp/before-plugins.txt
