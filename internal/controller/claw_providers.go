@@ -38,8 +38,7 @@ type providerDefaults struct {
 	Header string // e.g. "x-goog-api-key"
 
 	// OpenClaw wire format API identifier. Empty means the provider uses the
-	// OpenClaw default (openai-completions), which is correct for
-	// OpenAI-compatible providers like openai and xai.
+	// OpenClaw default (openai-completions when baseUrl is set).
 	API string // direct path, e.g. "google-generative-ai"
 
 	// Wire format for the Vertex AI SDK path. Only used when usesVertexSDK()
@@ -100,6 +99,8 @@ var knownProviders = map[string]providerDefaults{
 		},
 	},
 	"openai": {
+		Domain:     "api.openai.com",
+		BasePath:   "/v1",
 		Companions: []string{"openai-codex"},
 		Models: []modelEntry{
 			{Name: "gpt-5.5", Alias: "GPT-5.5"},
@@ -111,6 +112,9 @@ var knownProviders = map[string]providerDefaults{
 		API: "openai-codex-responses",
 	},
 	"xai": {
+		Domain:   "api.x.ai",
+		BasePath: "/v1",
+		API:      "openai-responses",
 		Models: []modelEntry{
 			{Name: "grok-4.3", Alias: "Grok 4.3"},
 			{Name: "grok-4.20", Alias: "Grok 4.20"},

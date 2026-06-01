@@ -10,7 +10,7 @@ export NS=my-claw-namespace
 
 ## LLM Providers
 
-For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers defaults where possible — you only need `name`, `type`, `secretRef`, and `provider`. For `google` and `anthropic`, the `domain` and `apiKey` header are fully inferred. For `openai` and `xai`, you must provide a `domain` explicitly since they use `type: bearer`. You can still override any inferred field if needed (e.g., routing through a custom proxy).
+For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers defaults where possible — you only need `name`, `type`, `secretRef`, and `provider`. The `domain` is fully inferred for all known providers. For `google` and `anthropic`, the `apiKey` header is also inferred. For `openai` and `xai`, use `type: bearer` (standard OpenAI-compatible auth). You can still override any inferred field if needed (e.g., routing through a custom proxy).
 
 The `provider` field also accepts arbitrary strings for custom/self-hosted providers — see [Custom / Self-Hosted Providers](#custom--self-hosted-providers) below. For the best experience with custom endpoints, use `spec.customProviders` which provides full control over `baseUrl`, wire format, and model registration.
 
@@ -112,7 +112,6 @@ spec:
         - name: openai-api-key
           key: api-key
       provider: openai
-      domain: "api.openai.com"
 EOF
 ```
 
@@ -148,7 +147,6 @@ spec:
         - name: xai-api-key
           key: api-key
       provider: xai
-      domain: "api.x.ai"
 EOF
 ```
 

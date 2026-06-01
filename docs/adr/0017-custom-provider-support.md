@@ -2,7 +2,7 @@
 
 **Status:** Implemented
 **Date:** 2026-05-29
-**Updated:** 2026-05-31
+**Updated:** 2026-06-01
 
 ---
 
@@ -81,7 +81,7 @@ When `provider` is set directly on a credential (the quick path), `injectProvide
 
 ### `spec.credentials[].provider` — relaxed
 
-The `provider` field accepts any string. `resolveProviderDefaults()` auto-fills domain and header only for providers in `knownProviders` (currently `google` and `anthropic`) when `type: apiKey`. All other providers pass through but require explicit `domain` (and `apiKey` config when `type: apiKey`). The model catalog (defined in the `Models` field of each `knownProviders` entry) populates the model picker for `google`, `anthropic`, `openai`, and `xai`; providers not in the registry are silently skipped for model registration.
+The `provider` field accepts any string. `resolveProviderDefaults()` auto-fills domain for providers in `knownProviders` (currently `google`, `anthropic`, `openai`, and `xai`) when `type: apiKey`. For `google` and `anthropic`, the apiKey header is also inferred. All other providers pass through but require explicit `domain` (and `apiKey` config when `type: apiKey`). The model catalog (defined in the `Models` field of each `knownProviders` entry) populates the model picker for `google`, `anthropic`, `openai`, and `xai`; providers not in the registry are silently skipped for model registration.
 
 ---
 
@@ -227,6 +227,6 @@ spec:
 ## Backward Compatibility
 
 - Existing CRs with any `provider` value continue to work identically — `injectProviders()` already accepted arbitrary strings.
-- `resolveProviderDefaults()` still auto-infers domain/header for `google` and `anthropic` (via `knownProviders`) — this logic is untouched.
+- `resolveProviderDefaults()` auto-infers domain for all known providers (`google`, `anthropic`, `openai`, `xai`) via `knownProviders`.
 - The model catalog still populates models for `google`, `anthropic`, `openai`, and `xai`.
 - `spec.customProviders` is optional with no default — existing CRs are unaffected.
