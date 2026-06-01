@@ -53,18 +53,22 @@ func TestKnownProvidersConsistency(t *testing.T) {
 		}
 	})
 
-	t.Run("providers with Domain must also have Header or use standard Bearer auth", func(t *testing.T) {
-		// Providers using standard Bearer auth (Authorization: Bearer <key>) don't
-		// need a Header default — users should use type: bearer for these.
-		usesStandardBearer := map[string]bool{
-			"openai": true,
-			"xai":    true,
-		}
+	t.Run("providers with Domain must have CredType set", func(t *testing.T) {
 		for provider, defaults := range knownProviders {
-			if defaults.Domain != "" && !usesStandardBearer[provider] {
-				assert.NotEmpty(t, defaults.Header,
-					"provider %q has Domain %q but no Header for apiKey injection",
+			if defaults.Domain != "" {
+				assert.NotEmpty(t, defaults.CredType,
+					"provider %q has Domain %q but no CredType — users cannot omit type",
 					provider, defaults.Domain)
+			}
+		}
+	})
+
+	t.Run("apiKey providers must have Header", func(t *testing.T) {
+		for provider, defaults := range knownProviders {
+			if defaults.CredType == clawv1alpha1.CredentialTypeAPIKey {
+				assert.NotEmpty(t, defaults.Header,
+					"provider %q has CredType=apiKey but no Header for injection",
+					provider)
 			}
 		}
 	})
@@ -422,10 +426,69 @@ func TestResolveProviderDefaults(t *testing.T) {
 	tests := []struct {
 		name       string
 		cred       clawv1alpha1.CredentialSpec
+		wantType   clawv1alpha1.CredentialType
 		wantDomain string
 		wantHeader string
 		wantErr    string
 	}{
+		{
+			name: "google infers apiKey type and fills domain and header",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gemini",
+				Provider: "google",
+			},
+			wantType:   clawv1alpha1.CredentialTypeAPIKey,
+			wantDomain: "generativelanguage.googleapis.com",
+			wantHeader: "x-goog-api-key",
+		},
+		{
+			name: "anthropic infers apiKey type and fills domain and header",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "anthropic",
+				Provider: "anthropic",
+			},
+			wantType:   clawv1alpha1.CredentialTypeAPIKey,
+			wantDomain: "api.anthropic.com",
+			wantHeader: "x-api-key",
+		},
+		{
+			name: "openai infers bearer type and fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gpt",
+				Provider: "openai",
+			},
+			wantType:   clawv1alpha1.CredentialTypeBearer,
+			wantDomain: "api.openai.com",
+		},
+		{
+			name: "xai infers bearer type and fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "grok",
+				Provider: "xai",
+			},
+			wantType:   clawv1alpha1.CredentialTypeBearer,
+			wantDomain: "api.x.ai",
+		},
+		{
+			name: "unknown provider without type errors",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "custom",
+				Provider: "custom-llm",
+			},
+			wantErr: "type is required",
+		},
+		{
+			name: "explicit type overrides inferred default",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "grok",
+				Provider: "xai",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization", ValuePrefix: "Bearer "},
+			},
+			wantType:   clawv1alpha1.CredentialTypeAPIKey,
+			wantDomain: "api.x.ai",
+			wantHeader: "Authorization",
+		},
 		{
 			name: "google apiKey fills domain and header",
 			cred: clawv1alpha1.CredentialSpec{
@@ -630,6 +693,9 @@ func TestResolveProviderDefaults(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			if tt.wantType != "" {
+				assert.Equal(t, tt.wantType, cred.Type)
+			}
 			assert.Equal(t, tt.wantDomain, cred.Domain)
 			if tt.wantHeader != "" {
 				require.NotNil(t, cred.APIKey)

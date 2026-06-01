@@ -21,7 +21,7 @@ This blocks:
 
 Two complementary changes that together give full custom provider support:
 
-1. **Accept arbitrary `provider` strings on credentials** — any credential with a `provider` value automatically generates both a proxy route and a `models.providers` entry. `resolveProviderDefaults()` auto-fills domain/header only for providers in `knownProviders` (currently `google` and `anthropic`); all other providers require explicit `domain` (and `apiKey` config when `type: apiKey`).
+1. **Accept arbitrary `provider` strings on credentials** — any credential with a `provider` value automatically generates both a proxy route and a `models.providers` entry. `resolveProviderDefaults()` auto-fills `type`, `domain`, and header for providers in `knownProviders` (`google`, `anthropic`, `openai`, `xai`); all other providers require explicit `type`, `domain` (and `apiKey` config when `type: apiKey`).
 
 2. **Add `spec.customProviders` CRD field** — a typed, validated struct for custom OpenAI-compatible providers with explicit `baseUrl`, model list, and credential linkage. This is the primary interface for dashboards and GitOps.
 
@@ -56,7 +56,7 @@ When `provider` is set directly on a credential (the quick path), `injectProvide
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Provider validation | Arbitrary `provider` strings with explicit requirements | `resolveProviderDefaults()` auto-fills only for providers in `knownProviders` (`google`, `anthropic`); others require explicit `domain` and type-specific config |
+| Provider validation | Arbitrary `provider` strings with explicit requirements | `resolveProviderDefaults()` auto-fills `type`, `domain`, and header for providers in `knownProviders` (`google`, `anthropic`, `openai`, `xai`); others require explicit `type`, `domain`, and type-specific config |
 | Custom provider API | Dedicated `spec.customProviders` field | Typed, validated struct is dashboard-friendly and GitOps-friendly; avoids fighting the always-overwrite tier via `spec.config.raw` |
 | Wire format selection | Include optional `api` enum field | Negligible cost; covers Ollama native, Anthropic endpoints, and OpenAI Responses without falling back to raw config that fights the operator's overwrite behavior |
 | API enum values | `openai-completions`, `openai-responses`, `anthropic-messages`, `ollama` | Maps directly to OpenClaw's supported wire formats; forward-compatible (new values are non-breaking) |

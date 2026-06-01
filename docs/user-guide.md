@@ -10,7 +10,7 @@ export NS=my-claw-namespace
 
 ## LLM Providers
 
-For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers defaults where possible — you only need `name`, `type`, `secretRef`, and `provider`. The `domain` is fully inferred for all known providers. For `google` and `anthropic`, the `apiKey` header is also inferred. For `openai` and `xai`, use `type: bearer` (standard OpenAI-compatible auth). You can still override any inferred field if needed (e.g., routing through a custom proxy).
+For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers `type`, `domain`, and auth headers — you only need `name`, `provider`, and `secretRef`. You can still override any inferred field if needed (e.g., routing through a custom proxy or using a different credential type).
 
 The `provider` field also accepts arbitrary strings for custom/self-hosted providers — see [Custom / Self-Hosted Providers](#custom--self-hosted-providers) below. For the best experience with custom endpoints, use `spec.customProviders` which provides full control over `baseUrl`, wire format, and model registration.
 
@@ -41,11 +41,10 @@ metadata:
 spec:
   credentials:
     - name: gemini
-      type: apiKey
+      provider: google
       secretRef:
         - name: gemini-api-key
           key: api-key
-      provider: google
 EOF
 ```
 
@@ -74,11 +73,10 @@ metadata:
 spec:
   credentials:
     - name: anthropic
-      type: apiKey
+      provider: anthropic
       secretRef:
         - name: anthropic-api-key
           key: api-key
-      provider: anthropic
 EOF
 ```
 
@@ -107,11 +105,10 @@ metadata:
 spec:
   credentials:
     - name: openai
-      type: bearer
+      provider: openai
       secretRef:
         - name: openai-api-key
           key: api-key
-      provider: openai
 EOF
 ```
 
@@ -142,11 +139,10 @@ metadata:
 spec:
   credentials:
     - name: xai
-      type: bearer
+      provider: xai
       secretRef:
         - name: xai-api-key
           key: api-key
-      provider: xai
 EOF
 ```
 
