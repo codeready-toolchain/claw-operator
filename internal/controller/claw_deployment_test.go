@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/ptr"
@@ -1775,7 +1776,7 @@ func TestApplyVertexADCConfigMap(t *testing.T) {
 		cm := &corev1.ConfigMap{}
 		cmName := getVertexADCConfigMapName(testInstanceName)
 		err := k8sClient.Get(ctx, client.ObjectKey{Name: cmName, Namespace: namespace}, cm)
-		assert.Error(t, err, "Vertex ADC ConfigMap should not exist for non-Vertex credentials")
+		assert.True(t, apierrors.IsNotFound(err), "Vertex ADC ConfigMap should not exist for non-Vertex credentials")
 	})
 
 	t.Run("cleans up orphaned ConfigMap when creds change to non-Vertex", func(t *testing.T) {
@@ -1821,7 +1822,7 @@ func TestApplyVertexADCConfigMap(t *testing.T) {
 		require.NoError(t, reconciler.applyVertexADCConfigMap(ctx, instance, nonVertexCreds))
 
 		err := k8sClient.Get(ctx, client.ObjectKey{Name: cmName, Namespace: namespace}, cm)
-		assert.Error(t, err, "ADC ConfigMap should be deleted when switching to non-Vertex creds")
+		assert.True(t, apierrors.IsNotFound(err), "ADC ConfigMap should be deleted when switching to non-Vertex creds")
 	})
 }
 
