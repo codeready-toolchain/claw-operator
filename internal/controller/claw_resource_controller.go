@@ -491,6 +491,20 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	// Warn if credentialRef is set on in-cluster MCP servers while inClusterBypass is true —
+	// the proxy is bypassed so credentials can't be injected.
+	if warning := validateMcpCredentialRefBypass(instance); warning != "" {
+		logger.Info(warning)
+		setCondition(instance, clawv1alpha1.ConditionTypeMcpServersConfigured, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonValidationFailed, warning)
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonValidationFailed, warning)
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after MCP credentialRef bypass validation")
+		}
+		return ctrl.Result{}, fmt.Errorf("%s", warning)
+	}
+
 	// Validate web search configuration (secret existence, credential cross-refs)
 	if err := r.validateWebSearchConfig(ctx, instance); err != nil {
 		logger.Error(err, "Web search validation failed")
@@ -729,6 +743,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 		return fmt.Errorf("failed to inject providers: %w", err)
 	}
 	injectModelCatalog(config, instance)
+	injectMemorySearch(config, instance)
 	if err := injectChannels(config, instance); err != nil {
 		return fmt.Errorf("failed to inject channels: %w", err)
 	}
@@ -772,14 +787,20 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 		return fmt.Errorf("failed to inject Kubernetes ports into NetworkPolicy: %w", err)
 	}
 	mcpTargets := classifyMcpEgressTargets(instance)
-	if err := injectMcpGatewayEgressRules(objects, mcpTargets, instance.Name); err != nil {
-		return fmt.Errorf("failed to inject MCP gateway egress rules: %w", err)
+	if inClusterBypassEnabled(instance) {
+		if err := injectMcpGatewayEgressRules(objects, mcpTargets, instance.Name); err != nil {
+			return fmt.Errorf("failed to inject MCP gateway egress rules: %w", err)
+		}
+	} else {
+		if err := injectMcpProxyEgressRules(objects, mcpTargets, instance.Name); err != nil {
+			return fmt.Errorf("failed to inject MCP proxy egress rules: %w", err)
+		}
 	}
 	if err := injectMcpProxyEgressPorts(objects, mcpTargets, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject MCP proxy egress ports: %w", err)
 	}
-	if err := injectAllowedEgress(objects, instance); err != nil {
-		return fmt.Errorf("failed to inject allowed egress rules: %w", err)
+	if err := injectAdditionalEgress(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject additional egress rules: %w", err)
 	}
 	if err := stampGatewayConfigHash(objects, instance.Name, effectivePlugins(instance)); err != nil {
 		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
@@ -841,6 +862,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 		if err := configurePluginsInitContainer(objects, instance, plugins); err != nil {
 			return fmt.Errorf("failed to configure plugins init container: %w", err)
 		}
+	}
+	if err := configureGatewayNoProxy(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure gateway NO_PROXY: %w", err)
 	}
 	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
 		return fmt.Errorf("failed to configure image pull policy: %w", err)

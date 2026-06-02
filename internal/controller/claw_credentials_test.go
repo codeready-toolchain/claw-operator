@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -169,7 +170,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), "apiKey config is required")
 	})
 
-	t.Run("should reject creation via CEL when neither type nor channel is set", func(t *testing.T) {
+	t.Run("should reject creation via CEL when neither type nor channel nor known provider is set", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
@@ -183,8 +184,27 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			},
 		}
 		err := k8sClient.Create(ctx, instance)
-		require.Error(t, err, "admission should reject credential with neither type nor channel")
-		assert.Contains(t, err.Error(), "either type or channel must be set")
+		require.Error(t, err, "admission should reject credential with neither type, channel, nor known provider")
+		assert.Contains(t, err.Error(), "type is required")
+	})
+
+	t.Run("should reject creation via CEL when unknown provider is set without type", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "custom",
+				Provider:  "openrouter",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "s", Key: "k"}},
+				Domain:    "openrouter.ai",
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "admission should reject unknown provider without explicit type")
+		assert.Contains(t, err.Error(), "type is required")
 	})
 
 	t.Run("should reject creation via CEL when both provider and channel are set", func(t *testing.T) {
@@ -219,6 +239,119 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		}
 		err := k8sClient.Create(ctx, instance)
 		require.NoError(t, err, "admission should accept credential with channel but no type")
+	})
+
+	t.Run("should accept creation via CEL when known provider is set without type", func(t *testing.T) {
+		knownProviders := []string{"google", "anthropic", "openai", "xai"}
+		for _, provider := range knownProviders {
+			t.Run(provider, func(t *testing.T) {
+				t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+				secretName := provider + "-secret"
+				secret := createTestAPIKeySecret(secretName, namespace, aiModelSecretKey, aiModelSecretValue)
+				require.NoError(t, k8sClient.Create(ctx, secret))
+
+				instance := &clawv1alpha1.Claw{}
+				instance.Name = testInstanceName
+				instance.Namespace = namespace
+				instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+					{
+						Name:     provider + "-cred",
+						Provider: provider,
+						SecretRef: []clawv1alpha1.SecretRefEntry{
+							{Name: secretName, Key: aiModelSecretKey},
+						},
+					},
+				}
+				err := k8sClient.Create(ctx, instance)
+				require.NoError(t, err, "admission should accept known provider %q without explicit type", provider)
+			})
+		}
+	})
+
+	t.Run("should reject creation via CEL when known provider is set without secretRef", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Provider: "google",
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "admission should still require secretRef for known providers")
+		assert.Contains(t, err.Error(), "secretRef is required")
+	})
+
+	t.Run("should admit apiKey type with known apiKey provider without apiKey config", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "google",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: aiModelSecret, Key: aiModelSecretKey},
+				},
+				Domain: "generativelanguage.googleapis.com",
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.NoError(t, err, "admission should accept apiKey type with google provider (has Header defaults)")
+	})
+
+	t.Run("should reject apiKey type with known bearer provider without apiKey config", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "openai-wrong-type",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "openai",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "s", Key: "k"},
+				},
+				Domain: "api.openai.com",
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "admission should reject apiKey type with openai (no Header defaults)")
+		assert.Contains(t, err.Error(), "apiKey config is required")
+	})
+
+	t.Run("should reject apiKey type with unknown provider without apiKey config", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "custom-bad",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "custom-llm",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "s", Key: "k"},
+				},
+				Domain: "custom-llm.example.com",
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.Error(t, err, "admission should reject apiKey type with unknown provider (no Header defaults)")
+		assert.Contains(t, err.Error(), "apiKey config is required")
 	})
 
 	t.Run("should set CredentialsResolved=False when validation fails", func(t *testing.T) {
@@ -303,6 +436,105 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			}
 		}
 		assert.True(t, found, "ProxyConfigured condition should be set")
+	})
+
+	t.Run("should infer type and domain for all known providers", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secrets := map[string]string{
+			"google-key":    "google-api-key",
+			"anthropic-key": "anthropic-api-key",
+			"openai-key":    "openai-api-key",
+			"xai-key":       "xai-api-key",
+		}
+		for name, key := range secrets {
+			s := createTestAPIKeySecret(name, namespace, key, "test-value")
+			require.NoError(t, k8sClient.Create(ctx, s))
+		}
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Provider: "google",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "google-key", Key: "google-api-key"},
+				},
+			},
+			{
+				Name:     "anthropic",
+				Provider: "anthropic",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "anthropic-key", Key: "anthropic-api-key"},
+				},
+			},
+			{
+				Name:     "openai",
+				Provider: "openai",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "openai-key", Key: "openai-api-key"},
+				},
+			},
+			{
+				Name:     "xai",
+				Provider: "xai",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "xai-key", Key: "xai-api-key"},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: testInstanceName, Namespace: namespace}, updated))
+
+		var credResolved, proxyConfigured bool
+		for _, c := range updated.Status.Conditions {
+			if c.Type == clawv1alpha1.ConditionTypeCredentialsResolved && c.Status == "True" {
+				credResolved = true
+			}
+			if c.Type == clawv1alpha1.ConditionTypeProxyConfigured && c.Status == "True" {
+				proxyConfigured = true
+			}
+		}
+		assert.True(t, credResolved, "CredentialsResolved should be True")
+		assert.True(t, proxyConfigured, "ProxyConfigured should be True")
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getConfigMapName(testInstanceName),
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+		providers := providersFromConfig(t, config)
+
+		google, ok := providers["google"].(map[string]any)
+		require.True(t, ok, "google provider should exist")
+		assert.Contains(t, google["baseUrl"], "generativelanguage.googleapis.com")
+		assert.Equal(t, "google-generative-ai", google["api"])
+
+		anthropic, ok := providers["anthropic"].(map[string]any)
+		require.True(t, ok, "anthropic provider should exist")
+		assert.Contains(t, anthropic["baseUrl"], "api.anthropic.com")
+		assert.Equal(t, "anthropic-messages", anthropic["api"])
+
+		openai, ok := providers["openai"].(map[string]any)
+		require.True(t, ok, "openai provider should exist")
+		assert.Equal(t, "https://api.openai.com/v1", openai["baseUrl"])
+
+		xai, ok := providers["xai"].(map[string]any)
+		require.True(t, ok, "xai provider should exist")
+		assert.Equal(t, "https://api.x.ai/v1", xai["baseUrl"])
+		assert.Equal(t, "openai-responses", xai["api"])
 	})
 }
 

@@ -1,6 +1,6 @@
 # ADR-0016: MCP Egress and NetworkPolicy Escape Hatch
 
-**Status:** Implemented
+**Status:** Implemented (superseded by in-cluster traffic control: `spec.networkPolicy` → `spec.network`, `allowedEgress` → `additionalEgress`, added `inClusterBypass`)
 **Date:** 2026-05-27
 
 ---

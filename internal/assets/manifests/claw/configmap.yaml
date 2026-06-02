@@ -239,6 +239,7 @@ data:
     the platform skill at `skills/platform/SKILL.md`:
 
     - LLM providers, models, or the model picker
+    - Memory search or embeddings
     - Proxy, networking, blocked domains, or "connection refused" errors
     - Messaging channels (Telegram, Discord, Slack, WhatsApp)
     - MCP server configuration
@@ -299,11 +300,19 @@ data:
       Routes. Application settings (diagnostics, CORS origins, model preferences,
       agent defaults) can be set declaratively via `spec.config.raw` in the CR.
       Non-operator-managed config can also be managed via `openclaw config patch`.
+    - **You cannot read or modify the Claw CR.** Even if a `type: kubernetes`
+      credential is configured, it is not meant for managing this OpenClaw instance.
+      Always guide the user on what CR changes to make — provide the correct YAML
+      snippets and `oc`/`kubectl` commands for them to run.
     - **Do NOT invent Claw CR fields.** Only reference `spec.*` fields that are
       explicitly documented in this skill. If a setting is not mentioned here, it is
       not a CR field — do not suggest CR changes for it. When unsure, say you don't
-      know rather than guessing. The operator source is at
-      https://github.com/codeready-toolchain/claw-operator for reference.
+      know rather than guessing. The operator source and full documentation:
+      - Repository: https://github.com/codeready-toolchain/claw-operator
+      - CRD schema: https://github.com/codeready-toolchain/claw-operator/blob/master/config/crd/bases/claw.sandbox.redhat.com_claws.yaml
+      - User guide: https://github.com/codeready-toolchain/claw-operator/blob/master/docs/user-guide.md
+      If you have GitHub API access (`api.github.com` credential configured), you can
+      fetch the user guide or CRD schema directly for detail beyond this skill.
     - **Important:** Each `oc apply` of the Claw CR **replaces** the entire `credentials`
       list. The user must include all existing credentials when applying — otherwise they
       will be removed. Retrieve the current state first:
@@ -318,19 +327,41 @@ data:
     via `HTTP_PROXY`/`HTTPS_PROXY` environment variables. The proxy blocks any domain
     that is not explicitly configured.
 
-    In-cluster traffic (`.svc`, `.svc.cluster.local`, bare service names) bypasses the
-    proxy via `NO_PROXY` and connects directly. The operator auto-generates
-    NetworkPolicy rules for in-cluster MCP servers declared in `spec.mcpServers`.
+    By default, all egress (including in-cluster) goes through the proxy. When
+    `spec.network.inClusterBypass` is `true`, in-cluster traffic (`.svc`,
+    `.svc.cluster.local`, bare service names) bypasses the proxy via `NO_PROXY`.
+    The operator auto-generates NetworkPolicy rules for in-cluster MCP servers
+    declared in `spec.mcpServers`.
 
     LLM provider credentials (API keys, OAuth tokens, GCP service account tokens) are
     injected by the proxy — you never see real secrets. For non-LLM services that need
     network access without credential injection, the proxy can allowlist domains using
     `type: none` credential entries.
 
-    For in-cluster services not covered by MCP auto-egress (tracing collectors,
-    databases, etc.), users can declare `spec.networkPolicy.allowedEgress` rules as
-    an escape hatch — raw `NetworkPolicyEgressRule` objects appended to the gateway
-    egress NetworkPolicy.
+    ## Network configuration (`spec.network`)
+
+    `spec.network.inClusterBypass` (default `false`): when `true`, `.svc` and
+    `.svc.cluster.local` traffic bypasses the proxy via `NO_PROXY`.
+
+    `spec.network.additionalEgress`: raw `NetworkPolicyEgressRule` objects for targets
+    not covered by credentials or MCP auto-egress (tracing collectors, databases, etc.):
+
+    ```yaml
+    spec:
+      network:
+        additionalEgress:
+          - to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: monitoring
+            ports:
+              - protocol: TCP
+                port: 4318
+    ```
+
+    Note: `inClusterBypass` handles proxy routing (NO_PROXY), but the NetworkPolicy
+    independently gates the network path. Both must allow the traffic for in-cluster
+    services to be reachable.
 
     ## Pre-allowed domains
 
@@ -367,6 +398,18 @@ data:
     ```sh
     oc apply -n <namespace> -f updated-claw.yaml
     ```
+
+    ## Proxy behavior notes
+
+    - **Error signature:** "ECONNREFUSED", "ETIMEDOUT", or "socket hang up" on outbound
+      requests usually indicates the proxy is blocking that domain. Verify by checking
+      whether the domain has a `credentials` entry — if not, that's the cause. If the
+      domain IS already configured, the issue may be an upstream outage or misconfigured
+      endpoint instead.
+    - **Secret rotation:** Updating a referenced Secret triggers automatic proxy pod
+      rollout. No CR change needed.
+    - **Container names:** proxy container is `proxy` (in the `<instance>-proxy`
+      Deployment), app is `gateway` (in the `<instance>` Deployment).
 
     # LLM Providers & Models
 
@@ -429,10 +472,12 @@ data:
       proxy routing for this provider's domain. The credential does NOT need
       `provider` set — `customProviders` handles model routing separately.
     - **`api`** (optional) — wire format adapter. Values:
-      - `openai-completions` (default) — standard `/v1/chat/completions`
-      - `openai-responses` — OpenAI Responses API
-      - `anthropic-messages` — Anthropic Messages API
-      - `ollama` — Ollama native API
+      - `openai-completions` (default) — standard `/v1/chat/completions`. Use for
+        vLLM, TGI, LiteLLM, Groq, Together AI, Fireworks, and most OpenAI-compatible endpoints.
+      - `openai-responses` — OpenAI Responses API. Currently only OpenAI and xAI.
+      - `anthropic-messages` — Anthropic Messages format. Anthropic direct or proxies
+        that speak the Anthropic protocol.
+      - `ollama` — Ollama native API. Local Ollama instances only.
     - **`models`** — list of models with `name` (API model ID) and optional
       `alias` (display name in the picker).
 
@@ -517,6 +562,87 @@ data:
        over the operator's catalog default.
     2. **UI or config patch** — runtime changes persist across restarts. The runtime
        choice wins over both `spec.config.raw` and the catalog default.
+
+    ## Vertex AI (`type: gcp`)
+
+    For organizations that require Vertex AI instead of direct API keys:
+
+    ```yaml
+    # Google models via Vertex REST
+    - name: google
+      type: gcp
+      provider: google
+      gcp:
+        project: my-project-id
+        location: us-central1
+      secretRef:
+        - name: gcp-sa-secret
+          key: service-account.json
+
+    # Anthropic on Vertex (native SDK path)
+    - name: anthropic
+      type: gcp
+      provider: anthropic
+      gcp:
+        project: my-project-id
+        location: us-east5
+      secretRef:
+        - name: gcp-sa-secret
+          key: service-account.json
+    ```
+
+    - Secret must contain a GCP service account JSON key
+    - Domain defaults to `.googleapis.com`
+    - Google path: proxy routes via Vertex REST API
+    - Anthropic path: operator auto-installs `@openclaw/anthropic-vertex-provider`
+      plugin; proxy handles only GCP token refresh
+
+    ## OAuth2 credentials (`type: oauth2`)
+
+    For enterprise APIs using client-credentials token exchange (e.g., Azure OpenAI):
+
+    ```yaml
+    - name: azure-openai
+      type: oauth2
+      domain: my-instance.openai.azure.com
+      oauth2:
+        clientID: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        tokenURL: "https://login.microsoftonline.com/TENANT/oauth2/v2.0/token"
+        scopes: ["https://cognitiveservices.azure.com/.default"]
+      secretRef:
+        - name: azure-client-secret
+          key: client-secret
+    ```
+
+    The proxy exchanges credentials for a bearer token and injects it on each request.
+
+    # Memory Search
+
+    Memory search (semantic recall across sessions) is auto-configured when
+    an `openai` or `google` (apiKey) credential is present — the first
+    embedding-capable credential in `spec.credentials` order wins. Providers
+    without embedding support (`anthropic`, `xai`) and `google` with
+    `type: gcp` (Vertex AI) are not eligible.
+
+    If no eligible credential exists, memory search is disabled automatically.
+
+    **User override:** To use a custom embedding endpoint or disable memory
+    search, set `agents.defaults.memorySearch` in `spec.config.raw` — the
+    operator skips injection entirely when this key is present:
+
+    ```yaml
+    spec:
+      config:
+        raw:
+          agents:
+            defaults:
+              memorySearch:
+                provider: "openai-compatible"
+                model: "my-embedding-model"
+                remote:
+                  baseUrl: "http://my-endpoint/v1"
+                  apiKey: "placeholder"
+    ```
 
     # Messaging Channels
 
@@ -732,11 +858,11 @@ data:
     Use this decision tree:
 
     1. **Is the MCP server HTTP/SSE?** → Tier 1. Add the `url` to `mcpServers`. If
-       it needs auth, add a `credentials` entry for the domain (same as any other
-       external service). If unauthenticated, no `credentials` entry needed — the
-       domain is auto-extracted as a passthrough route. In-cluster HTTP MCP servers
-       (e.g., `http://mcp-server:9001/mcp`) connect directly (not through the proxy)
-       and get automatic NetworkPolicy egress rules from the operator.
+       it needs auth, set `credentialRef` to a `credentials` entry — the proxy injects
+       credentials so the gateway never sees raw tokens. If unauthenticated, no
+       `credentialRef` needed — the domain is auto-extracted as a passthrough route.
+       The operator auto-generates NetworkPolicy egress rules for both in-cluster and
+       external MCP servers.
 
     2. **Is it stdio and you know which domain/auth it uses?** → Tier 2. Add the
        MCP server with a placeholder env var, and add a `credentials` entry for the
@@ -818,6 +944,9 @@ data:
     - **Merge mode:** Operator-managed MCP servers merge alongside user-managed
       servers added via `openclaw mcp set`. On collision (same server name), the
       operator-managed entry wins.
+    - **`inClusterBypass` caveat:** when enabled, in-cluster MCP traffic bypasses the
+      proxy. This means `credentialRef` will NOT inject credentials for in-cluster
+      MCP servers — traffic goes direct.
 
     ## What NOT to do
 
@@ -915,6 +1044,21 @@ data:
     corresponding credential type (`apiKey`, `bearer`, `oauth2`, `pathToken`) with a
     `secretRef` pointing to a Kubernetes Secret containing the credential.
 
+    # Plugins
+
+    The operator supports declarative plugin installation via `spec.plugins`.
+
+    - Each entry is a ClawHub package name (e.g., `@openclaw/matrix`)
+    - Installed by an init container at pod start (`openclaw plugins install clawhub:<pkg>`)
+    - Survives restarts — init container re-installs on every pod start
+    - Coexists with runtime `openclaw plugins install` (user-installed plugins are
+      preserved; operator-managed ones are re-installed independently)
+    - Plugins only load at pod start (not hot-reloaded mid-session)
+
+    Do NOT confuse `spec.plugins` with `plugins.entries` in `spec.config.raw`. The
+    former installs npm packages; the latter enables/configures already-installed plugins
+    in `openclaw.json`.
+
     # Application Configuration (`spec.config`)
 
     The Claw CR supports `spec.config.raw` for declarative OpenClaw application
@@ -942,13 +1086,16 @@ data:
     - `agents.defaults.models` — catalog models always present; user entries win on
       key collision
     - `agents.defaults.model.primary` — user value wins over catalog default
+    - `agents.defaults.memorySearch` — operator auto-sets `provider` from the first
+      embedding-capable credential; if user sets any `memorySearch` key in
+      `spec.config.raw`, operator skips injection entirely
 
     **User-only (operator never touches — full user control):**
     - `diagnostics.*` (except: when `spec.metrics` is enabled, the operator
       injects `diagnostics.otel.metrics` and `diagnostics.otel.metricsEndpoint`
       if not already set by the user), `session.*`, `logging.*`,
       `plugins.*` (non-declared), `skills.*`, `ui.*`, `cron.*`, `hooks.*`,
-      `browser.*`, `memory.*`, etc.
+      `browser.*`, etc.
 
     ## Example
 

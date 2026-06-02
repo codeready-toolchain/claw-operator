@@ -27,7 +27,7 @@ The `ClawStatus` struct SHALL include a `DevicePairingURL` field (JSON: `deviceP
 - **THEN** `status.devicePairingURL` SHALL equal `https://<route-host>/integration/device-pairing/`
 
 #### Scenario: DevicePairingURL empty when device pairing is disabled
-- **WHEN** `spec.auth.disableDevicePairing` is true (explicitly or by default for password mode)
+- **WHEN** `spec.auth.disableDevicePairing` is true or unset (disabled by default)
 - **THEN** `status.devicePairingURL` SHALL be empty regardless of deployment readiness
 
 #### Scenario: DevicePairingURL cleared when not ready

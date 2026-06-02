@@ -687,3 +687,72 @@ func stampGatewayConfigHash(objects []*unstructured.Unstructured, instanceName s
 	}
 	return fmt.Errorf("gateway deployment %s not found for config hash stamping", gatewayName)
 }
+
+// noProxySuffix is appended to NO_PROXY/no_proxy when inClusterBypass is true,
+// allowing the gateway to reach in-cluster services directly.
+const noProxySuffix = ",.svc,.svc.cluster.local"
+const envNoProxyLower = "no_proxy"
+
+// configureGatewayNoProxy appends .svc,.svc.cluster.local to NO_PROXY/no_proxy
+// on the gateway container when inClusterBypass is true.
+func configureGatewayNoProxy(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	if !inClusterBypassEnabled(instance) {
+		return nil
+	}
+
+	gatewayName := getClawDeploymentName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from gateway deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in gateway deployment")
+		}
+
+		for i, c := range containers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name != ClawGatewayContainerName {
+				continue
+			}
+			appendNoProxySuffix(cm)
+			containers[i] = cm
+			return unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers")
+		}
+		return fmt.Errorf("container %q not found in gateway deployment", ClawGatewayContainerName)
+	}
+	return fmt.Errorf("gateway deployment %s not found", gatewayName)
+}
+
+// appendNoProxySuffix appends noProxySuffix to NO_PROXY and no_proxy env vars.
+func appendNoProxySuffix(container map[string]any) {
+	envVars, _, _ := unstructured.NestedSlice(container, "env")
+	for i, e := range envVars {
+		em, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _, _ := unstructured.NestedString(em, "name")
+		if name == "NO_PROXY" || name == envNoProxyLower {
+			if val, _, _ := unstructured.NestedString(em, "value"); val != "" {
+				em["value"] = val + noProxySuffix
+				envVars[i] = em
+			}
+		}
+	}
+	_ = unstructured.SetNestedSlice(container, envVars, "env")
+}
+
+// inClusterBypassEnabled returns true if spec.network.inClusterBypass is explicitly true.
+func inClusterBypassEnabled(instance *clawv1alpha1.Claw) bool {
+	return instance.Spec.Network != nil &&
+		instance.Spec.Network.InClusterBypass != nil &&
+		*instance.Spec.Network.InClusterBypass
+}

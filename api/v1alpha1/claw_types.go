@@ -153,20 +153,21 @@ type OAuth2Config struct {
 }
 
 // CredentialSpec defines a single credential entry for proxy injection.
-// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel)",message="either type or channel must be set"
+// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || (has(self.provider) && self.provider in ['google', 'anthropic', 'openai', 'xai'])",message="type is required (inferred only for known providers: google, anthropic, openai, xai)"
 // +kubebuilder:validation:XValidation:rule="!has(self.provider) || !has(self.channel)",message="provider and channel are mutually exclusive"
-// +kubebuilder:validation:XValidation:rule="has(self.channel) || self.type == 'none' || has(self.secretRef)",message="secretRef is required unless type is none or channel is set"
-// +kubebuilder:validation:XValidation:rule="self.type != 'apiKey' || has(self.apiKey) || has(self.provider) || has(self.channel)",message="apiKey config is required when type is apiKey without inferred defaults"
-// +kubebuilder:validation:XValidation:rule="self.type != 'gcp' || has(self.gcp) || has(self.channel)",message="gcp config is required when type is gcp without inferred defaults"
-// +kubebuilder:validation:XValidation:rule="self.type != 'pathToken' || has(self.pathToken) || has(self.channel)",message="pathToken config is required when type is pathToken without inferred defaults"
-// +kubebuilder:validation:XValidation:rule="self.type != 'oauth2' || has(self.oauth2) || has(self.channel)",message="oauth2 config is required when type is oauth2 without inferred defaults"
+// +kubebuilder:validation:XValidation:rule="has(self.channel) || (has(self.type) && self.type == 'none') || has(self.secretRef)",message="secretRef is required unless type is none or channel is set"
+// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'apiKey' || has(self.apiKey) || (has(self.provider) && self.provider in ['google', 'anthropic']) || has(self.channel)",message="apiKey config is required when type is apiKey without inferred defaults"
+// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'gcp' || has(self.gcp) || has(self.channel)",message="gcp config is required when type is gcp without inferred defaults"
+// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'pathToken' || has(self.pathToken) || has(self.channel)",message="pathToken config is required when type is pathToken without inferred defaults"
+// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'oauth2' || has(self.oauth2) || has(self.channel)",message="oauth2 config is required when type is oauth2 without inferred defaults"
 type CredentialSpec struct {
 	// Name uniquely identifies this credential entry.
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
 	// Type selects the credential injection mechanism.
-	// Optional when channel is set — the operator infers the type from the channel defaults.
+	// Optional when channel is set or provider is a known provider — the operator infers
+	// the type from channel or provider defaults.
 	// +optional
 	Type CredentialType `json:"type,omitempty"`
 
@@ -236,6 +237,7 @@ type CredentialSpec struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.command) || !has(self.url)",message="command and url are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="!has(self.url) || !has(self.envFrom) || size(self.envFrom) == 0",message="envFrom is only allowed for stdio MCP servers (command), not HTTP (url)"
 // +kubebuilder:validation:XValidation:rule="!has(self.transport) || has(self.url)",message="transport is only allowed for HTTP MCP servers (url)"
+// +kubebuilder:validation:XValidation:rule="!has(self.credentialRef) || has(self.url)",message="credentialRef is only allowed for HTTP MCP servers (url)"
 type McpServerSpec struct {
 	// Command is the executable for a stdio MCP server.
 	// +optional
@@ -265,6 +267,13 @@ type McpServerSpec struct {
 	// Use only when the proxy-placeholder pattern (tier 2) is not viable.
 	// +optional
 	EnvFrom []McpEnvFromSecret `json:"envFrom,omitempty"`
+
+	// CredentialRef is the name of a credential in spec.credentials that
+	// handles proxy routing and authentication for this MCP server's domain.
+	// Only valid for HTTP MCP servers (url). The proxy injects credentials
+	// so the gateway never sees raw tokens.
+	// +optional
+	CredentialRef string `json:"credentialRef,omitempty"`
 }
 
 // McpEnvFromSecret maps a Kubernetes Secret key to an environment variable
@@ -333,7 +342,8 @@ type AuthSpec struct {
 
 	// DisableDevicePairing disables browser device identity checks
 	// (maps to gateway.controlUi.dangerouslyDisableDeviceAuth upstream).
-	// Defaults to true when mode is "password", false when mode is "token".
+	// Defaults to true (device pairing is disabled by default).
+	// Set to false to enable device pairing.
 	// +optional
 	DisableDevicePairing *bool `json:"disableDevicePairing,omitempty"`
 }
@@ -408,14 +418,22 @@ type ServiceMonitorSpec struct {
 	Interval string `json:"interval,omitempty"`
 }
 
-// NetworkPolicySpec configures additional NetworkPolicy rules beyond
-// the operator's auto-generated defaults.
-type NetworkPolicySpec struct {
-	// AllowedEgress appends raw egress rules to the gateway NetworkPolicy.
-	// Use for targets the operator cannot auto-detect: tracing collectors,
-	// databases, webhooks, etc. Rules are appended to {instance}-egress.
+// NetworkSpec configures network behavior for the gateway pod.
+type NetworkSpec struct {
+	// InClusterBypass controls whether the gateway pod can directly reach
+	// in-cluster Kubernetes services, bypassing the MITM proxy.
+	// When false (default), all egress goes through the proxy.
+	// When true, .svc and .svc.cluster.local traffic bypasses the proxy.
 	// +optional
-	AllowedEgress []networkingv1.NetworkPolicyEgressRule `json:"allowedEgress,omitempty"`
+	// +kubebuilder:default=false
+	InClusterBypass *bool `json:"inClusterBypass,omitempty"`
+
+	// AdditionalEgress appends raw NetworkPolicy egress rules to the
+	// gateway's egress policy for targets the operator can't auto-detect:
+	// tracing collectors, databases, webhooks, etc.
+	// Rules are appended to {instance}-egress.
+	// +optional
+	AdditionalEgress []networkingv1.NetworkPolicyEgressRule `json:"additionalEgress,omitempty"`
 }
 
 // CustomProviderAPI selects the wire format for a custom provider.
@@ -481,8 +499,9 @@ type ClawSpec struct {
 	Config *ConfigSpec `json:"config,omitempty"`
 
 	// Auth configures gateway authentication. Defaults to token-based
-	// authentication with device pairing. Set mode to "password" for
-	// shared-password access without per-device identity.
+	// authentication with device pairing disabled. Set mode to "password" for
+	// shared-password access, or set disableDevicePairing to false to enable
+	// device pairing.
 	// +optional
 	Auth *AuthSpec `json:"auth,omitempty"`
 
@@ -517,10 +536,11 @@ type ClawSpec struct {
 	// +optional
 	Metrics *MetricsSpec `json:"metrics,omitempty"`
 
-	// NetworkPolicy configures additional NetworkPolicy rules.
+	// Network configures network behavior for the gateway pod.
+	// Controls in-cluster proxy bypass and additional egress rules.
 	// MCP server egress rules are auto-generated from spec.mcpServers URLs.
 	// +optional
-	NetworkPolicy *NetworkPolicySpec `json:"networkPolicy,omitempty"`
+	Network *NetworkSpec `json:"network,omitempty"`
 
 	// Plugins lists OpenClaw plugins to install via an init container before
 	// the gateway starts. Each entry is a package name (e.g. "@openclaw/matrix").

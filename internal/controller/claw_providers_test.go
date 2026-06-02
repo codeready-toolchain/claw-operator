@@ -53,12 +53,22 @@ func TestKnownProvidersConsistency(t *testing.T) {
 		}
 	})
 
-	t.Run("providers with Domain must also have Header", func(t *testing.T) {
+	t.Run("providers with Domain must have CredType set", func(t *testing.T) {
 		for provider, defaults := range knownProviders {
 			if defaults.Domain != "" {
-				assert.NotEmpty(t, defaults.Header,
-					"provider %q has Domain %q but no Header for apiKey injection",
+				assert.NotEmpty(t, defaults.CredType,
+					"provider %q has Domain %q but no CredType — users cannot omit type",
 					provider, defaults.Domain)
+			}
+		}
+	})
+
+	t.Run("apiKey providers must have Header", func(t *testing.T) {
+		for provider, defaults := range knownProviders {
+			if defaults.CredType == clawv1alpha1.CredentialTypeAPIKey {
+				assert.NotEmpty(t, defaults.Header,
+					"provider %q has CredType=apiKey but no Header for injection",
+					provider)
 			}
 		}
 	})
@@ -73,17 +83,22 @@ func TestKnownProvidersConsistency(t *testing.T) {
 
 	t.Run("Vertex-capable providers with non-default wire format must have VertexAPI", func(t *testing.T) {
 		// Only check providers that users can configure with type: gcp.
-		// Skip google (uses Vertex directly, not the SDK path) and
-		// companion-only providers (never appear as cred.Provider on GCP creds).
+		// Skip google (uses Vertex directly, not the SDK path),
+		// companion-only providers (never appear as cred.Provider on GCP creds),
+		// and providers that are not available via Vertex AI at all.
 		isCompanion := map[string]bool{}
 		for _, defaults := range knownProviders {
 			for _, c := range defaults.Companions {
 				isCompanion[c] = true
 			}
 		}
+		notOnVertex := map[string]bool{
+			"openai": true,
+			"xai":    true,
+		}
 
 		for provider, defaults := range knownProviders {
-			if provider == googleProvider || isCompanion[provider] {
+			if provider == googleProvider || isCompanion[provider] || notOnVertex[provider] {
 				continue
 			}
 			if defaults.API != "" && defaults.VertexAPI == "" {
@@ -128,7 +143,7 @@ func TestBuildProviderEntry(t *testing.T) {
 		{name: "anthropic uses Messages API", provider: "anthropic", wantAPI: "anthropic-messages"},
 		{name: "openai-codex uses Codex responses API", provider: "openai-codex", wantAPI: "openai-codex-responses"},
 		{name: "openai uses OpenClaw default wire format", provider: "openai", wantAPI: ""},
-		{name: "xai uses OpenClaw default wire format", provider: "xai", wantAPI: ""},
+		{name: "xai uses OpenAI Responses API", provider: "xai", wantAPI: "openai-responses"},
 		{name: "unknown provider uses OpenClaw default", provider: "custom-llm", wantAPI: ""},
 	}
 
@@ -335,14 +350,44 @@ func TestResolveProviderInfo(t *testing.T) {
 			wantBasePath: "",
 		},
 		{
-			name: "known provider without BasePath uses domain directly",
+			name: "openai uses default domain and /v1 BasePath",
 			cred: clawv1alpha1.CredentialSpec{
 				Provider: "openai",
 				Type:     clawv1alpha1.CredentialTypeAPIKey,
 				Domain:   "api.openai.com",
 			},
 			wantUpstream: "https://api.openai.com",
-			wantBasePath: "",
+			wantBasePath: "/v1",
+		},
+		{
+			name: "xai uses default domain and /v1 BasePath",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "xai",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Domain:   "api.x.ai",
+			},
+			wantUpstream: "https://api.x.ai",
+			wantBasePath: "/v1",
+		},
+		{
+			name: "xai with custom proxy domain preserves /v1 BasePath",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "xai",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Domain:   "xai-proxy.internal",
+			},
+			wantUpstream: "https://xai-proxy.internal",
+			wantBasePath: "/v1",
+		},
+		{
+			name: "openai with custom proxy domain preserves /v1 BasePath",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "openai",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Domain:   "openai-proxy.internal",
+			},
+			wantUpstream: "https://openai-proxy.internal",
+			wantBasePath: "/v1",
 		},
 		{
 			name: "explicit domain overrides default for provider with BasePath",
@@ -381,10 +426,69 @@ func TestResolveProviderDefaults(t *testing.T) {
 	tests := []struct {
 		name       string
 		cred       clawv1alpha1.CredentialSpec
+		wantType   clawv1alpha1.CredentialType
 		wantDomain string
 		wantHeader string
 		wantErr    string
 	}{
+		{
+			name: "google infers apiKey type and fills domain and header",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gemini",
+				Provider: "google",
+			},
+			wantType:   clawv1alpha1.CredentialTypeAPIKey,
+			wantDomain: "generativelanguage.googleapis.com",
+			wantHeader: "x-goog-api-key",
+		},
+		{
+			name: "anthropic infers apiKey type and fills domain and header",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "anthropic",
+				Provider: "anthropic",
+			},
+			wantType:   clawv1alpha1.CredentialTypeAPIKey,
+			wantDomain: "api.anthropic.com",
+			wantHeader: "x-api-key",
+		},
+		{
+			name: "openai infers bearer type and fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gpt",
+				Provider: "openai",
+			},
+			wantType:   clawv1alpha1.CredentialTypeBearer,
+			wantDomain: "api.openai.com",
+		},
+		{
+			name: "xai infers bearer type and fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "grok",
+				Provider: "xai",
+			},
+			wantType:   clawv1alpha1.CredentialTypeBearer,
+			wantDomain: "api.x.ai",
+		},
+		{
+			name: "unknown provider without type errors",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "custom",
+				Provider: "custom-llm",
+			},
+			wantErr: "type is required",
+		},
+		{
+			name: "explicit type overrides inferred default",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "grok",
+				Provider: "xai",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization", ValuePrefix: "Bearer "},
+			},
+			wantType:   clawv1alpha1.CredentialTypeAPIKey,
+			wantDomain: "api.x.ai",
+			wantHeader: "Authorization",
+		},
 		{
 			name: "google apiKey fills domain and header",
 			cred: clawv1alpha1.CredentialSpec{
@@ -508,25 +612,74 @@ func TestResolveProviderDefaults(t *testing.T) {
 			wantDomain: "",
 		},
 		{
-			name: "known provider without Domain defaults requires explicit domain",
+			name: "xai apiKey fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "grok",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "xai",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization", ValuePrefix: "Bearer "},
+			},
+			wantDomain: "api.x.ai",
+			wantHeader: "Authorization",
+		},
+		{
+			name: "xai apiKey without explicit apiKey config errors",
 			cred: clawv1alpha1.CredentialSpec{
 				Name:     "grok",
 				Type:     clawv1alpha1.CredentialTypeAPIKey,
 				Provider: "xai",
 			},
-			wantErr: "domain is required",
+			wantErr: "apiKey config is required",
 		},
 		{
-			name: "known provider without Domain defaults succeeds with explicit values",
+			name: "openai apiKey fills domain",
 			cred: clawv1alpha1.CredentialSpec{
 				Name:     "gpt",
 				Type:     clawv1alpha1.CredentialTypeAPIKey,
 				Provider: "openai",
-				Domain:   "api.openai.com",
-				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization"},
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization", ValuePrefix: "Bearer "},
 			},
 			wantDomain: "api.openai.com",
 			wantHeader: "Authorization",
+		},
+		{
+			name: "openai explicit domain preserved",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gpt",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "openai",
+				Domain:   "custom-openai-proxy.internal",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization"},
+			},
+			wantDomain: "custom-openai-proxy.internal",
+			wantHeader: "Authorization",
+		},
+		{
+			name: "xai bearer fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "grok",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "xai",
+			},
+			wantDomain: "api.x.ai",
+		},
+		{
+			name: "openai bearer fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gpt",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "openai",
+			},
+			wantDomain: "api.openai.com",
+		},
+		{
+			name: "unknown provider bearer without domain errors",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "custom",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "custom-llm",
+			},
+			wantErr: "domain is required",
 		},
 	}
 
@@ -540,6 +693,9 @@ func TestResolveProviderDefaults(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			if tt.wantType != "" {
+				assert.Equal(t, tt.wantType, cred.Type)
+			}
 			assert.Equal(t, tt.wantDomain, cred.Domain)
 			if tt.wantHeader != "" {
 				require.NotNil(t, cred.APIKey)

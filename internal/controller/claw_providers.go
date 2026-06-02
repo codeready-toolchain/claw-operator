@@ -33,13 +33,16 @@ type modelEntry struct {
 // Adding a new first-class provider means adding a single entry here instead
 // of updating multiple independent maps.
 type providerDefaults struct {
+	// CredType is the default credential type inferred when the user omits it.
+	// Empty means the operator will not infer a type (user must specify).
+	CredType clawv1alpha1.CredentialType
+
 	// Credential defaults (apiKey type only; ignored for other cred types).
 	Domain string // e.g. "generativelanguage.googleapis.com"
 	Header string // e.g. "x-goog-api-key"
 
 	// OpenClaw wire format API identifier. Empty means the provider uses the
-	// OpenClaw default (openai-completions), which is correct for
-	// OpenAI-compatible providers like openai and xai.
+	// OpenClaw default (openai-completions when baseUrl is set).
 	API string // direct path, e.g. "google-generative-ai"
 
 	// Wire format for the Vertex AI SDK path. Only used when usesVertexSDK()
@@ -65,6 +68,11 @@ type providerDefaults struct {
 	// provider is the first configured credential in the Claw CR; remaining
 	// models become the fallback chain.
 	Models []modelEntry
+
+	// EmbeddingAdapter is the OpenClaw memory search adapter ID for this
+	// provider (e.g. "openai", "gemini"). Empty means the provider does not
+	// support embeddings and is ineligible for automatic memory search config.
+	EmbeddingAdapter string
 }
 
 // knownProviders is the single source of truth for all per-provider
@@ -76,10 +84,12 @@ type providerDefaults struct {
 // openai-completions), and no model catalog.
 var knownProviders = map[string]providerDefaults{
 	"google": {
-		Domain:   "generativelanguage.googleapis.com",
-		Header:   "x-goog-api-key",
-		API:      "google-generative-ai",
-		BasePath: "/v1beta",
+		CredType:         clawv1alpha1.CredentialTypeAPIKey,
+		Domain:           "generativelanguage.googleapis.com",
+		Header:           "x-goog-api-key",
+		API:              "google-generative-ai",
+		BasePath:         "/v1beta",
+		EmbeddingAdapter: "gemini",
 		Models: []modelEntry{
 			{Name: "gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
 			{Name: "gemini-3.1-pro-preview", Alias: "Gemini 3.1 Pro"},
@@ -87,6 +97,7 @@ var knownProviders = map[string]providerDefaults{
 		},
 	},
 	"anthropic": {
+		CredType:     clawv1alpha1.CredentialTypeAPIKey,
 		Domain:       "api.anthropic.com",
 		Header:       "x-api-key",
 		API:          "anthropic-messages",
@@ -100,7 +111,11 @@ var knownProviders = map[string]providerDefaults{
 		},
 	},
 	"openai": {
-		Companions: []string{"openai-codex"},
+		CredType:         clawv1alpha1.CredentialTypeBearer,
+		Domain:           "api.openai.com",
+		BasePath:         "/v1",
+		Companions:       []string{"openai-codex"},
+		EmbeddingAdapter: "openai",
 		Models: []modelEntry{
 			{Name: "gpt-5.5", Alias: "GPT-5.5"},
 			{Name: "gpt-5.4", Alias: "GPT-5.4"},
@@ -111,6 +126,10 @@ var knownProviders = map[string]providerDefaults{
 		API: "openai-codex-responses",
 	},
 	"xai": {
+		CredType: clawv1alpha1.CredentialTypeBearer,
+		Domain:   "api.x.ai",
+		BasePath: "/v1",
+		API:      "openai-responses",
 		Models: []modelEntry{
 			{Name: "grok-4.3", Alias: "Grok 4.3"},
 			{Name: "grok-4.20", Alias: "Grok 4.20"},
@@ -150,10 +169,19 @@ func buildProviderEntry(provider, baseURL, apiKey string) map[string]any {
 	return entry
 }
 
-// resolveProviderDefaults fills in missing Domain and APIKey fields for known providers.
+// resolveProviderDefaults fills in missing Type, Domain, and APIKey for known providers.
 // Explicit values are preserved (escape hatch). Returns an error if required fields
 // are still missing after applying defaults (unknown provider without domain/apiKey).
 func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
+	if cred.Type == "" {
+		if defaults, ok := knownProviders[cred.Provider]; ok && defaults.CredType != "" {
+			cred.Type = defaults.CredType
+		} else {
+			return fmt.Errorf("credential %q: type is required (no default for provider %q)",
+				cred.Name, cred.Provider)
+		}
+	}
+
 	switch cred.Type {
 	case clawv1alpha1.CredentialTypeAPIKey:
 		if defaults, ok := knownProviders[cred.Provider]; ok && defaults.Domain != "" {
@@ -162,6 +190,13 @@ func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
 			}
 			if cred.APIKey == nil && defaults.Header != "" {
 				cred.APIKey = &clawv1alpha1.APIKeyConfig{Header: defaults.Header}
+			}
+		}
+
+	case clawv1alpha1.CredentialTypeBearer:
+		if defaults, ok := knownProviders[cred.Provider]; ok && defaults.Domain != "" {
+			if cred.Domain == "" {
+				cred.Domain = defaults.Domain
 			}
 		}
 

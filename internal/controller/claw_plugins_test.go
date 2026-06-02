@@ -25,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
@@ -224,8 +225,28 @@ func TestConfigurePluginsInitContainer(t *testing.T) {
 		assert.Equal(t, "/home/node/.cache/npm", envMap["NPM_CONFIG_CACHE"])
 		assert.Equal(t, expectedProxy, envMap["HTTP_PROXY"])
 		assert.Equal(t, expectedProxy, envMap["HTTPS_PROXY"])
-		assert.Equal(t, "localhost,127.0.0.1,.svc,.svc.cluster.local", envMap["NO_PROXY"])
+		assert.Equal(t, "localhost,127.0.0.1", envMap["NO_PROXY"])
 		assert.Equal(t, "/etc/proxy-ca/ca.crt", envMap["NODE_EXTRA_CA_CERTS"])
+	})
+
+	t.Run("should include .svc in NO_PROXY when inClusterBypass is true", func(t *testing.T) {
+		objects := makeTestDeploymentForPlugins()
+		instance := testClawWithPlugins([]string{"@openclaw/matrix"})
+		instance.Spec.Network = &clawv1alpha1.NetworkSpec{InClusterBypass: ptr.To(true)}
+
+		require.NoError(t, configurePluginsInitContainer(objects, instance, instance.Spec.Plugins))
+
+		initContainers, _, _ := unstructured.NestedSlice(
+			objects[0].Object, "spec", "template", "spec", "initContainers",
+		)
+		pluginInit := initContainers[3].(map[string]any)
+		envVars := pluginInit["env"].([]any)
+		envMap := make(map[string]string)
+		for _, e := range envVars {
+			entry := e.(map[string]any)
+			envMap[entry["name"].(string)] = entry["value"].(string)
+		}
+		assert.Equal(t, "localhost,127.0.0.1,.svc,.svc.cluster.local", envMap["NO_PROXY"])
 	})
 
 	t.Run("should mount PVC subpaths, proxy-ca, and tmp-volume", func(t *testing.T) {

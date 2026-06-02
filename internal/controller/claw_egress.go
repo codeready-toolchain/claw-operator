@@ -31,6 +31,30 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+// validateMcpCredentialRefBypass checks if any in-cluster MCP server uses
+// credentialRef while inClusterBypass is true. Returns a warning message if
+// the combination is detected, empty string otherwise.
+func validateMcpCredentialRefBypass(instance *clawv1alpha1.Claw) string {
+	if !inClusterBypassEnabled(instance) {
+		return ""
+	}
+	for name, mcp := range instance.Spec.McpServers {
+		if mcp.URL == "" || mcp.CredentialRef == "" {
+			continue
+		}
+		target, err := classifyServiceURL(mcp.URL, instance.Namespace)
+		if err != nil || target.External {
+			continue
+		}
+		return fmt.Sprintf(
+			"MCP server %q has credentialRef %q but inClusterBypass is true — "+
+				"in-cluster traffic bypasses the proxy, so credentials cannot be injected",
+			name, mcp.CredentialRef,
+		)
+	}
+	return ""
+}
+
 // egressTarget represents a parsed egress destination derived from an MCP URL.
 type egressTarget struct {
 	Port      int
@@ -241,6 +265,45 @@ func buildInClusterEgressRule(t egressTarget) map[string]any {
 	}
 }
 
+// injectMcpProxyEgressRules appends egress rules to {instance}-proxy-egress for
+// in-cluster MCP targets. Used when inClusterBypass is false — the proxy reaches
+// MCP targets on behalf of the gateway. Rule format mirrors injectMcpGatewayEgressRules.
+func injectMcpProxyEgressRules(
+	objects []*unstructured.Unstructured,
+	targets []egressTarget,
+	instanceName string,
+) error {
+	inCluster := filterInCluster(targets)
+	if len(inCluster) == 0 {
+		return nil
+	}
+
+	npName := getProxyEgressNetworkPolicyName(instanceName)
+	for _, obj := range objects {
+		if obj.GetKind() != NetworkPolicyKind || obj.GetName() != npName {
+			continue
+		}
+
+		egress, found, err := unstructured.NestedSlice(obj.Object, "spec", "egress")
+		if err != nil {
+			return fmt.Errorf("failed to get egress rules from proxy NetworkPolicy: %w", err)
+		}
+		if !found {
+			egress = []any{}
+		}
+
+		for _, t := range inCluster {
+			egress = append(egress, buildInClusterEgressRule(t))
+		}
+
+		if err := unstructured.SetNestedSlice(obj.Object, egress, "spec", "egress"); err != nil {
+			return fmt.Errorf("failed to set egress rules on proxy NetworkPolicy: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("NetworkPolicy %q not found in manifests", npName)
+}
+
 // injectMcpProxyEgressPorts adds non-443 external MCP ports to the first egress
 // rule in {instance}-proxy-egress, following the injectKubePortsIntoNetworkPolicy
 // pattern.
@@ -330,11 +393,11 @@ func filterInCluster(targets []egressTarget) []egressTarget {
 	return result
 }
 
-// injectAllowedEgress appends the user's spec.networkPolicy.allowedEgress rules
+// injectAdditionalEgress appends the user's spec.network.additionalEgress rules
 // to {instance}-egress. Rules are converted from typed NetworkPolicyEgressRule to
 // unstructured maps via JSON round-trip.
-func injectAllowedEgress(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
-	if instance.Spec.NetworkPolicy == nil || len(instance.Spec.NetworkPolicy.AllowedEgress) == 0 {
+func injectAdditionalEgress(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	if instance.Spec.Network == nil || len(instance.Spec.Network.AdditionalEgress) == 0 {
 		return nil
 	}
 
@@ -352,14 +415,14 @@ func injectAllowedEgress(objects []*unstructured.Unstructured, instance *clawv1a
 			egress = []any{}
 		}
 
-		for _, rule := range instance.Spec.NetworkPolicy.AllowedEgress {
+		for _, rule := range instance.Spec.Network.AdditionalEgress {
 			ruleJSON, err := json.Marshal(rule)
 			if err != nil {
-				return fmt.Errorf("failed to marshal allowedEgress rule: %w", err)
+				return fmt.Errorf("failed to marshal additionalEgress rule: %w", err)
 			}
 			var ruleMap map[string]any
 			if err := json.Unmarshal(ruleJSON, &ruleMap); err != nil {
-				return fmt.Errorf("failed to unmarshal allowedEgress rule: %w", err)
+				return fmt.Errorf("failed to unmarshal additionalEgress rule: %w", err)
 			}
 			egress = append(egress, ruleMap)
 		}

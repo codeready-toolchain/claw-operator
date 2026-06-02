@@ -45,6 +45,17 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+// Proxy injector identifiers used in route configs.
+const (
+	injectorAPIKey     = "api_key"
+	injectorBearer     = "bearer"
+	injectorGCP        = "gcp"
+	injectorNone       = "none"
+	injectorPathToken  = "path_token"
+	injectorOAuth2     = "oauth2"
+	injectorKubernetes = "kubernetes"
+)
+
 // proxyRoute is a single route entry in the proxy config JSON.
 type proxyRoute struct {
 	Domain         string            `json:"domain"`
@@ -109,7 +120,7 @@ func generateProxyConfig(
 	mcpServers map[string]clawv1alpha1.McpServerSpec,
 	webSearch *clawv1alpha1.WebSearchSpec,
 ) ([]byte, error) {
-	var exact, suffix []proxyRoute
+	var exact []proxyRoute
 
 	coveredDomains := make(map[string]bool)
 	for _, rc := range credentials {
@@ -119,7 +130,7 @@ func generateProxyConfig(
 	for _, bp := range builtinPassthroughDomains {
 		if !coveredDomains[bp.Domain] {
 			coveredDomains[bp.Domain] = true
-			exact = append(exact, proxyRoute{Domain: bp.Domain, Injector: "none", AllowedPaths: bp.AllowedPaths})
+			exact = append(exact, proxyRoute{Domain: bp.Domain, Injector: injectorNone, AllowedPaths: bp.AllowedPaths})
 		}
 	}
 
@@ -131,99 +142,18 @@ func generateProxyConfig(
 		}
 	}
 
+	mcpCredRoutes, err := mcpCredentialRoutes(mcpServers, credentials, coveredDomains)
+	if err != nil {
+		return nil, err
+	}
+	exact = append(exact, mcpCredRoutes...)
+
 	exact = append(exact, mcpPassthroughRoutes(mcpServers, coveredDomains)...)
 
-	for _, rc := range credentials {
-		cred := rc.CredentialSpec
-
-		if cred.Type == clawv1alpha1.CredentialTypeKubernetes {
-			if rc.KubeConfig == nil {
-				continue
-			}
-			kubeconfigPath := "/etc/proxy/credentials/" + cred.Name + "/kubeconfig"
-			for _, cluster := range rc.KubeConfig.Clusters {
-				route := proxyRoute{
-					Domain:         cluster.Hostname + ":" + cluster.Port,
-					Injector:       "kubernetes",
-					KubeconfigPath: kubeconfigPath,
-					DefaultHeaders: cred.DefaultHeaders,
-				}
-				if len(cluster.CAData) > 0 {
-					route.CACert = base64.StdEncoding.EncodeToString(cluster.CAData)
-				}
-				exact = append(exact, route)
-			}
-			continue
-		}
-
-		if cred.Domain != "" {
-			route := proxyRoute{
-				Domain:         cred.Domain,
-				DefaultHeaders: cred.DefaultHeaders,
-				AllowedPaths:   cred.AllowedPaths,
-			}
-
-			switch cred.Type {
-			case clawv1alpha1.CredentialTypeAPIKey:
-				route.Injector = "api_key"
-				route.EnvVar = credEnvVarName(cred.Name)
-				if cred.APIKey != nil {
-					route.Header = cred.APIKey.Header
-					route.ValuePrefix = cred.APIKey.ValuePrefix
-				}
-			case clawv1alpha1.CredentialTypeBearer:
-				route.Injector = "bearer"
-				route.EnvVar = credEnvVarName(cred.Name)
-			case clawv1alpha1.CredentialTypeGCP:
-				route.Injector = "gcp"
-				route.SAFilePath = "/etc/proxy/credentials/" + cred.Name + "/sa-key.json"
-				if cred.GCP != nil {
-					route.GCPProject = cred.GCP.Project
-					route.GCPLocation = cred.GCP.Location
-				}
-			case clawv1alpha1.CredentialTypeNone:
-				route.Injector = "none"
-			case clawv1alpha1.CredentialTypePathToken:
-				route.Injector = "path_token"
-				route.EnvVar = credEnvVarName(cred.Name)
-				if cred.PathToken != nil {
-					route.PathPrefix = cred.PathToken.Prefix
-				}
-			case clawv1alpha1.CredentialTypeOAuth2:
-				route.Injector = "oauth2"
-				route.EnvVar = credEnvVarName(cred.Name)
-				if cred.OAuth2 != nil {
-					route.ClientID = cred.OAuth2.ClientID
-					route.TokenURL = cred.OAuth2.TokenURL
-					route.Scopes = cred.OAuth2.Scopes
-				}
-			}
-
-			// Configure gateway routing when provider is set.
-			// PathToken routes are excluded because they use PathPrefix for token injection.
-			// Vertex SDK providers (GCP + non-Google) are excluded because the native SDK
-			// talks directly to *.googleapis.com through the MITM proxy.
-			if cred.Provider != "" && cred.Type != clawv1alpha1.CredentialTypePathToken && !usesVertexSDK(cred) {
-				info := resolveProviderInfo(cred)
-				route.PathPrefix = "/" + strings.ToLower(cred.Name)
-				route.Upstream = info.Upstream
-			}
-
-			if strings.HasPrefix(cred.Domain, ".") {
-				suffix = append(suffix, route)
-			} else {
-				exact = append(exact, route)
-			}
-		}
-
-		for _, companion := range generateCompanionRoutes(cred) {
-			if strings.HasPrefix(companion.Domain, ".") {
-				suffix = append(suffix, companion)
-			} else {
-				exact = append(exact, companion)
-			}
-		}
-	}
+	credExact, credSuffix := credentialRoutes(credentials)
+	exact = append(exact, credExact...)
+	suffix := make([]proxyRoute, 0, len(credSuffix))
+	suffix = append(suffix, credSuffix...)
 
 	// Deterministic ordering: exact before suffix, alphabetical within each group.
 	// Within the same domain, routes with AllowedPaths sort before catch-all routes
@@ -245,6 +175,107 @@ func generateProxyConfig(
 	return json.Marshal(cfg)
 }
 
+// credentialRoutes builds proxy routes from resolved credentials, returning
+// exact-match and suffix-match routes separately for deterministic ordering.
+func credentialRoutes(credentials []resolvedCredential) (exact, suffix []proxyRoute) {
+	for _, rc := range credentials {
+		cred := rc.CredentialSpec
+
+		if cred.Type == clawv1alpha1.CredentialTypeKubernetes {
+			if rc.KubeConfig == nil {
+				continue
+			}
+			kubeconfigPath := "/etc/proxy/credentials/" + cred.Name + "/kubeconfig"
+			for _, cluster := range rc.KubeConfig.Clusters {
+				route := proxyRoute{
+					Domain:         cluster.Hostname + ":" + cluster.Port,
+					Injector:       injectorKubernetes,
+					KubeconfigPath: kubeconfigPath,
+					DefaultHeaders: cred.DefaultHeaders,
+				}
+				if len(cluster.CAData) > 0 {
+					route.CACert = base64.StdEncoding.EncodeToString(cluster.CAData)
+				}
+				exact = append(exact, route)
+			}
+			continue
+		}
+
+		if cred.Domain != "" {
+			route := buildCredentialRoute(cred)
+
+			if cred.Provider != "" && cred.Type != clawv1alpha1.CredentialTypePathToken && !usesVertexSDK(cred) {
+				info := resolveProviderInfo(cred)
+				route.PathPrefix = "/" + strings.ToLower(cred.Name)
+				route.Upstream = info.Upstream
+			}
+
+			if strings.HasPrefix(cred.Domain, ".") {
+				suffix = append(suffix, route)
+			} else {
+				exact = append(exact, route)
+			}
+		}
+
+		for _, companion := range generateCompanionRoutes(cred) {
+			if strings.HasPrefix(companion.Domain, ".") {
+				suffix = append(suffix, companion)
+			} else {
+				exact = append(exact, companion)
+			}
+		}
+	}
+	return exact, suffix
+}
+
+// buildCredentialRoute maps a credential spec to its proxy route with the
+// correct injector, env var, and type-specific fields.
+func buildCredentialRoute(cred clawv1alpha1.CredentialSpec) proxyRoute {
+	route := proxyRoute{
+		Domain:         cred.Domain,
+		DefaultHeaders: cred.DefaultHeaders,
+		AllowedPaths:   cred.AllowedPaths,
+	}
+
+	switch cred.Type {
+	case clawv1alpha1.CredentialTypeAPIKey:
+		route.Injector = injectorAPIKey
+		route.EnvVar = credEnvVarName(cred.Name)
+		if cred.APIKey != nil {
+			route.Header = cred.APIKey.Header
+			route.ValuePrefix = cred.APIKey.ValuePrefix
+		}
+	case clawv1alpha1.CredentialTypeBearer:
+		route.Injector = injectorBearer
+		route.EnvVar = credEnvVarName(cred.Name)
+	case clawv1alpha1.CredentialTypeGCP:
+		route.Injector = injectorGCP
+		route.SAFilePath = "/etc/proxy/credentials/" + cred.Name + "/sa-key.json"
+		if cred.GCP != nil {
+			route.GCPProject = cred.GCP.Project
+			route.GCPLocation = cred.GCP.Location
+		}
+	case clawv1alpha1.CredentialTypeNone:
+		route.Injector = injectorNone
+	case clawv1alpha1.CredentialTypePathToken:
+		route.Injector = injectorPathToken
+		route.EnvVar = credEnvVarName(cred.Name)
+		if cred.PathToken != nil {
+			route.PathPrefix = cred.PathToken.Prefix
+		}
+	case clawv1alpha1.CredentialTypeOAuth2:
+		route.Injector = injectorOAuth2
+		route.EnvVar = credEnvVarName(cred.Name)
+		if cred.OAuth2 != nil {
+			route.ClientID = cred.OAuth2.ClientID
+			route.TokenURL = cred.OAuth2.TokenURL
+			route.Scopes = cred.OAuth2.Scopes
+		}
+	}
+
+	return route
+}
+
 // webSearchRoute builds a proxy route for the web search provider, if applicable.
 // Returns false for LLM-as-search providers (e.g., gemini) and unknown providers.
 func webSearchRoute(webSearch *clawv1alpha1.WebSearchSpec) (proxyRoute, bool) {
@@ -260,10 +291,10 @@ func webSearchRoute(webSearch *clawv1alpha1.WebSearchSpec) (proxyRoute, bool) {
 		Injector: info.Injector,
 	}
 	switch info.Injector {
-	case "api_key":
+	case injectorAPIKey:
 		route.EnvVar = credEnvVarName(webSearchCredPrefix)
 		route.Header = info.Header
-	case "bearer":
+	case injectorBearer:
 		route.EnvVar = credEnvVarName(webSearchCredPrefix)
 	}
 	return route, true
@@ -280,7 +311,7 @@ func mcpPassthroughRoutes(
 ) []proxyRoute {
 	var routes []proxyRoute
 	for _, mcp := range mcpServers {
-		if mcp.URL == "" {
+		if mcp.URL == "" || mcp.CredentialRef != "" {
 			continue
 		}
 		parsed, err := url.Parse(mcp.URL)
@@ -292,9 +323,54 @@ func mcpPassthroughRoutes(
 			continue
 		}
 		coveredDomains[domain] = true
-		routes = append(routes, proxyRoute{Domain: domain, Injector: "none"})
+		routes = append(routes, proxyRoute{Domain: domain, Injector: injectorNone})
 	}
 	return routes
+}
+
+// mcpCredentialRoutes builds credential-injecting proxy routes for HTTP MCP
+// servers that declare a credentialRef. The referenced credential is looked up
+// from the resolved credentials list.
+func mcpCredentialRoutes(
+	mcpServers map[string]clawv1alpha1.McpServerSpec,
+	credentials []resolvedCredential,
+	coveredDomains map[string]bool,
+) ([]proxyRoute, error) {
+	credByName := make(map[string]resolvedCredential, len(credentials))
+	for _, rc := range credentials {
+		credByName[rc.Name] = rc
+	}
+
+	var routes []proxyRoute
+	for serverName, mcp := range mcpServers {
+		if mcp.URL == "" || mcp.CredentialRef == "" {
+			continue
+		}
+		rc, ok := credByName[mcp.CredentialRef]
+		if !ok {
+			return nil, fmt.Errorf(
+				"MCP server %q references credential %q which does not exist in spec.credentials",
+				serverName, mcp.CredentialRef,
+			)
+		}
+
+		parsed, err := url.Parse(mcp.URL)
+		if err != nil || parsed.Hostname() == "" {
+			continue
+		}
+		domain := strings.ToLower(parsed.Hostname())
+		if domainCovered(domain, coveredDomains) {
+			continue
+		}
+		coveredDomains[domain] = true
+
+		route := buildCredentialRoute(rc.CredentialSpec)
+		route.Domain = domain
+		route.AllowedPaths = nil
+		route.DefaultHeaders = nil
+		routes = append(routes, route)
+	}
+	return routes, nil
 }
 
 // domainCovered returns true if domain is already covered by an exact entry or

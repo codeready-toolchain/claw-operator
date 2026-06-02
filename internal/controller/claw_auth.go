@@ -56,13 +56,13 @@ func (r *ClawResourceReconciler) resolveAuthPassword(ctx context.Context, instan
 
 // shouldDisableDevicePairing returns whether device identity checks should be
 // disabled based on the auth spec. When DisableDevicePairing is explicitly set,
-// that value is used. Otherwise it defaults to true for password mode and false
-// for token mode.
+// that value is used. Otherwise it defaults to true (device pairing is disabled
+// by default). Set disableDevicePairing: false to opt in.
 func shouldDisableDevicePairing(auth *clawv1alpha1.AuthSpec) bool {
 	if auth != nil && auth.DisableDevicePairing != nil {
 		return *auth.DisableDevicePairing
 	}
-	return auth != nil && auth.Mode == clawv1alpha1.AuthModePassword
+	return true
 }
 
 // injectAuthMode unconditionally sets gateway.auth.mode and

@@ -10,7 +10,7 @@ export NS=my-claw-namespace
 
 ## LLM Providers
 
-For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers defaults where possible — you only need `name`, `type`, `secretRef`, and `provider`. For `google` and `anthropic`, the `domain` and `apiKey` header are fully inferred. For `openai` and `xai`, you must provide a `domain` explicitly since they use `type: bearer`. You can still override any inferred field if needed (e.g., routing through a custom proxy).
+For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers `type`, `domain`, and auth headers — you only need `name`, `provider`, and `secretRef`. You can still override any inferred field if needed (e.g., routing through a custom proxy or using a different credential type).
 
 The `provider` field also accepts arbitrary strings for custom/self-hosted providers — see [Custom / Self-Hosted Providers](#custom--self-hosted-providers) below. For the best experience with custom endpoints, use `spec.customProviders` which provides full control over `baseUrl`, wire format, and model registration.
 
@@ -41,11 +41,10 @@ metadata:
 spec:
   credentials:
     - name: gemini
-      type: apiKey
+      provider: google
       secretRef:
         - name: gemini-api-key
           key: api-key
-      provider: google
 EOF
 ```
 
@@ -74,11 +73,10 @@ metadata:
 spec:
   credentials:
     - name: anthropic
-      type: apiKey
+      provider: anthropic
       secretRef:
         - name: anthropic-api-key
           key: api-key
-      provider: anthropic
 EOF
 ```
 
@@ -107,12 +105,10 @@ metadata:
 spec:
   credentials:
     - name: openai
-      type: bearer
+      provider: openai
       secretRef:
         - name: openai-api-key
           key: api-key
-      provider: openai
-      domain: "api.openai.com"
 EOF
 ```
 
@@ -143,12 +139,10 @@ metadata:
 spec:
   credentials:
     - name: xai
-      type: bearer
+      provider: xai
       secretRef:
         - name: xai-api-key
           key: api-key
-      provider: xai
-      domain: "api.x.ai"
 EOF
 ```
 
@@ -1204,6 +1198,66 @@ spec:
 EOF
 ```
 
+## Memory Search
+
+OpenClaw's memory search feature uses embeddings for semantic recall across agent sessions. The operator automatically configures it when an embedding-capable LLM credential is present — no manual setup required.
+
+### Automatic configuration
+
+The operator scans `spec.credentials` in order and picks the first provider that supports embeddings:
+
+| Provider | Credential type | Memory search adapter |
+|----------|----------------|-----------------------|
+| `openai` | `bearer`       | `openai`              |
+| `google` | `apiKey`       | `gemini`              |
+
+When a match is found, the operator sets `agents.defaults.memorySearch.provider` in `operator.json`. OpenClaw's native adapter handles model selection (e.g., `text-embedding-3-small` for OpenAI, `gemini-embedding-001` for Gemini). Embedding requests route through the proxy, which injects the real credential via MITM — just like chat completions.
+
+Providers without embedding support (`anthropic`, `xai`) and Google credentials with `type: gcp` (Vertex AI) are not eligible. If no embedding-capable credential exists, the operator sets `memorySearch.enabled: false` to suppress runtime errors.
+
+### Overriding memory search
+
+To use a custom embedding endpoint (e.g., vLLM, Ollama, LiteLLM), configure it via `spec.config.raw`. When `agents.defaults.memorySearch` is present in the user config, the operator does not inject anything:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials:
+    - name: anthropic
+      provider: anthropic
+      secretRef:
+        - name: anthropic-api-key
+          key: api-key
+  config:
+    raw:
+      agents:
+        defaults:
+          memorySearch:
+            provider: "openai-compatible"
+            model: "my-embedding-model"
+            remote:
+              baseUrl: "http://my-endpoint/v1"
+              apiKey: "placeholder"
+EOF
+```
+
+To explicitly disable memory search:
+
+```yaml
+spec:
+  config:
+    raw:
+      agents:
+        defaults:
+          memorySearch:
+            enabled: false
+```
+
 ## Application Configuration
 
 The Claw CR supports `spec.config` for declarative OpenClaw application settings — diagnostics, CORS origins, model preferences, agent defaults, and any other `openclaw.json` key that isn't driven by a typed CRD field.
@@ -1408,8 +1462,8 @@ spec:
         entries:
           diagnostics-otel:
             enabled: true
-  networkPolicy:
-    allowedEgress:
+  network:
+    additionalEgress:
       - to:
           - namespaceSelector:
               matchLabels:
@@ -1423,7 +1477,7 @@ The operator injects `metrics: true` and `metricsEndpoint: "http://localhost:431
 
 ## Network Policy
 
-The operator creates strict NetworkPolicies by default: the gateway pod can only reach the MITM proxy (port 8080) and DNS, while the proxy pod can only reach TCP 443 and DNS. This blocks legitimate in-cluster traffic patterns like MCP servers running on custom ports or cross-namespace services.
+The operator creates strict NetworkPolicies by default: the gateway pod can only reach the MITM proxy (port 8080) and DNS, while the proxy pod can only reach TCP 443 and DNS. By default, all egress — including in-cluster traffic — goes through the MITM proxy. Set `spec.network.inClusterBypass: true` to allow the gateway to reach `.svc` and `.svc.cluster.local` directly (bypassing the proxy).
 
 ### Automatic MCP egress rules
 
@@ -1438,7 +1492,7 @@ spec:
       url: http://mcp-customer:9001/mcp
 ```
 
-The operator auto-generates a gateway egress rule allowing traffic to any pod in the same namespace on port 9001.
+When `inClusterBypass` is `false` (default), the operator adds an egress rule to the **proxy** NetworkPolicy so the proxy can reach the MCP server. When `inClusterBypass` is `true`, the rule goes on the **gateway** NetworkPolicy instead.
 
 **Cross-namespace MCP server** (dotted Kubernetes DNS):
 
@@ -1449,15 +1503,15 @@ spec:
       url: http://mcp-server.shared-tools.svc:9001/mcp
 ```
 
-The operator auto-generates a gateway egress rule targeting the `shared-tools` namespace on port 9001. Cross-namespace services must use the `.svc` or `.svc.cluster.local` suffix (e.g., `svc.ns.svc` or `svc.ns.svc.cluster.local`) to match the `NO_PROXY` bypass and connect directly. Bare two-part names (e.g., `svc.ns`) are treated as external because `NO_PROXY` does not bypass them.
+The operator auto-generates an egress rule targeting the `shared-tools` namespace on port 9001 (on the proxy NP when bypass is off, or the gateway NP when bypass is on). Cross-namespace services must use the `.svc` or `.svc.cluster.local` suffix (e.g., `svc.ns.svc` or `svc.ns.svc.cluster.local`). Bare two-part names (e.g., `svc.ns`) are treated as external.
 
 **External MCP on non-443 port** (e.g., `https://mcp.example.com:8443/mcp`): the operator adds port 8443 to the proxy egress NetworkPolicy. External MCP on port 443 needs no change (already allowed).
 
 **Stdio MCP servers** (subprocess, no URL) need no NetworkPolicy changes.
 
-### Escape hatch: `spec.networkPolicy.allowedEgress`
+### Escape hatch: `spec.network.additionalEgress`
 
-For services the operator cannot auto-detect — tracing collectors, databases, webhooks — use `spec.networkPolicy.allowedEgress` to append raw `NetworkPolicyEgressRule` objects to the gateway egress NetworkPolicy:
+For services the operator cannot auto-detect — tracing collectors, databases, webhooks — use `spec.network.additionalEgress` to append raw `NetworkPolicyEgressRule` objects to the gateway egress NetworkPolicy:
 
 ```sh
 oc apply -n $NS -f - <<EOF
@@ -1473,8 +1527,8 @@ spec:
         - name: gemini-api-key
           key: api-key
       provider: google
-  networkPolicy:
-    allowedEgress:
+  network:
+    additionalEgress:
       # Cross-namespace tracing collector (Langfuse)
       - to:
           - namespaceSelector:
@@ -1494,7 +1548,28 @@ EOF
 
 Rules are standard Kubernetes `NetworkPolicyEgressRule` objects validated by the API server on admission. They are appended to the `{instance}-egress` NetworkPolicy alongside the auto-generated MCP rules.
 
-> **Note:** `allowedEgress` only modifies the **gateway** egress NetworkPolicy. For proxy egress customization (rare — only needed for external non-443 services not declared as MCP servers), create supplemental NetworkPolicies directly.
+> **Note:** `additionalEgress` only modifies the **gateway** egress NetworkPolicy. For proxy egress customization (rare — only needed for external non-443 services not declared as MCP servers), create supplemental NetworkPolicies directly.
+
+### MCP credentialRef
+
+For HTTP MCP servers that need authentication, set `credentialRef` to the name of a credential in `spec.credentials`. The proxy injects credentials on the MCP server's behalf, keeping tokens out of the gateway pod:
+
+```yaml
+spec:
+  credentials:
+    - name: mcp-auth
+      type: bearer
+      secretRef:
+        - name: mcp-token-secret
+          key: token
+      domain: mcp-server.tools.svc
+  mcpServers:
+    my-mcp:
+      url: http://mcp-server.tools.svc:8080/mcp
+      credentialRef: mcp-auth
+```
+
+> **Warning:** If `inClusterBypass` is `true` and an in-cluster MCP server has `credentialRef`, the operator sets a warning condition — credentials cannot be injected when traffic bypasses the proxy.
 
 ## Plugins
 
