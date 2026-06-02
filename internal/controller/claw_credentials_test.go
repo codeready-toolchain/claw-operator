@@ -169,7 +169,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), "apiKey config is required")
 	})
 
-	t.Run("should reject creation via CEL when neither type nor channel is set", func(t *testing.T) {
+	t.Run("should reject creation via CEL when neither type nor channel nor provider is set", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
@@ -183,8 +183,8 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			},
 		}
 		err := k8sClient.Create(ctx, instance)
-		require.Error(t, err, "admission should reject credential with neither type nor channel")
-		assert.Contains(t, err.Error(), "either type or channel must be set")
+		require.Error(t, err, "admission should reject credential with neither type, channel, nor provider")
+		assert.Contains(t, err.Error(), "type, channel, or provider must be set")
 	})
 
 	t.Run("should reject creation via CEL when both provider and channel are set", func(t *testing.T) {

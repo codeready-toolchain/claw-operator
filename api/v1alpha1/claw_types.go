@@ -153,20 +153,21 @@ type OAuth2Config struct {
 }
 
 // CredentialSpec defines a single credential entry for proxy injection.
-// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel)",message="either type or channel must be set"
+// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || has(self.provider)",message="type, channel, or provider must be set"
 // +kubebuilder:validation:XValidation:rule="!has(self.provider) || !has(self.channel)",message="provider and channel are mutually exclusive"
-// +kubebuilder:validation:XValidation:rule="has(self.channel) || self.type == 'none' || has(self.secretRef)",message="secretRef is required unless type is none or channel is set"
-// +kubebuilder:validation:XValidation:rule="self.type != 'apiKey' || has(self.apiKey) || has(self.provider) || has(self.channel)",message="apiKey config is required when type is apiKey without inferred defaults"
-// +kubebuilder:validation:XValidation:rule="self.type != 'gcp' || has(self.gcp) || has(self.channel)",message="gcp config is required when type is gcp without inferred defaults"
-// +kubebuilder:validation:XValidation:rule="self.type != 'pathToken' || has(self.pathToken) || has(self.channel)",message="pathToken config is required when type is pathToken without inferred defaults"
-// +kubebuilder:validation:XValidation:rule="self.type != 'oauth2' || has(self.oauth2) || has(self.channel)",message="oauth2 config is required when type is oauth2 without inferred defaults"
+// +kubebuilder:validation:XValidation:rule="has(self.channel) || (has(self.type) && self.type == 'none') || has(self.secretRef)",message="secretRef is required unless type is none or channel is set"
+// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'apiKey' || has(self.apiKey) || has(self.provider) || has(self.channel)",message="apiKey config is required when type is apiKey without inferred defaults"
+// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'gcp' || has(self.gcp) || has(self.channel)",message="gcp config is required when type is gcp without inferred defaults"
+// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'pathToken' || has(self.pathToken) || has(self.channel)",message="pathToken config is required when type is pathToken without inferred defaults"
+// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'oauth2' || has(self.oauth2) || has(self.channel)",message="oauth2 config is required when type is oauth2 without inferred defaults"
 type CredentialSpec struct {
 	// Name uniquely identifies this credential entry.
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
 	// Type selects the credential injection mechanism.
-	// Optional when channel is set — the operator infers the type from the channel defaults.
+	// Optional when channel is set or provider is a known provider — the operator infers
+	// the type from channel or provider defaults.
 	// +optional
 	Type CredentialType `json:"type,omitempty"`
 
