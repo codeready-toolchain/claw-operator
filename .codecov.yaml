@@ -33,6 +33,8 @@ coverage:
     - "config/*"
     - "docs/*"
     - "hack/*"
+    - "api/**/zz_generated.deepcopy.go"
+    - "internal/assets/*"
 
 
 # See http://docs.codecov.io/docs/pull-request-comments-1

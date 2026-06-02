@@ -570,6 +570,137 @@ func TestServerMITMMultiRouteInjection(t *testing.T) {
 	})
 }
 
+func TestServerGatewayMode(t *testing.T) {
+	certPEM, keyPEM := generateTestCA(t)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"path":"%s","auth":"%s","custom":"%s"}`,
+			r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("x-custom"))
+	}))
+	defer upstream.Close()
+
+	t.Setenv("CRED_GW_TEST", "gw-token-abc")
+
+	cfg := &Config{
+		Routes: []Route{
+			{
+				Domain:         "api.example.com",
+				Injector:       "bearer",
+				EnvVar:         "CRED_GW_TEST",
+				PathPrefix:     "/myapi",
+				Upstream:       upstream.URL,
+				DefaultHeaders: map[string]string{"x-custom": "headerval"},
+			},
+		},
+	}
+	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
+	require.NoError(t, err)
+
+	handler := srv.Handler()
+
+	t.Run("forwards to upstream with credential injection and path stripping", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/myapi/v1/chat", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), `"path":"/v1/chat"`)
+		assert.Contains(t, rr.Body.String(), `"auth":"Bearer gw-token-abc"`)
+		assert.Contains(t, rr.Body.String(), `"custom":"headerval"`)
+	})
+
+	t.Run("exact prefix returns root path", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/myapi", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), `"path":"/"`)
+	})
+
+	t.Run("unmatched path falls through to forward proxy", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/other/path", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.NotEqual(t, http.StatusOK, rr.Code, "unmatched gateway path should not succeed")
+	})
+
+	t.Run("strips auth headers before injection", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/myapi/v1/data", nil)
+		req.Header.Set("Authorization", "Bearer user-supplied-token")
+		req.Header.Set("X-Api-Key", "user-key")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), `"auth":"Bearer gw-token-abc"`)
+	})
+
+	t.Run("strips Via header from gateway requests", func(t *testing.T) {
+		upstreamHeaders := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprintf(w, `{"via":"%s"}`, r.Header.Get("Via"))
+		}))
+		defer upstreamHeaders.Close()
+
+		cfg2 := &Config{
+			Routes: []Route{
+				{Domain: "h.com", Injector: "bearer", EnvVar: "CRED_GW_TEST", PathPrefix: "/h", Upstream: upstreamHeaders.URL},
+			},
+		}
+		srv2, err := NewServer(cfg2, certPEM, keyPEM, slog.Default())
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/h/test", nil)
+		req.Header.Set("Via", "1.1 proxy")
+		rr := httptest.NewRecorder()
+		srv2.Handler().ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Contains(t, rr.Body.String(), `"via":""`)
+	})
+}
+
+func TestServerGatewayInjectionFailure(t *testing.T) {
+	certPEM, keyPEM := generateTestCA(t)
+
+	t.Setenv("CRED_GW_EMPTY", "")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "api.fail.com", Injector: "bearer", EnvVar: "CRED_GW_EMPTY", PathPrefix: "/fail", Upstream: upstream.URL},
+		},
+	}
+	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/fail/v1/test", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadGateway, rr.Code)
+	assert.Contains(t, rr.Body.String(), "credential injection failed")
+}
+
+func TestServerGatewayWithUpstreamURLParse(t *testing.T) {
+	certPEM, keyPEM := generateTestCA(t)
+
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "bad.com", Injector: "none", PathPrefix: "/bad", Upstream: "://invalid-url"},
+		},
+	}
+	_, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse upstream URL")
+}
+
 func TestTokenVendingResponse(t *testing.T) {
 	data := TokenVendingResponse()
 	assert.Contains(t, string(data), "claw-proxy-vended-token")

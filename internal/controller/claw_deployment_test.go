@@ -33,6 +33,98 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
+// --- Image pull policy tests ---
+
+func TestConfigureImagePullPolicy(t *testing.T) {
+	makeObjects := func() []*unstructured.Unstructured {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName("test-deploy")
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name":            "gateway",
+							"imagePullPolicy": "IfNotPresent",
+						},
+						map[string]any{
+							"name":            "sidecar",
+							"imagePullPolicy": "IfNotPresent",
+						},
+					},
+					"initContainers": []any{
+						map[string]any{
+							"name":            "init",
+							"imagePullPolicy": "IfNotPresent",
+						},
+					},
+				},
+			},
+		}
+		svc := &unstructured.Unstructured{}
+		svc.SetKind(ServiceKind)
+		svc.SetName("test-svc")
+		return []*unstructured.Unstructured{dep, svc}
+	}
+
+	t.Run("empty policy preserves defaults", func(t *testing.T) {
+		objects := makeObjects()
+		require.NoError(t, configureImagePullPolicy(objects, ""))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		for _, c := range containers {
+			cm := c.(map[string]any)
+			assert.Equal(t, "IfNotPresent", cm["imagePullPolicy"])
+		}
+	})
+
+	t.Run("overrides all containers and initContainers", func(t *testing.T) {
+		objects := makeObjects()
+		require.NoError(t, configureImagePullPolicy(objects, "Always"))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		for _, c := range containers {
+			cm := c.(map[string]any)
+			assert.Equal(t, "Always", cm["imagePullPolicy"])
+		}
+
+		initContainers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "initContainers")
+		for _, c := range initContainers {
+			cm := c.(map[string]any)
+			assert.Equal(t, "Always", cm["imagePullPolicy"])
+		}
+	})
+
+	t.Run("skips non-deployment objects", func(t *testing.T) {
+		svc := &unstructured.Unstructured{}
+		svc.SetKind(ServiceKind)
+		svc.SetName("test-svc")
+		objects := []*unstructured.Unstructured{svc}
+		require.NoError(t, configureImagePullPolicy(objects, "Always"))
+	})
+
+	t.Run("handles deployment with no initContainers", func(t *testing.T) {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName("no-init")
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{"name": "main", "imagePullPolicy": "Never"},
+					},
+				},
+			},
+		}
+		require.NoError(t, configureImagePullPolicy([]*unstructured.Unstructured{dep}, "Always"))
+
+		containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+		cm := containers[0].(map[string]any)
+		assert.Equal(t, "Always", cm["imagePullPolicy"])
+	})
+}
+
 // --- Vertex AI deployment configuration tests ---
 
 func TestConfigureClawDeploymentForVertex(t *testing.T) {
@@ -1608,6 +1700,128 @@ func TestGatewayNoProxyIntegration(t *testing.T) {
 		require.NotNil(t, noProxyLowerEnv, "no_proxy env var should exist on gateway")
 		assert.Contains(t, noProxyLowerEnv.Value, ".svc,.svc.cluster.local",
 			"no_proxy should contain .svc suffixes when bypass is on")
+	})
+}
+
+// --- Vertex ADC ConfigMap apply tests ---
+
+func TestApplyVertexADCConfigMap(t *testing.T) {
+	t.Run("creates ADC ConfigMap when Vertex SDK credentials are present", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{
+						Name:     "vertex-cred",
+						Type:     clawv1alpha1.CredentialTypeGCP,
+						Provider: "anthropic",
+						SecretRef: []clawv1alpha1.SecretRefEntry{
+							{Name: aiModelSecret, Key: aiModelSecretKey},
+						},
+						Domain: ".googleapis.com",
+						GCP: &clawv1alpha1.GCPConfig{
+							Project:  "test-project",
+							Location: "us-central1",
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		creds := toResolved(instance.Spec.Credentials)
+
+		require.NoError(t, reconciler.applyVertexADCConfigMap(ctx, instance, creds))
+
+		cm := &corev1.ConfigMap{}
+		cmName := getVertexADCConfigMapName(testInstanceName)
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: cmName, Namespace: namespace}, cm)
+		require.NoError(t, err, "Vertex ADC ConfigMap should be created")
+
+		assert.Contains(t, cm.Data["adc.json"], "authorized_user")
+		assert.Contains(t, cm.Data["adc.json"], "proxy-managed-token")
+
+		require.Len(t, cm.OwnerReferences, 1, "should have owner reference")
+		assert.Equal(t, instance.Name, cm.OwnerReferences[0].Name)
+	})
+
+	t.Run("no-ops when no Vertex SDK credentials", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		creds := toResolved(instance.Spec.Credentials)
+
+		require.NoError(t, reconciler.applyVertexADCConfigMap(ctx, instance, creds))
+
+		cm := &corev1.ConfigMap{}
+		cmName := getVertexADCConfigMapName(testInstanceName)
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: cmName, Namespace: namespace}, cm)
+		assert.Error(t, err, "Vertex ADC ConfigMap should not exist for non-Vertex credentials")
+	})
+
+	t.Run("cleans up orphaned ConfigMap when creds change to non-Vertex", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{
+						Name:     "vertex-cred",
+						Type:     clawv1alpha1.CredentialTypeGCP,
+						Provider: "anthropic",
+						SecretRef: []clawv1alpha1.SecretRefEntry{
+							{Name: aiModelSecret, Key: aiModelSecretKey},
+						},
+						Domain: ".googleapis.com",
+						GCP: &clawv1alpha1.GCPConfig{
+							Project:  "test-project",
+							Location: "us-central1",
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		vertexCreds := toResolved(instance.Spec.Credentials)
+
+		require.NoError(t, reconciler.applyVertexADCConfigMap(ctx, instance, vertexCreds))
+
+		cmName := getVertexADCConfigMapName(testInstanceName)
+		cm := &corev1.ConfigMap{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: cmName, Namespace: namespace}, cm),
+			"ADC ConfigMap should exist after first apply")
+
+		nonVertexCreds := toResolved(testCredentials())
+		require.NoError(t, reconciler.applyVertexADCConfigMap(ctx, instance, nonVertexCreds))
+
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: cmName, Namespace: namespace}, cm)
+		assert.Error(t, err, "ADC ConfigMap should be deleted when switching to non-Vertex creds")
 	})
 }
 
