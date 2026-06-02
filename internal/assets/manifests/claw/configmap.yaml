@@ -239,6 +239,7 @@ data:
     the platform skill at `skills/platform/SKILL.md`:
 
     - LLM providers, models, or the model picker
+    - Memory search or embeddings
     - Proxy, networking, blocked domains, or "connection refused" errors
     - Messaging channels (Telegram, Discord, Slack, WhatsApp)
     - MCP server configuration
@@ -614,6 +615,34 @@ data:
     ```
 
     The proxy exchanges credentials for a bearer token and injects it on each request.
+
+    # Memory Search
+
+    Memory search (semantic recall across sessions) is auto-configured when
+    an `openai` or `google` (apiKey) credential is present — the first
+    embedding-capable credential in `spec.credentials` order wins. Providers
+    without embedding support (`anthropic`, `xai`) and `google` with
+    `type: gcp` (Vertex AI) are not eligible.
+
+    If no eligible credential exists, memory search is disabled automatically.
+
+    **User override:** To use a custom embedding endpoint or disable memory
+    search, set `agents.defaults.memorySearch` in `spec.config.raw` — the
+    operator skips injection entirely when this key is present:
+
+    ```yaml
+    spec:
+      config:
+        raw:
+          agents:
+            defaults:
+              memorySearch:
+                provider: "openai-compatible"
+                model: "my-embedding-model"
+                remote:
+                  baseUrl: "http://my-endpoint/v1"
+                  apiKey: "placeholder"
+    ```
 
     # Messaging Channels
 
@@ -1057,13 +1086,16 @@ data:
     - `agents.defaults.models` — catalog models always present; user entries win on
       key collision
     - `agents.defaults.model.primary` — user value wins over catalog default
+    - `agents.defaults.memorySearch` — operator auto-sets `provider` from the first
+      embedding-capable credential; if user sets any `memorySearch` key in
+      `spec.config.raw`, operator skips injection entirely
 
     **User-only (operator never touches — full user control):**
     - `diagnostics.*` (except: when `spec.metrics` is enabled, the operator
       injects `diagnostics.otel.metrics` and `diagnostics.otel.metricsEndpoint`
       if not already set by the user), `session.*`, `logging.*`,
       `plugins.*` (non-declared), `skills.*`, `ui.*`, `cron.*`, `hooks.*`,
-      `browser.*`, `memory.*`, etc.
+      `browser.*`, etc.
 
     ## Example
 

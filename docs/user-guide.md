@@ -1198,6 +1198,66 @@ spec:
 EOF
 ```
 
+## Memory Search
+
+OpenClaw's memory search feature uses embeddings for semantic recall across agent sessions. The operator automatically configures it when an embedding-capable LLM credential is present — no manual setup required.
+
+### Automatic configuration
+
+The operator scans `spec.credentials` in order and picks the first provider that supports embeddings:
+
+| Provider | Credential type | Memory search adapter |
+|----------|----------------|-----------------------|
+| `openai` | `bearer`       | `openai`              |
+| `google` | `apiKey`       | `gemini`              |
+
+When a match is found, the operator sets `agents.defaults.memorySearch.provider` in `operator.json`. OpenClaw's native adapter handles model selection (e.g., `text-embedding-3-small` for OpenAI, `gemini-embedding-001` for Gemini). Embedding requests route through the proxy, which injects the real credential via MITM — just like chat completions.
+
+Providers without embedding support (`anthropic`, `xai`) and Google credentials with `type: gcp` (Vertex AI) are not eligible. If no embedding-capable credential exists, the operator sets `memorySearch.enabled: false` to suppress runtime errors.
+
+### Overriding memory search
+
+To use a custom embedding endpoint (e.g., vLLM, Ollama, LiteLLM), configure it via `spec.config.raw`. When `agents.defaults.memorySearch` is present in the user config, the operator does not inject anything:
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  credentials:
+    - name: anthropic
+      provider: anthropic
+      secretRef:
+        - name: anthropic-api-key
+          key: api-key
+  config:
+    raw:
+      agents:
+        defaults:
+          memorySearch:
+            provider: "openai-compatible"
+            model: "my-embedding-model"
+            remote:
+              baseUrl: "http://my-endpoint/v1"
+              apiKey: "placeholder"
+EOF
+```
+
+To explicitly disable memory search:
+
+```yaml
+spec:
+  config:
+    raw:
+      agents:
+        defaults:
+          memorySearch:
+            enabled: false
+```
+
 ## Application Configuration
 
 The Claw CR supports `spec.config` for declarative OpenClaw application settings — diagnostics, CORS origins, model preferences, agent defaults, and any other `openclaw.json` key that isn't driven by a typed CRD field.

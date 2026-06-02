@@ -32,6 +32,7 @@ Because deep-merge operates at the key level, operator-managed entries (e.g., `c
 |---|---|---|
 | Operator | `gateway.*`, `models.providers`, `agents.defaults.models`, `channels.<declared>`, `plugins.entries.<declared>` | Overwritten every restart |
 | Operator → User | `agents.defaults.model.primary` | Set on first run, then preserved |
+| Operator (skip if user overrides) | `agents.defaults.memorySearch` | Auto-set from first embedding-capable credential; skipped entirely if user sets any `memorySearch` key in `spec.config.raw` |
 | User | `agents.list`, `plugins.*` (non-declared), `channels.*` (non-declared), `tools.*`, `cron.*` | Preserved across restarts |
 
 In `overwrite` mode, the PVC config is ignored and `operator.json` is merged into the seed `openclaw.json` from the ConfigMap. User edits are wiped on every restart.

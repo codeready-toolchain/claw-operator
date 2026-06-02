@@ -743,6 +743,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 		return fmt.Errorf("failed to inject providers: %w", err)
 	}
 	injectModelCatalog(config, instance)
+	injectMemorySearch(config, instance)
 	if err := injectChannels(config, instance); err != nil {
 		return fmt.Errorf("failed to inject channels: %w", err)
 	}

@@ -68,6 +68,11 @@ type providerDefaults struct {
 	// provider is the first configured credential in the Claw CR; remaining
 	// models become the fallback chain.
 	Models []modelEntry
+
+	// EmbeddingAdapter is the OpenClaw memory search adapter ID for this
+	// provider (e.g. "openai", "gemini"). Empty means the provider does not
+	// support embeddings and is ineligible for automatic memory search config.
+	EmbeddingAdapter string
 }
 
 // knownProviders is the single source of truth for all per-provider
@@ -79,11 +84,12 @@ type providerDefaults struct {
 // openai-completions), and no model catalog.
 var knownProviders = map[string]providerDefaults{
 	"google": {
-		CredType: clawv1alpha1.CredentialTypeAPIKey,
-		Domain:   "generativelanguage.googleapis.com",
-		Header:   "x-goog-api-key",
-		API:      "google-generative-ai",
-		BasePath: "/v1beta",
+		CredType:         clawv1alpha1.CredentialTypeAPIKey,
+		Domain:           "generativelanguage.googleapis.com",
+		Header:           "x-goog-api-key",
+		API:              "google-generative-ai",
+		BasePath:         "/v1beta",
+		EmbeddingAdapter: "gemini",
 		Models: []modelEntry{
 			{Name: "gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
 			{Name: "gemini-3.1-pro-preview", Alias: "Gemini 3.1 Pro"},
@@ -105,10 +111,11 @@ var knownProviders = map[string]providerDefaults{
 		},
 	},
 	"openai": {
-		CredType:   clawv1alpha1.CredentialTypeBearer,
-		Domain:     "api.openai.com",
-		BasePath:   "/v1",
-		Companions: []string{"openai-codex"},
+		CredType:         clawv1alpha1.CredentialTypeBearer,
+		Domain:           "api.openai.com",
+		BasePath:         "/v1",
+		Companions:       []string{"openai-codex"},
+		EmbeddingAdapter: "openai",
 		Models: []modelEntry{
 			{Name: "gpt-5.5", Alias: "GPT-5.5"},
 			{Name: "gpt-5.4", Alias: "GPT-5.4"},

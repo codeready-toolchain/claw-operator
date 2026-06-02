@@ -130,6 +130,11 @@ func TestClawConfigMapController(t *testing.T) {
 			model, hasModel := defaults["model"].(map[string]any)
 			require.True(t, hasModel, "defaults should contain model section")
 			assert.NotEmpty(t, model["primary"], "operator.json should have primary model set")
+
+			memorySearch, hasMemorySearch := defaults["memorySearch"].(map[string]any)
+			require.True(t, hasMemorySearch, "operator.json should contain agents.defaults.memorySearch")
+			assert.Equal(t, "gemini", memorySearch["provider"],
+				"Google apiKey credential should auto-configure memorySearch provider to gemini")
 		})
 
 		t.Run("should have openclaw.json seed without hardcoded models", func(t *testing.T) {
