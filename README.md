@@ -169,11 +169,10 @@ metadata:
 spec:
   credentials:
     - name: gemini
-      type: apiKey
+      provider: google
       secretRef:
         - name: gemini-api-key
           key: api-key
-      provider: google
 EOF
 ```
 
@@ -189,16 +188,14 @@ metadata:
 spec:
   credentials:
     - name: openai
-      type: bearer
+      provider: openai
       secretRef:
         - name: openai-api-key
           key: api-key
-      provider: openai
-      domain: "api.openai.com"
 EOF
 ```
 
-For known providers (`google`, `anthropic`), the operator infers `domain` and `apiKey` automatically. For `openai` and `xai`, you must provide a `domain` since they use `type: bearer`. For other LLM providers, messaging channels, MCP servers, and more, see the [User Guide](docs/user-guide.md).
+For known providers (`google`, `anthropic`, `openai`, `xai`), the operator infers `type` and `domain` automatically. For other LLM providers, messaging channels, MCP servers, and more, see the [User Guide](docs/user-guide.md).
 
 Wait for it to become ready and get the URL and gateway token:
 

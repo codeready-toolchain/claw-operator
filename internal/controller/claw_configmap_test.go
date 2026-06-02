@@ -303,6 +303,7 @@ func TestInjectProviders(t *testing.T) {
 		require.Contains(t, providers, "openai-codex", "companion provider should be injected")
 		codex := providers["openai-codex"].(map[string]any)
 		openai := providers["openai"].(map[string]any)
+		assert.Equal(t, "https://api.openai.com/v1", openai["baseUrl"])
 		assert.Equal(t, openai["baseUrl"], codex["baseUrl"])
 		assert.Equal(t, "openai-codex-responses", codex["api"])
 		assert.NotContains(t, openai, "api", "OpenAI-compatible providers use OpenClaw default wire format")
@@ -322,7 +323,7 @@ func TestInjectProviders(t *testing.T) {
 		assert.Contains(t, err.Error(), "openai-codex")
 	})
 
-	t.Run("should omit api field for xai (openai-compatible provider)", func(t *testing.T) {
+	t.Run("should set api and baseUrl with /v1 for xai", func(t *testing.T) {
 		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
@@ -339,8 +340,8 @@ func TestInjectProviders(t *testing.T) {
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "xai")
 		xai := providers["xai"].(map[string]any)
-		assert.Equal(t, "https://api.x.ai", xai["baseUrl"])
-		assert.NotContains(t, xai, "api", "xai is OpenAI-compatible and should use the default wire format")
+		assert.Equal(t, "https://api.x.ai/v1", xai["baseUrl"])
+		assert.Equal(t, "openai-responses", xai["api"])
 	})
 
 	t.Run("should handle unknown provider without api field", func(t *testing.T) {

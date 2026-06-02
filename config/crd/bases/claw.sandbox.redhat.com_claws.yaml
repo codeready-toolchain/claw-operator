@@ -275,7 +275,8 @@ spec:
                     type:
                       description: |-
                         Type selects the credential injection mechanism.
-                        Optional when channel is set — the operator infers the type from the channel defaults.
+                        Optional when channel is set or provider is a known provider — the operator infers
+                        the type from channel or provider defaults.
                       enum:
                       - apiKey
                       - bearer
@@ -289,26 +290,33 @@ spec:
                   - name
                   type: object
                   x-kubernetes-validations:
-                  - message: either type or channel must be set
-                    rule: has(self.type) || has(self.channel)
+                  - message: 'type is required (inferred only for known providers:
+                      google, anthropic, openai, xai)'
+                    rule: has(self.type) || has(self.channel) || (has(self.provider)
+                      && self.provider in ['google', 'anthropic', 'openai', 'xai'])
                   - message: provider and channel are mutually exclusive
                     rule: '!has(self.provider) || !has(self.channel)'
                   - message: secretRef is required unless type is none or channel
                       is set
-                    rule: has(self.channel) || self.type == 'none' || has(self.secretRef)
+                    rule: has(self.channel) || (has(self.type) && self.type == 'none')
+                      || has(self.secretRef)
                   - message: apiKey config is required when type is apiKey without
                       inferred defaults
-                    rule: self.type != 'apiKey' || has(self.apiKey) || has(self.provider)
-                      || has(self.channel)
+                    rule: '!has(self.type) || self.type != ''apiKey'' || has(self.apiKey)
+                      || (has(self.provider) && self.provider in [''google'', ''anthropic''])
+                      || has(self.channel)'
                   - message: gcp config is required when type is gcp without inferred
                       defaults
-                    rule: self.type != 'gcp' || has(self.gcp) || has(self.channel)
+                    rule: '!has(self.type) || self.type != ''gcp'' || has(self.gcp)
+                      || has(self.channel)'
                   - message: pathToken config is required when type is pathToken without
                       inferred defaults
-                    rule: self.type != 'pathToken' || has(self.pathToken) || has(self.channel)
+                    rule: '!has(self.type) || self.type != ''pathToken'' || has(self.pathToken)
+                      || has(self.channel)'
                   - message: oauth2 config is required when type is oauth2 without
                       inferred defaults
-                    rule: self.type != 'oauth2' || has(self.oauth2) || has(self.channel)
+                    rule: '!has(self.type) || self.type != ''oauth2'' || has(self.oauth2)
+                      || has(self.channel)'
                 type: array
               customProviders:
                 description: |-
