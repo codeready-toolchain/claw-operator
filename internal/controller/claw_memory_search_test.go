@@ -265,9 +265,7 @@ func TestInjectMemorySearchJSONRoundTrip(t *testing.T) {
 		var roundTripped map[string]any
 		require.NoError(t, json.Unmarshal(result, &roundTripped))
 
-		agents := roundTripped["agents"].(map[string]any)
-		defaults := agents["defaults"].(map[string]any)
-		ms := defaults["memorySearch"].(map[string]any)
+		ms := memorySearchFromConfig(t, roundTripped)
 		assert.Equal(t, false, ms["enabled"])
 	})
 }
