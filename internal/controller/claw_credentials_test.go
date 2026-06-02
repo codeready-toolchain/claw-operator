@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -221,6 +222,28 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		require.NoError(t, err, "admission should accept credential with channel but no type")
 	})
 
+	t.Run("should accept creation via CEL when provider is set without type", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Provider: "google",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: aiModelSecret, Key: aiModelSecretKey},
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, instance)
+		require.NoError(t, err, "admission should accept credential with provider but no type")
+	})
+
 	t.Run("should set CredentialsResolved=False when validation fails", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
@@ -303,6 +326,105 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			}
 		}
 		assert.True(t, found, "ProxyConfigured condition should be set")
+	})
+
+	t.Run("should infer type and domain for all known providers", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secrets := map[string]string{
+			"google-key":    "google-api-key",
+			"anthropic-key": "anthropic-api-key",
+			"openai-key":    "openai-api-key",
+			"xai-key":       "xai-api-key",
+		}
+		for name, key := range secrets {
+			s := createTestAPIKeySecret(name, namespace, key, "test-value")
+			require.NoError(t, k8sClient.Create(ctx, s))
+		}
+
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Provider: "google",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "google-key", Key: "google-api-key"},
+				},
+			},
+			{
+				Name:     "anthropic",
+				Provider: "anthropic",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "anthropic-key", Key: "anthropic-api-key"},
+				},
+			},
+			{
+				Name:     "openai",
+				Provider: "openai",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "openai-key", Key: "openai-api-key"},
+				},
+			},
+			{
+				Name:     "xai",
+				Provider: "xai",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "xai-key", Key: "xai-api-key"},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: testInstanceName, Namespace: namespace}, updated))
+
+		var credResolved, proxyConfigured bool
+		for _, c := range updated.Status.Conditions {
+			if c.Type == clawv1alpha1.ConditionTypeCredentialsResolved && c.Status == "True" {
+				credResolved = true
+			}
+			if c.Type == clawv1alpha1.ConditionTypeProxyConfigured && c.Status == "True" {
+				proxyConfigured = true
+			}
+		}
+		assert.True(t, credResolved, "CredentialsResolved should be True")
+		assert.True(t, proxyConfigured, "ProxyConfigured should be True")
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getConfigMapName(testInstanceName),
+				Namespace: namespace,
+			}, cm) == nil
+		}, "ConfigMap should be created")
+
+		var config map[string]any
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["operator.json"]), &config))
+		providers := providersFromConfig(t, config)
+
+		google, ok := providers["google"].(map[string]any)
+		require.True(t, ok, "google provider should exist")
+		assert.Contains(t, google["baseUrl"], "generativelanguage.googleapis.com")
+		assert.Equal(t, "google-generative-ai", google["api"])
+
+		anthropic, ok := providers["anthropic"].(map[string]any)
+		require.True(t, ok, "anthropic provider should exist")
+		assert.Contains(t, anthropic["baseUrl"], "api.anthropic.com")
+		assert.Equal(t, "anthropic-messages", anthropic["api"])
+
+		openai, ok := providers["openai"].(map[string]any)
+		require.True(t, ok, "openai provider should exist")
+		assert.Equal(t, "https://api.openai.com/v1", openai["baseUrl"])
+
+		xai, ok := providers["xai"].(map[string]any)
+		require.True(t, ok, "xai provider should exist")
+		assert.Equal(t, "https://api.x.ai/v1", xai["baseUrl"])
+		assert.Equal(t, "openai-responses", xai["api"])
 	})
 }
 
