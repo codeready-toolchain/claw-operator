@@ -192,14 +192,11 @@ func TestInjectMemorySearchUserOverride(t *testing.T) {
 }
 
 func TestInjectMemorySearchJSONRoundTrip(t *testing.T) {
-	t.Run("should produce valid JSON after memory search injection", func(t *testing.T) {
-		operatorJSON := `{
-			"gateway": {"port": 18789},
-			"models": {"providers": {}}
-		}`
+	const baseJSON = `{"gateway": {"port": 18789}, "models": {"providers": {}}}`
 
+	t.Run("should produce valid JSON after memory search injection", func(t *testing.T) {
 		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(operatorJSON), &config))
+		require.NoError(t, json.Unmarshal([]byte(baseJSON), &config))
 
 		instance := testClawWithCredentials([]clawv1alpha1.CredentialSpec{
 			{Name: "openai", Type: clawv1alpha1.CredentialTypeBearer, Provider: "openai"},
@@ -217,10 +214,6 @@ func TestInjectMemorySearchJSONRoundTrip(t *testing.T) {
 	})
 
 	t.Run("should produce valid JSON with deep-merge user config override", func(t *testing.T) {
-		operatorJSON := `{
-			"gateway": {"port": 18789},
-			"models": {"providers": {}}
-		}`
 		userJSON := `{
 			"agents": {
 				"defaults": {
@@ -234,7 +227,7 @@ func TestInjectMemorySearchJSONRoundTrip(t *testing.T) {
 		}`
 
 		var base map[string]any
-		require.NoError(t, json.Unmarshal([]byte(operatorJSON), &base))
+		require.NoError(t, json.Unmarshal([]byte(baseJSON), &base))
 		var user map[string]any
 		require.NoError(t, json.Unmarshal([]byte(userJSON), &user))
 
@@ -258,13 +251,8 @@ func TestInjectMemorySearchJSONRoundTrip(t *testing.T) {
 	})
 
 	t.Run("should disable when no embedding provider after deep-merge", func(t *testing.T) {
-		operatorJSON := `{
-			"gateway": {"port": 18789},
-			"models": {"providers": {}}
-		}`
-
 		var config map[string]any
-		require.NoError(t, json.Unmarshal([]byte(operatorJSON), &config))
+		require.NoError(t, json.Unmarshal([]byte(baseJSON), &config))
 
 		instance := testClawWithCredentials([]clawv1alpha1.CredentialSpec{
 			{Name: "claude", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "anthropic"},
