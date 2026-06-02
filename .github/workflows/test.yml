@@ -26,8 +26,10 @@ jobs:
           go mod tidy
           make test
       
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v7
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v6
         with:
-          name: coverage
-          path: ./build/_output/coverage/coverage.txt
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./build/_output/coverage/coverage.txt
+          flags: unittests
+          fail_ci_if_error: false
