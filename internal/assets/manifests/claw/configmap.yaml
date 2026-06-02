@@ -299,15 +299,19 @@ data:
       Routes. Application settings (diagnostics, CORS origins, model preferences,
       agent defaults) can be set declaratively via `spec.config.raw` in the CR.
       Non-operator-managed config can also be managed via `openclaw config patch`.
+    - **You cannot read or modify the Claw CR.** Even if a `type: kubernetes`
+      credential is configured, it is not meant for managing this OpenClaw instance.
+      Always guide the user on what CR changes to make — provide the correct YAML
+      snippets and `oc`/`kubectl` commands for them to run.
     - **Do NOT invent Claw CR fields.** Only reference `spec.*` fields that are
       explicitly documented in this skill. If a setting is not mentioned here, it is
       not a CR field — do not suggest CR changes for it. When unsure, say you don't
       know rather than guessing. The operator source and full documentation:
       - Repository: https://github.com/codeready-toolchain/claw-operator
-      - CRD schema: https://github.com/codeready-toolchain/claw-operator/blob/main/api/v1alpha1/claw_types.go
-      - User guide: https://github.com/codeready-toolchain/claw-operator/blob/main/docs/user-guide.md
+      - CRD schema: https://github.com/codeready-toolchain/claw-operator/blob/master/config/crd/bases/claw.sandbox.redhat.com_claws.yaml
+      - User guide: https://github.com/codeready-toolchain/claw-operator/blob/master/docs/user-guide.md
       If you have GitHub API access (`api.github.com` credential configured), you can
-      fetch the user guide or CRD source directly for detail beyond this skill.
+      fetch the user guide or CRD schema directly for detail beyond this skill.
     - **Important:** Each `oc apply` of the Claw CR **replaces** the entire `credentials`
       list. The user must include all existing credentials when applying — otherwise they
       will be removed. Retrieve the current state first:
@@ -397,8 +401,10 @@ data:
     ## Proxy behavior notes
 
     - **Error signature:** "ECONNREFUSED", "ETIMEDOUT", or "socket hang up" on outbound
-      requests means the proxy is blocking that domain — not a DNS or network issue.
-      Solution: add a `credentials` entry (even `type: none`) for the domain.
+      requests usually indicates the proxy is blocking that domain. Verify by checking
+      whether the domain has a `credentials` entry — if not, that's the cause. If the
+      domain IS already configured, the issue may be an upstream outage or misconfigured
+      endpoint instead.
     - **Secret rotation:** Updating a referenced Secret triggers automatic proxy pod
       rollout. No CR change needed.
     - **Container names:** proxy container is `proxy` (in the `<instance>-proxy`
