@@ -153,10 +153,10 @@ type OAuth2Config struct {
 }
 
 // CredentialSpec defines a single credential entry for proxy injection.
-// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || has(self.provider)",message="type, channel, or provider must be set"
+// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || (has(self.provider) && self.provider in ['google', 'anthropic', 'openai', 'xai'])",message="type is required (inferred only for known providers: google, anthropic, openai, xai)"
 // +kubebuilder:validation:XValidation:rule="!has(self.provider) || !has(self.channel)",message="provider and channel are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="has(self.channel) || (has(self.type) && self.type == 'none') || has(self.secretRef)",message="secretRef is required unless type is none or channel is set"
-// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'apiKey' || has(self.apiKey) || has(self.provider) || has(self.channel)",message="apiKey config is required when type is apiKey without inferred defaults"
+// +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'apiKey' || has(self.apiKey) || (has(self.provider) && self.provider in ['google', 'anthropic']) || has(self.channel)",message="apiKey config is required when type is apiKey without inferred defaults"
 // +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'gcp' || has(self.gcp) || has(self.channel)",message="gcp config is required when type is gcp without inferred defaults"
 // +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'pathToken' || has(self.pathToken) || has(self.channel)",message="pathToken config is required when type is pathToken without inferred defaults"
 // +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'oauth2' || has(self.oauth2) || has(self.channel)",message="oauth2 config is required when type is oauth2 without inferred defaults"
