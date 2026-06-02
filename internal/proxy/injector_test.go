@@ -18,6 +18,7 @@ package proxy
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -335,6 +336,105 @@ func TestPathTokenInjectorEmptyEnvVar(t *testing.T) {
 	err = inj.Inject(req)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CRED_EMPTY_PATH is empty")
+}
+
+func TestBearerInjectorEmptyEnvVar(t *testing.T) {
+	t.Setenv("CRED_BEARER_EMPTY", "")
+
+	inj, err := NewBearerInjector(&Route{EnvVar: "CRED_BEARER_EMPTY"})
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest(http.MethodGet, "https://api.example.com/data", nil)
+	err = inj.Inject(req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CRED_BEARER_EMPTY is empty")
+}
+
+func TestBearerInjectorSkipsAuthorizationDefaultHeader(t *testing.T) {
+	t.Setenv("CRED_BEARER_HDR", "real-token")
+
+	inj, err := NewBearerInjector(&Route{
+		EnvVar:         "CRED_BEARER_HDR",
+		DefaultHeaders: map[string]string{"Authorization": "should-be-ignored", "x-extra": "kept"},
+	})
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	require.NoError(t, inj.Inject(req))
+
+	assert.Equal(t, "Bearer real-token", req.Header.Get("Authorization"))
+	assert.Equal(t, "kept", req.Header.Get("x-extra"))
+}
+
+func TestHostnameOnly(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"oauth2.googleapis.com", "oauth2.googleapis.com"},
+		{"oauth2.googleapis.com:443", "oauth2.googleapis.com"},
+		{"OAuth2.GoogleAPIs.COM", "oauth2.googleapis.com"},
+		{"OAuth2.GoogleAPIs.COM:443", "oauth2.googleapis.com"},
+		{"[::1]:8080", "::1"},
+		{"localhost", "localhost"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, hostnameOnly(tt.input))
+		})
+	}
+}
+
+func TestOAuth2InjectorHappyPath(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"test-oauth2-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	t.Setenv("CRED_OAUTH2_SECRET", "client-secret-value")
+
+	inj, err := NewOAuth2Injector(&Route{
+		EnvVar:         "CRED_OAUTH2_SECRET",
+		ClientID:       "test-client-id",
+		TokenURL:       tokenServer.URL + "/token",
+		Scopes:         []string{"read", "write"},
+		DefaultHeaders: map[string]string{"x-tenant": "acme"},
+	})
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest(http.MethodGet, "https://api.example.com/data", nil)
+	err = inj.Inject(req)
+	require.NoError(t, err)
+
+	assert.Equal(t, "Bearer test-oauth2-token", req.Header.Get("Authorization"))
+	assert.Equal(t, "acme", req.Header.Get("x-tenant"))
+}
+
+func TestOAuth2InjectorSkipsAuthorizationDefaultHeader(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"real-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	t.Setenv("CRED_OAUTH2_AUTH", "secret")
+
+	inj, err := NewOAuth2Injector(&Route{
+		EnvVar:         "CRED_OAUTH2_AUTH",
+		ClientID:       "id",
+		TokenURL:       tokenServer.URL + "/token",
+		DefaultHeaders: map[string]string{"Authorization": "should-be-ignored", "x-extra": "kept"},
+	})
+	require.NoError(t, err)
+
+	req, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	require.NoError(t, inj.Inject(req))
+
+	assert.Equal(t, "Bearer real-token", req.Header.Get("Authorization"))
+	assert.Equal(t, "kept", req.Header.Get("x-extra"))
 }
 
 func TestOAuth2InjectorEmptyEnvVar(t *testing.T) {

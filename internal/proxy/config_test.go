@@ -463,6 +463,64 @@ func TestRouteInjectorFieldNotSerialized(t *testing.T) {
 	assert.Nil(t, decoded.injector, "unexported injector field must not survive JSON round-trip")
 }
 
+func TestMatchRouteByPath(t *testing.T) {
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "gemini.googleapis.com", Injector: "api_key", PathPrefix: "/gemini", Upstream: "https://generativelanguage.googleapis.com"},
+			{Domain: "openai.com", Injector: "bearer", PathPrefix: "/openai", Upstream: "https://api.openai.com"},
+			{Domain: "no-upstream.com", Injector: "none", PathPrefix: "/noup"},
+			{Domain: "no-prefix.com", Injector: "none", Upstream: "https://example.com"},
+		},
+	}
+
+	t.Run("matches path with trailing content", func(t *testing.T) {
+		route, stripped := cfg.MatchRouteByPath("/gemini/v1beta/models")
+		require.NotNil(t, route)
+		assert.Equal(t, "gemini.googleapis.com", route.Domain)
+		assert.Equal(t, "/v1beta/models", stripped)
+	})
+
+	t.Run("matches exact prefix path", func(t *testing.T) {
+		route, stripped := cfg.MatchRouteByPath("/gemini")
+		require.NotNil(t, route)
+		assert.Equal(t, "gemini.googleapis.com", route.Domain)
+		assert.Equal(t, "/", stripped)
+	})
+
+	t.Run("matches second route", func(t *testing.T) {
+		route, stripped := cfg.MatchRouteByPath("/openai/v1/chat/completions")
+		require.NotNil(t, route)
+		assert.Equal(t, "openai.com", route.Domain)
+		assert.Equal(t, "/v1/chat/completions", stripped)
+	})
+
+	t.Run("no match for unknown prefix", func(t *testing.T) {
+		route, stripped := cfg.MatchRouteByPath("/unknown/v1/foo")
+		assert.Nil(t, route)
+		assert.Empty(t, stripped)
+	})
+
+	t.Run("partial prefix does not match", func(t *testing.T) {
+		route, _ := cfg.MatchRouteByPath("/geminix/v1/models")
+		assert.Nil(t, route)
+	})
+
+	t.Run("skips route with empty upstream", func(t *testing.T) {
+		route, _ := cfg.MatchRouteByPath("/noup/test")
+		assert.Nil(t, route)
+	})
+
+	t.Run("skips route with empty pathPrefix", func(t *testing.T) {
+		route, _ := cfg.MatchRouteByPath("/anything")
+		assert.Nil(t, route)
+	})
+
+	t.Run("root path does not match any prefix", func(t *testing.T) {
+		route, _ := cfg.MatchRouteByPath("/")
+		assert.Nil(t, route)
+	})
+}
+
 type injectorFunc func(*http.Request) error
 
 func (f injectorFunc) Inject(req *http.Request) error { return f(req) }
