@@ -114,6 +114,39 @@ EOF
 
 > **GPT-5.x models:** OpenClaw routes newer GPT models (gpt-5.5, gpt-5.4, gpt-5.4-mini) through an internal provider called `openai-codex`. The operator handles this automatically — when you configure an `openai` credential, a companion `openai-codex` provider entry is created with the same endpoint and credentials. No additional configuration is needed.
 
+### OpenAI Codex OAuth
+
+Uses ChatGPT OAuth from the Codex CLI for Codex agent-runtime model turns. This is separate from `OPENAI_API_KEY`; configure OpenAI separately if platform APIs such as embeddings or images need an API key.
+
+**1. Log in with Codex CLI on a trusted workstation and create the Secret:**
+
+```sh
+oc create secret generic codex-oauth \
+  --from-file=auth.json=$HOME/.codex/auth.json \
+  -n $NS
+```
+
+**2. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  codexOAuth:
+    secretRef:
+      name: codex-oauth
+      key: auth.json
+    model: gpt-5.5
+    models:
+      - gpt-5.4-mini
+EOF
+```
+
+The operator validates that `auth.json` is a ChatGPT OAuth Codex CLI file, mounts it only into the config init container, and writes OpenClaw auth profiles under each configured agent directory at pod startup. The default profile ID is `openai:chatgpt-default`; set `profileID` to override it.
+
 ### xAI (Grok)
 
 Uses the xAI API with a bearer token.

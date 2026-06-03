@@ -196,7 +196,33 @@ spec:
 EOF
 ```
 
-For known providers (`google`, `anthropic`, `openai`, `xai`), the operator infers `type` and `domain` automatically. For other LLM providers, messaging channels, MCP servers, and more, see the [User Guide](docs/user-guide.md).
+#### OpenAI Codex OAuth
+
+After logging in with Codex CLI, import ChatGPT OAuth from `~/.codex/auth.json`:
+
+```sh
+oc create secret generic codex-oauth \
+  --from-file=auth.json=$HOME/.codex/auth.json \
+  -n $NS
+```
+
+```sh
+oc apply -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: $NS
+spec:
+  codexOAuth:
+    secretRef:
+      name: codex-oauth
+      key: auth.json
+    model: gpt-5.5
+EOF
+```
+
+For known providers (`google`, `anthropic`, `openai`, `xai`), the operator infers `type` and `domain` automatically. Codex OAuth is configured separately with `spec.codexOAuth`. For other LLM providers, messaging channels, MCP servers, and more, see the [User Guide](docs/user-guide.md).
 
 Wait for it to become ready and get the URL and gateway token:
 

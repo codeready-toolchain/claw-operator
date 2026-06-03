@@ -96,6 +96,59 @@ spec:
                 x-kubernetes-validations:
                 - message: passwordSecretRef is required when mode is password
                   rule: self.mode != 'password' || has(self.passwordSecretRef)
+              codexOAuth:
+                description: |-
+                  CodexOAuth configures OpenAI Codex through ChatGPT OAuth imported from a
+                  Codex CLI auth.json Secret. This is separate from OpenAI API keys and is
+                  used for Codex agent-runtime model turns.
+                properties:
+                  model:
+                    description: |-
+                      Model is the primary Codex model ID. Bare IDs and legacy openai/openai-codex
+                      refs are normalized to codex/<model>. Defaults to gpt-5.5.
+                    type: string
+                  models:
+                    description: |-
+                      Models lists additional Codex model IDs to register in the model picker.
+                      Bare IDs and legacy openai/openai-codex refs are normalized to codex/<model>.
+                    items:
+                      type: string
+                    type: array
+                  profileID:
+                    description: |-
+                      ProfileID is the OpenClaw auth profile ID to write. Defaults to
+                      "openai:chatgpt-default". Values using legacy "openai-codex:" or
+                      "codex:" prefixes are normalized to "openai:chatgpt-<profile>".
+                    type: string
+                  secretRef:
+                    description: |-
+                      SecretRef references a Secret key containing Codex CLI auth.json with
+                      auth_mode "chatgpt" and tokens.access_token/tokens.refresh_token.
+                    properties:
+                      key:
+                        description: Key is the key in the Secret's data map
+                        minLength: 1
+                        type: string
+                      name:
+                        description: Name is the name of the Secret
+                        minLength: 1
+                        type: string
+                      role:
+                        description: |-
+                          Role distinguishes multiple secrets for the same credential.
+                          Required when multiple secretRef entries are present (e.g., Slack botToken/appToken).
+                        maxLength: 63
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                required:
+                - secretRef
+                type: object
+                x-kubernetes-validations:
+                - message: secretRef is required
+                  rule: has(self.secretRef)
               config:
                 description: Config provides user-supplied OpenClaw configuration
                   and merge behavior.

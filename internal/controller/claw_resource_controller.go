@@ -514,6 +514,16 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	if err := r.validateCodexOAuthConfig(ctx, instance); err != nil {
+		logger.Error(err, "Codex OAuth validation failed")
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after Codex OAuth validation failure")
+		}
+		return ctrl.Result{}, err
+	}
+
 	// Generate proxy config, apply ConfigMaps (proxy config + Vertex AI stub ADC)
 	proxyConfigJSON, err := r.applyProxyResources(ctx, instance, resolvedCreds)
 	if err != nil {
@@ -744,6 +754,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 		return fmt.Errorf("failed to inject providers: %w", err)
 	}
 	injectModelCatalog(config, instance)
+	injectCodexOAuthConfig(config, instance)
 	injectMemorySearch(config, instance)
 	if err := injectChannels(config, instance); err != nil {
 		return fmt.Errorf("failed to inject channels: %w", err)
@@ -843,6 +854,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	}
 	if err := configureClawDeploymentForKubernetes(objects, resolvedCreds, kubectlImage, instance.Name); err != nil {
 		return fmt.Errorf("failed to configure claw deployment for Kubernetes: %w", err)
+	}
+	if err := configureClawDeploymentForCodexOAuth(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure claw deployment for Codex OAuth: %w", err)
 	}
 	if err := configureClawDeploymentConfigMode(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure claw deployment config mode: %w", err)
@@ -1657,6 +1671,9 @@ func clawReferencesSecret(instance clawv1alpha1.Claw, secretName string) bool {
 		if instance.Spec.Auth.PasswordSecretRef.Name == secretName {
 			return true
 		}
+	}
+	if instance.Spec.CodexOAuth != nil && instance.Spec.CodexOAuth.SecretRef.Name == secretName {
+		return true
 	}
 	return false
 }

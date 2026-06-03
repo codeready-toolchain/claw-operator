@@ -102,6 +102,7 @@ type builtinPassthrough struct {
 //   - github.com + codeload.github.com: git HTTPS clones and tarball fetches for npm packages with git dependencies (e.g. @whiskeysockets/baileys → libsignal-node)
 //   - raw.githubusercontent.com: LiteLLM model pricing data and WhatsApp Baileys library defaults (path-restricted)
 //   - registry.npmjs.org: npm packages for plugin runtime dependencies
+//   - chatgpt.com: OpenAI Codex OAuth model transport and usage endpoints (path-restricted)
 var builtinPassthroughDomains = []builtinPassthrough{
 	{Domain: "clawhub.ai"},
 	{Domain: "openrouter.ai"},
@@ -109,6 +110,7 @@ var builtinPassthroughDomains = []builtinPassthrough{
 	{Domain: "codeload.github.com"},
 	{Domain: "raw.githubusercontent.com", AllowedPaths: []string{"/BerriAI/litellm/", "/WhiskeySockets/Baileys/"}},
 	{Domain: "registry.npmjs.org"},
+	{Domain: "chatgpt.com", AllowedPaths: []string{"/backend-api/"}},
 }
 
 // generateProxyConfig builds the proxy config JSON from resolved credentials.

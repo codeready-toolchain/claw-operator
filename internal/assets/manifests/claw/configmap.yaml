@@ -45,6 +45,8 @@ data:
     const configDir = "/config";
     const pvcDir = "/home/node/.openclaw";
     const workspaceDir = path.join(pvcDir, "workspace");
+    const codexOAuthPath = "/codex-oauth/auth.json";
+    const codexOAuthProfileId = process.env.CODEX_OAUTH_PROFILE_ID || "openai:chatgpt-default";
 
     function deepMerge(target, source) {
       const result = { ...target };
@@ -81,6 +83,84 @@ data:
       console.log(`[init-config] copied ${dest}`);
     }
 
+    function decodeBase64UrlJson(segment) {
+      try {
+        const normalized = segment.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+        return JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+      } catch {
+        return undefined;
+      }
+    }
+
+    function resolveJwtExpiresMs(accessToken) {
+      const payload = accessToken.split(".")[1];
+      if (!payload) return 0;
+      const parsed = decodeBase64UrlJson(payload);
+      return typeof parsed?.exp === "number" && Number.isFinite(parsed.exp) ? parsed.exp * 1000 : 0;
+    }
+
+    function codexOAuthCredentialFromAuthJson(raw) {
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.auth_mode !== "chatgpt") {
+        throw new Error('Codex OAuth auth.json must have auth_mode "chatgpt"');
+      }
+      const access = String(parsed.tokens?.access_token || "").trim();
+      const refresh = String(parsed.tokens?.refresh_token || "").trim();
+      if (!access || !refresh) {
+        throw new Error("Codex OAuth auth.json is missing access_token or refresh_token");
+      }
+      const accountId = String(parsed.tokens?.account_id || "").trim();
+      return {
+        type: "oauth",
+        provider: "openai",
+        access,
+        refresh,
+        expires: resolveJwtExpiresMs(access),
+        ...(accountId ? { accountId } : {}),
+      };
+    }
+
+    function configuredAgentIds(config) {
+      const ids = new Set(["default"]);
+      for (const agent of config?.agents?.list || []) {
+        if (typeof agent?.id === "string" && agent.id.trim()) {
+          ids.add(agent.id.trim());
+        }
+      }
+      return Array.from(ids);
+    }
+
+    function importCodexOAuthProfiles(config) {
+      if (!fs.existsSync(codexOAuthPath)) return;
+      const credential = codexOAuthCredentialFromAuthJson(fs.readFileSync(codexOAuthPath, "utf8"));
+      for (const agentId of configuredAgentIds(config)) {
+        const storePath = path.join(pvcDir, "agents", agentId, "agent", "auth-profiles.json");
+        let store = { version: 1, profiles: {} };
+        if (fs.existsSync(storePath)) {
+          try {
+            const existing = JSON.parse(fs.readFileSync(storePath, "utf8"));
+            if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+              store = {
+                version: existing.version || 1,
+                profiles: existing.profiles && typeof existing.profiles === "object" && !Array.isArray(existing.profiles)
+                  ? existing.profiles
+                  : {},
+              };
+            }
+          } catch {
+            console.warn(`[init-config] existing ${storePath} is invalid JSON; replacing it`);
+          }
+        }
+        store.version = 1;
+        store.profiles[codexOAuthProfileId] = credential;
+        fs.mkdirSync(path.dirname(storePath), { recursive: true });
+        fs.writeFileSync(storePath, JSON.stringify(store, null, 2), { mode: 0o600 });
+        fs.chmodSync(storePath, 0o600);
+        console.log(`[init-config] imported Codex OAuth profile for ${agentId}`);
+      }
+    }
+
     // Ensure directories exist
     for (const sub of ["workspace", ".local", ".cache", ".config/codex"]) {
       fs.mkdirSync(path.join(pvcDir, sub), { recursive: true });
@@ -91,6 +171,7 @@ data:
     const seed = JSON.parse(fs.readFileSync(path.join(configDir, "openclaw.json"), "utf8"));
     const pvcPath = path.join(pvcDir, "openclaw.json");
 
+    let finalConfig;
     if (mode === "merge" && fs.existsSync(pvcPath)) {
       let base = seed;
       try {
@@ -112,12 +193,16 @@ data:
           merged.agents.defaults.model.fallbacks = savedFallbacks;
         }
       }
-      fs.writeFileSync(pvcPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
+      finalConfig = merged;
+      fs.writeFileSync(pvcPath, JSON.stringify(finalConfig, null, 2), { mode: 0o600 });
       console.log("[init-config] merged operator.json into existing openclaw.json");
     } else {
-      fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2), { mode: 0o600 });
+      finalConfig = deepMerge(seed, ops);
+      fs.writeFileSync(pvcPath, JSON.stringify(finalConfig, null, 2), { mode: 0o600 });
       console.log(`[init-config] wrote openclaw.json (mode=${mode}, first_run=${!fs.existsSync(pvcPath)})`);
     }
+
+    importCodexOAuthProfiles(finalConfig);
 
     // Seed user-provided workspace files (_ws_* keys) before static seeds
     // so _ws_AGENTS.md takes precedence over the builtin AGENTS.md

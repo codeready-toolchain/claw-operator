@@ -152,6 +152,31 @@ type OAuth2Config struct {
 	Scopes []string `json:"scopes,omitempty"`
 }
 
+// CodexOAuthSpec configures ChatGPT OAuth credentials imported from Codex CLI auth.json.
+// +kubebuilder:validation:XValidation:rule="has(self.secretRef)",message="secretRef is required"
+type CodexOAuthSpec struct {
+	// SecretRef references a Secret key containing Codex CLI auth.json with
+	// auth_mode "chatgpt" and tokens.access_token/tokens.refresh_token.
+	// +kubebuilder:validation:Required
+	SecretRef SecretRefEntry `json:"secretRef"`
+
+	// ProfileID is the OpenClaw auth profile ID to write. Defaults to
+	// "openai:chatgpt-default". Values using legacy "openai-codex:" or
+	// "codex:" prefixes are normalized to "openai:chatgpt-<profile>".
+	// +optional
+	ProfileID string `json:"profileID,omitempty"`
+
+	// Model is the primary Codex model ID. Bare IDs and legacy openai/openai-codex
+	// refs are normalized to codex/<model>. Defaults to gpt-5.5.
+	// +optional
+	Model string `json:"model,omitempty"`
+
+	// Models lists additional Codex model IDs to register in the model picker.
+	// Bare IDs and legacy openai/openai-codex refs are normalized to codex/<model>.
+	// +optional
+	Models []string `json:"models,omitempty"`
+}
+
 // CredentialSpec defines a single credential entry for proxy injection.
 // +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || (has(self.provider) && self.provider in ['google', 'anthropic', 'openai', 'xai', 'openrouter'])",message="type is required (inferred only for known providers: google, anthropic, openai, xai, openrouter)"
 // +kubebuilder:validation:XValidation:rule="!has(self.provider) || !has(self.channel)",message="provider and channel are mutually exclusive"
@@ -516,6 +541,12 @@ type ClawSpec struct {
 	// +listType=map
 	// +listMapKey=name
 	CustomProviders []CustomProviderSpec `json:"customProviders,omitempty"`
+
+	// CodexOAuth configures OpenAI Codex through ChatGPT OAuth imported from a
+	// Codex CLI auth.json Secret. This is separate from OpenAI API keys and is
+	// used for Codex agent-runtime model turns.
+	// +optional
+	CodexOAuth *CodexOAuthSpec `json:"codexOAuth,omitempty"`
 
 	// McpServers declares MCP servers injected into OpenClaw's config.
 	// Map keys are server names as they appear in the mcp.servers config.

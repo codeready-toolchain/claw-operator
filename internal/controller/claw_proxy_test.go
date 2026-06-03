@@ -695,6 +695,17 @@ func TestBuiltinPassthroughDomains(t *testing.T) {
 		assert.Equal(t, "none", route.Injector)
 	})
 
+	t.Run("should include chatgpt.com with backend-api path restriction", func(t *testing.T) {
+		data, err := generateProxyConfig(nil, nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "chatgpt.com")
+		assert.Equal(t, "none", route.Injector)
+		assert.Equal(t, []string{"/backend-api/"}, route.AllowedPaths)
+	})
+
 	t.Run("should have no path restriction on unrestricted builtins", func(t *testing.T) {
 		data, err := generateProxyConfig(nil, nil, nil)
 		require.NoError(t, err)
