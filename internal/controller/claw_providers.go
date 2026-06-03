@@ -79,8 +79,8 @@ type providerDefaults struct {
 // configuration in the operator. Credential defaults, wire format, model
 // catalog, companion relationships, and routing info are all defined here.
 //
-// Providers not in this map (e.g., "openrouter", custom providers) still
-// work -- they just get no defaults, no API override (OpenClaw defaults to
+// Providers not in this map (e.g., custom providers) still work -- they
+// just get no defaults, no API override (OpenClaw defaults to
 // openai-completions), and no model catalog.
 var knownProviders = map[string]providerDefaults{
 	"google": {
@@ -133,6 +133,16 @@ var knownProviders = map[string]providerDefaults{
 		Models: []modelEntry{
 			{Name: "grok-4.3", Alias: "Grok 4.3"},
 			{Name: "grok-4.20", Alias: "Grok 4.20"},
+		},
+	},
+	"openrouter": {
+		CredType: clawv1alpha1.CredentialTypeBearer,
+		Domain:   "openrouter.ai",
+		BasePath: "/api/v1",
+		Models: []modelEntry{
+			{Name: "openai/gpt-5.5", Alias: "GPT-5.5"},
+			{Name: "anthropic/claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
+			{Name: "google/gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
 		},
 	},
 }

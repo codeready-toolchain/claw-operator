@@ -291,9 +291,10 @@ spec:
                   type: object
                   x-kubernetes-validations:
                   - message: 'type is required (inferred only for known providers:
-                      google, anthropic, openai, xai)'
+                      google, anthropic, openai, xai, openrouter)'
                     rule: has(self.type) || has(self.channel) || (has(self.provider)
-                      && self.provider in ['google', 'anthropic', 'openai', 'xai'])
+                      && self.provider in ['google', 'anthropic', 'openai', 'xai',
+                      'openrouter'])
                   - message: provider and channel are mutually exclusive
                     rule: '!has(self.provider) || !has(self.channel)'
                   - message: secretRef is required unless type is none or channel

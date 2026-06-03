@@ -93,8 +93,9 @@ func TestKnownProvidersConsistency(t *testing.T) {
 			}
 		}
 		notOnVertex := map[string]bool{
-			"openai": true,
-			"xai":    true,
+			"openai":     true,
+			"xai":        true,
+			"openrouter": true,
 		}
 
 		for provider, defaults := range knownProviders {
@@ -172,8 +173,14 @@ func TestProviderModelCatalog(t *testing.T) {
 		assert.Equal(t, "gemini-3.5-flash", models[0].Name)
 	})
 
+	t.Run("returns models for openrouter", func(t *testing.T) {
+		models := providerModelCatalog("openrouter")
+		require.NotEmpty(t, models)
+		assert.Equal(t, "openai/gpt-5.5", models[0].Name)
+	})
+
 	t.Run("returns nil for unknown provider", func(t *testing.T) {
-		assert.Nil(t, providerModelCatalog("openrouter"))
+		assert.Nil(t, providerModelCatalog("custom-llm"))
 	})
 
 	t.Run("returns nil for provider with no models", func(t *testing.T) {
@@ -330,6 +337,16 @@ func TestResolveProviderInfo(t *testing.T) {
 			wantBasePath: "/v1/projects/my-project/locations/global/publishers/anthropic",
 		},
 		{
+			name: "openrouter uses /api/v1 BasePath",
+			cred: clawv1alpha1.CredentialSpec{
+				Provider: "openrouter",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Domain:   "openrouter.ai",
+			},
+			wantUpstream: "https://openrouter.ai",
+			wantBasePath: "/api/v1",
+		},
+		{
 			name: "unknown provider with exact domain",
 			cred: clawv1alpha1.CredentialSpec{
 				Provider: "custom-llm",
@@ -468,6 +485,15 @@ func TestResolveProviderDefaults(t *testing.T) {
 			},
 			wantType:   clawv1alpha1.CredentialTypeBearer,
 			wantDomain: "api.x.ai",
+		},
+		{
+			name: "openrouter infers bearer type and fills domain",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "or",
+				Provider: "openrouter",
+			},
+			wantType:   clawv1alpha1.CredentialTypeBearer,
+			wantDomain: "openrouter.ai",
 		},
 		{
 			name: "unknown provider without type errors",

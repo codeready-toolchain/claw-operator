@@ -10,7 +10,7 @@ export NS=my-claw-namespace
 
 ## LLM Providers
 
-For known providers (`google`, `anthropic`, `openai`, `xai`), the operator automatically infers `type`, `domain`, and auth headers — you only need `name`, `provider`, and `secretRef`. You can still override any inferred field if needed (e.g., routing through a custom proxy or using a different credential type).
+For known providers (`google`, `anthropic`, `openai`, `xai`, `openrouter`), the operator automatically infers `type`, `domain`, and auth headers — you only need `name`, `provider`, and `secretRef`. You can still override any inferred field if needed (e.g., routing through a custom proxy or using a different credential type).
 
 The `provider` field also accepts arbitrary strings for custom/self-hosted providers — see [Custom / Self-Hosted Providers](#custom--self-hosted-providers) below. For the best experience with custom endpoints, use `spec.customProviders` which provides full control over `baseUrl`, wire format, and model registration.
 
@@ -144,6 +144,52 @@ spec:
         - name: xai-api-key
           key: api-key
 EOF
+```
+
+### OpenRouter
+
+OpenRouter is a meta-provider that routes requests to many upstream model providers (OpenAI, Anthropic, Google, Meta, and others) through a single API key. The operator auto-infers `type: bearer`, `domain: openrouter.ai`, and a `/api/v1` base path. The default model catalog includes popular models from multiple upstream providers.
+
+**1. Get an API key** from [openrouter.ai/keys](https://openrouter.ai/keys).
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic openrouter-api-key \
+  --from-literal=api-key=YOUR_OPENROUTER_API_KEY \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: openrouter
+      provider: openrouter
+      secretRef:
+        - name: openrouter-api-key
+          key: api-key
+EOF
+```
+
+OpenRouter model names use the `upstream-provider/model` convention (e.g., `openai/gpt-5.5`, `anthropic/claude-sonnet-4-6`). In the model picker, these appear as `openrouter/openai/gpt-5.5`, etc. To add additional OpenRouter models beyond the default catalog, use `spec.config.raw`:
+
+```yaml
+spec:
+  config:
+    mergeMode: overwrite
+    raw:
+      agents:
+        defaults:
+          models:
+            openrouter/qwen/qwen3-coder:free:
+              alias: Qwen3 Coder (free)
 ```
 
 ### Vertex AI

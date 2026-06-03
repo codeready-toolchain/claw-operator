@@ -419,8 +419,8 @@ data:
     Claw CR. There are two ways providers contribute models:
 
     1. **Built-in catalog providers** — credentials with `provider` set to a known
-       value (`google`, `anthropic`, `openai`, `xai`) auto-populate the picker with
-       the operator's hardcoded model catalog.
+       value (`google`, `anthropic`, `openai`, `xai`, `openrouter`) auto-populate the
+       picker with the operator's hardcoded model catalog.
     2. **Custom providers** — `spec.customProviders` entries explicitly declare the
        `baseUrl`, wire format, and model list for any OpenAI-compatible endpoint.
 
@@ -529,8 +529,9 @@ data:
 
     ## User customization
 
-    Users can add custom models (e.g., specific OpenRouter models) via the CR or
-    config patches. Both methods work — the CR is preferred for declarative setups:
+    Users can add custom models (e.g., additional OpenRouter models beyond the default
+    catalog) via the CR or config patches. Both methods work — the CR is preferred for
+    declarative setups:
 
     **Via `spec.config.raw` (declarative, persists across CR updates):**
     ```yaml
@@ -540,13 +541,13 @@ data:
           agents:
             defaults:
               models:
-                openrouter/anthropic/claude-sonnet-4-6:
-                  alias: Claude via OR
+                openrouter/qwen/qwen3-coder:free:
+                  alias: Qwen3 Coder (free)
     ```
 
     **Via config patch (imperative, persists on PVC):**
     ```sh
-    openclaw config patch '{"agents":{"defaults":{"models":{"openrouter/anthropic/claude-sonnet-4-6":{"alias":"Claude via OR"}}}}}'
+    openclaw config patch '{"agents":{"defaults":{"models":{"openrouter/qwen/qwen3-coder:free":{"alias":"Qwen3 Coder (free)"}}}}}'
     ```
 
     User-added model entries are merged with operator-managed catalog models. On key
