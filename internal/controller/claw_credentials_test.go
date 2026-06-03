@@ -197,9 +197,9 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		instance.Spec.Credentials = []clawv1alpha1.CredentialSpec{
 			{
 				Name:      "custom",
-				Provider:  "openrouter",
+				Provider:  "custom-llm",
 				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "s", Key: "k"}},
-				Domain:    "openrouter.ai",
+				Domain:    "api.custom-llm.com",
 			},
 		}
 		err := k8sClient.Create(ctx, instance)

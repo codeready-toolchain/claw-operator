@@ -153,7 +153,7 @@ type OAuth2Config struct {
 }
 
 // CredentialSpec defines a single credential entry for proxy injection.
-// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || (has(self.provider) && self.provider in ['google', 'anthropic', 'openai', 'xai'])",message="type is required (inferred only for known providers: google, anthropic, openai, xai)"
+// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || (has(self.provider) && self.provider in ['google', 'anthropic', 'openai', 'xai', 'openrouter'])",message="type is required (inferred only for known providers: google, anthropic, openai, xai, openrouter)"
 // +kubebuilder:validation:XValidation:rule="!has(self.provider) || !has(self.channel)",message="provider and channel are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="has(self.channel) || (has(self.type) && self.type == 'none') || has(self.secretRef)",message="secretRef is required unless type is none or channel is set"
 // +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'apiKey' || has(self.apiKey) || (has(self.provider) && self.provider in ['google', 'anthropic']) || has(self.channel)",message="apiKey config is required when type is apiKey without inferred defaults"

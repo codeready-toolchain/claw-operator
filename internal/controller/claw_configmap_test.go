@@ -344,15 +344,14 @@ func TestInjectProviders(t *testing.T) {
 		assert.Equal(t, "openai-responses", xai["api"])
 	})
 
-	t.Run("should handle unknown provider without api field", func(t *testing.T) {
+	t.Run("should handle openrouter with /api/v1 base path", func(t *testing.T) {
 		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
-				Name:     "custom",
-				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Name:     "or",
+				Type:     clawv1alpha1.CredentialTypeBearer,
 				Provider: "openrouter",
 				Domain:   "openrouter.ai",
-				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization"},
 			},
 		}
 
@@ -361,7 +360,29 @@ func TestInjectProviders(t *testing.T) {
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "openrouter")
 		entry := providers["openrouter"].(map[string]any)
-		assert.Equal(t, "https://openrouter.ai", entry["baseUrl"])
+		assert.Equal(t, "https://openrouter.ai/api/v1", entry["baseUrl"])
+		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", entry["apiKey"])
+		assert.NotContains(t, entry, "api", "openrouter should use OpenClaw default wire format")
+	})
+
+	t.Run("should handle unknown provider without api field", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "custom",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "custom-llm",
+				Domain:   "api.custom-llm.com",
+				APIKey:   &clawv1alpha1.APIKeyConfig{Header: "Authorization"},
+			},
+		}
+
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "custom-llm")
+		entry := providers["custom-llm"].(map[string]any)
+		assert.Equal(t, "https://api.custom-llm.com", entry["baseUrl"])
 		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", entry["apiKey"])
 		assert.NotContains(t, entry, "api", "unknown providers should use OpenClaw default wire format")
 	})
@@ -452,7 +473,7 @@ func TestInjectModelCatalog(t *testing.T) {
 	t.Run("primary set from first provider with catalog", func(t *testing.T) {
 		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
-			{Name: "openrouter", Type: clawv1alpha1.CredentialTypeBearer, Provider: "openrouter", Domain: "openrouter.ai"},
+			{Name: "custom", Type: clawv1alpha1.CredentialTypeBearer, Provider: "custom-llm", Domain: "api.custom-llm.com"},
 			{Name: "claude", Type: clawv1alpha1.CredentialTypeBearer, Provider: "anthropic", Domain: "api.anthropic.com"},
 		}
 
@@ -492,7 +513,7 @@ func TestInjectModelCatalog(t *testing.T) {
 	t.Run("provider not in catalog silently skipped", func(t *testing.T) {
 		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
-			{Name: "openrouter", Type: clawv1alpha1.CredentialTypeBearer, Provider: "openrouter", Domain: "openrouter.ai"},
+			{Name: "custom", Type: clawv1alpha1.CredentialTypeBearer, Provider: "custom-llm", Domain: "api.custom-llm.com"},
 		}
 
 		injectModelCatalog(config, testClawWithCredentials(credentials))

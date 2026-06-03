@@ -135,6 +135,16 @@ var knownProviders = map[string]providerDefaults{
 			{Name: "grok-4.20", Alias: "Grok 4.20"},
 		},
 	},
+	"openrouter": {
+		CredType: clawv1alpha1.CredentialTypeBearer,
+		Domain:   "openrouter.ai",
+		BasePath: "/api/v1",
+		Models: []modelEntry{
+			{Name: "openai/gpt-5.5", Alias: "GPT-5.5"},
+			{Name: "anthropic/claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
+			{Name: "google/gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
+		},
+	},
 }
 
 // usesVertexSDK returns true when a credential should use the native Vertex AI SDK
