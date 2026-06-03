@@ -79,8 +79,8 @@ type providerDefaults struct {
 // configuration in the operator. Credential defaults, wire format, model
 // catalog, companion relationships, and routing info are all defined here.
 //
-// Providers not in this map (e.g., "openrouter", custom providers) still
-// work -- they just get no defaults, no API override (OpenClaw defaults to
+// Providers not in this map (e.g., custom providers) still work -- they
+// just get no defaults, no API override (OpenClaw defaults to
 // openai-completions), and no model catalog.
 var knownProviders = map[string]providerDefaults{
 	"google": {
