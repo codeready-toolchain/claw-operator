@@ -145,6 +145,7 @@ func TestBuildProviderEntry(t *testing.T) {
 		{name: "openai-codex uses Codex responses API", provider: "openai-codex", wantAPI: "openai-codex-responses"},
 		{name: "openai uses OpenClaw default wire format", provider: "openai", wantAPI: ""},
 		{name: "xai uses OpenAI Responses API", provider: "xai", wantAPI: "openai-responses"},
+		{name: "openrouter uses OpenClaw default wire format", provider: "openrouter", wantAPI: ""},
 		{name: "unknown provider uses OpenClaw default", provider: "custom-llm", wantAPI: ""},
 	}
 

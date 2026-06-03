@@ -242,7 +242,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 	})
 
 	t.Run("should accept creation via CEL when known provider is set without type", func(t *testing.T) {
-		knownProviders := []string{"google", "anthropic", "openai", "xai"}
+		knownProviders := []string{"google", "anthropic", "openai", "xai", "openrouter"}
 		for _, provider := range knownProviders {
 			t.Run(provider, func(t *testing.T) {
 				t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })

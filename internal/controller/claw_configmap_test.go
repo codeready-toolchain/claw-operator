@@ -470,6 +470,30 @@ func TestInjectModelCatalog(t *testing.T) {
 		assert.Equal(t, "google/gemini-3.5-flash", model["primary"])
 	})
 
+	t.Run("openrouter emits three-segment model keys", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "or", Type: clawv1alpha1.CredentialTypeBearer, Provider: "openrouter", Domain: "openrouter.ai"},
+		}
+
+		injectModelCatalog(config, testClawWithCredentials(credentials))
+
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+		assert.Len(t, models, len(providerModelCatalog("openrouter")))
+		assert.Contains(t, models, "openrouter/openai/gpt-5.5")
+		assert.Contains(t, models, "openrouter/anthropic/claude-sonnet-4-6")
+		assert.Contains(t, models, "openrouter/google/gemini-3.5-flash")
+		entry := models["openrouter/openai/gpt-5.5"].(map[string]any)
+		assert.Equal(t, "GPT-5.5", entry["alias"])
+
+		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+		assert.Equal(t, "openrouter/openai/gpt-5.5", model["primary"])
+		fallbacks := model["fallbacks"].([]any)
+		require.Len(t, fallbacks, 2)
+		assert.Equal(t, "openrouter/anthropic/claude-sonnet-4-6", fallbacks[0])
+		assert.Equal(t, "openrouter/google/gemini-3.5-flash", fallbacks[1])
+	})
+
 	t.Run("primary set from first provider with catalog", func(t *testing.T) {
 		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
 		credentials := []clawv1alpha1.CredentialSpec{
