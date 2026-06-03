@@ -397,6 +397,23 @@ func TestSanitizeKubeconfig(t *testing.T) {
 		assert.False(t, result.Clusters["prod"].InsecureSkipTLSVerify)
 		assert.Equal(t, testProxyCAPEM, result.Clusters["prod"].CertificateAuthorityData)
 	})
+
+	t.Run("should reject empty proxy CA cert", func(t *testing.T) {
+		data := buildTestKubeconfig(t,
+			map[string]string{"prod": "https://api.example.com:6443"},
+			map[string]string{"admin": "my-token"},
+			map[string][2]string{"ctx": {"prod", "admin"}},
+			"ctx",
+		)
+
+		_, err := sanitizeKubeconfig(data, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "proxy CA certificate is empty")
+
+		_, err = sanitizeKubeconfig(data, []byte{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "proxy CA certificate is empty")
+	})
 }
 
 // --- injectKubePortsIntoNetworkPolicy tests ---
