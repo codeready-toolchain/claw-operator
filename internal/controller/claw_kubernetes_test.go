@@ -270,6 +270,9 @@ func TestParseAndValidateKubeconfig(t *testing.T) {
 // --- sanitizeKubeconfig tests ---
 
 func TestSanitizeKubeconfig(t *testing.T) {
+	testProxyCAPEM := []byte("-----BEGIN CERTIFICATE-----\nTESTUFJPWFlDQQ==\n-----END CERTIFICATE-----\n")
+	originalClusterCA := []byte("-----BEGIN CERTIFICATE-----\nT1JJR0lOQUxDQQ==\n-----END CERTIFICATE-----\n")
+
 	t.Run("should replace tokens with placeholder", func(t *testing.T) {
 		data := buildTestKubeconfig(t,
 			map[string]string{"prod": "https://api.example.com:6443"},
@@ -278,7 +281,7 @@ func TestSanitizeKubeconfig(t *testing.T) {
 			"ctx",
 		)
 
-		sanitized, err := sanitizeKubeconfig(data)
+		sanitized, err := sanitizeKubeconfig(data, testProxyCAPEM)
 		require.NoError(t, err)
 
 		cfg, err := clientcmd.Load(sanitized)
@@ -308,7 +311,7 @@ func TestSanitizeKubeconfig(t *testing.T) {
 			"prod-ctx",
 		)
 
-		sanitized, err := sanitizeKubeconfig(data)
+		sanitized, err := sanitizeKubeconfig(data, testProxyCAPEM)
 		require.NoError(t, err)
 
 		cfg, err := clientcmd.Load(sanitized)
@@ -317,6 +320,82 @@ func TestSanitizeKubeconfig(t *testing.T) {
 		assert.Equal(t, "proxy-managed-token", cfg.AuthInfos["staging-admin"].Token)
 		assert.NotContains(t, string(sanitized), "prod-secret-token")
 		assert.NotContains(t, string(sanitized), "staging-secret-token")
+	})
+
+	t.Run("should replace cluster CA with proxy CA", func(t *testing.T) {
+		cfg := clientcmdapi.NewConfig()
+		cfg.Clusters["prod"] = &clientcmdapi.Cluster{
+			Server:                   "https://api.example.com:6443",
+			CertificateAuthorityData: originalClusterCA,
+		}
+		cfg.AuthInfos["admin"] = &clientcmdapi.AuthInfo{Token: "my-token"}
+		cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "prod", AuthInfo: "admin"}
+		cfg.CurrentContext = "ctx"
+		data, err := clientcmd.Write(*cfg)
+		require.NoError(t, err)
+
+		sanitized, err := sanitizeKubeconfig(data, testProxyCAPEM)
+		require.NoError(t, err)
+
+		result, err := clientcmd.Load(sanitized)
+		require.NoError(t, err)
+
+		assert.Equal(t, testProxyCAPEM, result.Clusters["prod"].CertificateAuthorityData)
+		assert.NotContains(t, string(sanitized), string(originalClusterCA))
+		assert.False(t, result.Clusters["prod"].InsecureSkipTLSVerify)
+	})
+
+	t.Run("should replace CA on all clusters in multi-cluster kubeconfig", func(t *testing.T) {
+		cfg := clientcmdapi.NewConfig()
+		cfg.Clusters["prod"] = &clientcmdapi.Cluster{
+			Server:                   "https://api.prod.example.com:6443",
+			CertificateAuthorityData: originalClusterCA,
+		}
+		cfg.Clusters["staging"] = &clientcmdapi.Cluster{
+			Server:                   "https://api.staging.example.com:6443",
+			CertificateAuthorityData: []byte("other-ca-data"),
+		}
+		cfg.AuthInfos["admin"] = &clientcmdapi.AuthInfo{Token: "my-token"}
+		cfg.Contexts["prod-ctx"] = &clientcmdapi.Context{Cluster: "prod", AuthInfo: "admin"}
+		cfg.Contexts["staging-ctx"] = &clientcmdapi.Context{Cluster: "staging", AuthInfo: "admin"}
+		cfg.CurrentContext = "prod-ctx"
+		data, err := clientcmd.Write(*cfg)
+		require.NoError(t, err)
+
+		sanitized, err := sanitizeKubeconfig(data, testProxyCAPEM)
+		require.NoError(t, err)
+
+		result, err := clientcmd.Load(sanitized)
+		require.NoError(t, err)
+
+		for name, cluster := range result.Clusters {
+			assert.Equal(t, testProxyCAPEM, cluster.CertificateAuthorityData, "cluster %s should have proxy CA", name)
+			assert.False(t, cluster.InsecureSkipTLSVerify, "cluster %s should not skip TLS verify", name)
+		}
+		assert.NotContains(t, string(sanitized), string(originalClusterCA))
+		assert.NotContains(t, string(sanitized), "other-ca-data")
+	})
+
+	t.Run("should clear InsecureSkipTLSVerify when proxy CA is set", func(t *testing.T) {
+		cfg := clientcmdapi.NewConfig()
+		cfg.Clusters["prod"] = &clientcmdapi.Cluster{
+			Server:                "https://api.example.com:6443",
+			InsecureSkipTLSVerify: true,
+		}
+		cfg.AuthInfos["admin"] = &clientcmdapi.AuthInfo{Token: "my-token"}
+		cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "prod", AuthInfo: "admin"}
+		cfg.CurrentContext = "ctx"
+		data, err := clientcmd.Write(*cfg)
+		require.NoError(t, err)
+
+		sanitized, err := sanitizeKubeconfig(data, testProxyCAPEM)
+		require.NoError(t, err)
+
+		result, err := clientcmd.Load(sanitized)
+		require.NoError(t, err)
+
+		assert.False(t, result.Clusters["prod"].InsecureSkipTLSVerify)
+		assert.Equal(t, testProxyCAPEM, result.Clusters["prod"].CertificateAuthorityData)
 	})
 }
 
@@ -562,6 +641,24 @@ func TestKubernetesCredentialReconciliation(t *testing.T) {
 		assert.NotContains(t, sanitizedConfig, "real-secret-token", "real token should be stripped")
 		assert.Contains(t, sanitizedConfig, "proxy-managed-token", "sanitized placeholder should be present")
 		assert.Contains(t, sanitizedConfig, "api.prod.example.com", "cluster info should be preserved")
+
+		// Verify the proxy CA replaced the cluster CA
+		caSecret := &corev1.Secret{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getProxyCAConfigMapName(testInstanceName),
+			Namespace: namespace,
+		}, caSecret))
+		proxyCACert := caSecret.Data["ca.crt"]
+		require.NotEmpty(t, proxyCACert, "proxy CA cert should exist")
+
+		cfg, err := clientcmd.Load([]byte(sanitizedConfig))
+		require.NoError(t, err)
+		for name, cluster := range cfg.Clusters {
+			assert.Equal(t, proxyCACert, cluster.CertificateAuthorityData,
+				"cluster %s should use proxy CA", name)
+			assert.False(t, cluster.InsecureSkipTLSVerify,
+				"cluster %s should not skip TLS", name)
+		}
 	})
 
 	t.Run("should inject KUBERNETES.md with context info", func(t *testing.T) {

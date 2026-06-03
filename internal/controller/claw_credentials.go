@@ -422,9 +422,9 @@ func parseServerURL(server string) (string, string, error) {
 	return hostname, port, nil
 }
 
-// sanitizeKubeconfig replaces all user tokens with a placeholder and returns
-// the sanitized kubeconfig YAML bytes.
-func sanitizeKubeconfig(rawBytes []byte) ([]byte, error) {
+// sanitizeKubeconfig replaces all user tokens with a placeholder and swaps
+// the cluster CA with the proxy CA so that oc/kubectl trusts the MITM proxy.
+func sanitizeKubeconfig(rawBytes []byte, proxyCACert []byte) ([]byte, error) {
 	cfg, err := clientcmd.Load(rawBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse kubeconfig for sanitization: %w", err)
@@ -438,6 +438,11 @@ func sanitizeKubeconfig(rawBytes []byte) ([]byte, error) {
 			authInfo.TokenFile = ""
 			authInfo.Token = "proxy-managed-token"
 		}
+	}
+
+	for _, cluster := range cfg.Clusters {
+		cluster.CertificateAuthorityData = proxyCACert
+		cluster.InsecureSkipTLSVerify = false
 	}
 
 	return clientcmd.Write(*cfg)
@@ -465,7 +470,14 @@ func (r *ClawResourceReconciler) applySanitizedKubeconfig(ctx context.Context, i
 
 	logger := log.FromContext(ctx)
 
-	sanitized, err := sanitizeKubeconfig(kd.RawBytes)
+	caSecret := &corev1.Secret{}
+	caSecretName := getProxyCAConfigMapName(instance.Name)
+	if err := r.Get(ctx, client.ObjectKey{Name: caSecretName, Namespace: instance.Namespace}, caSecret); err != nil {
+		return fmt.Errorf("failed to read proxy CA secret %q: %w", caSecretName, err)
+	}
+	proxyCACert := caSecret.Data["ca.crt"]
+
+	sanitized, err := sanitizeKubeconfig(kd.RawBytes, proxyCACert)
 	if err != nil {
 		return fmt.Errorf("failed to sanitize kubeconfig: %w", err)
 	}
