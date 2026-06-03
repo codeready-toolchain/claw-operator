@@ -662,7 +662,7 @@ func (r *ClawResourceReconciler) stampSecretVersionAnnotation(
 
 // applyProxyCA ensures the proxy CA Secret exists with a valid CA certificate and key.
 // If the Secret is missing or lacks valid data, a new P-256 ECDSA CA is generated.
-func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *clawv1alpha1.Claw) error {
+func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *clawv1alpha1.Claw) ([]byte, error) {
 	logger := log.FromContext(ctx)
 	secretName := getProxyCAConfigMapName(instance.Name)
 
@@ -671,15 +671,15 @@ func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *cla
 	if err == nil {
 		if len(existing.Data["ca.crt"]) > 0 && len(existing.Data["ca.key"]) > 0 {
 			logger.Info("Proxy CA secret already exists, skipping generation")
-			return nil
+			return existing.Data["ca.crt"], nil
 		}
 	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to check for existing proxy CA secret: %w", err)
+		return nil, fmt.Errorf("failed to check for existing proxy CA secret: %w", err)
 	}
 
 	certPEM, keyPEM, err := generateCACertificate()
 	if err != nil {
-		return fmt.Errorf("failed to generate proxy CA: %w", err)
+		return nil, fmt.Errorf("failed to generate proxy CA: %w", err)
 	}
 
 	secret := &corev1.Secret{}
@@ -693,18 +693,18 @@ func (r *ClawResourceReconciler) applyProxyCA(ctx context.Context, instance *cla
 	}
 
 	if err := controllerutil.SetControllerReference(instance, secret, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set controller reference on proxy CA secret: %w", err)
+		return nil, fmt.Errorf("failed to set controller reference on proxy CA secret: %w", err)
 	}
 
 	if err := r.Patch(ctx, secret, client.Apply, &client.PatchOptions{
 		FieldManager: "claw-operator",
 		Force:        ptr.To(true),
 	}); err != nil {
-		return fmt.Errorf("failed to apply proxy CA secret: %w", err)
+		return nil, fmt.Errorf("failed to apply proxy CA secret: %w", err)
 	}
 
 	logger.Info("Generated and applied proxy CA secret")
-	return nil
+	return certPEM, nil
 }
 
 // generateCACertificate creates a self-signed CA certificate and private key.

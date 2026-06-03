@@ -690,13 +690,14 @@ func (r *ClawResourceReconciler) resolveAndApplyCredentials(ctx context.Context,
 	}
 	setCondition(instance, clawv1alpha1.ConditionTypeCredentialsResolved, metav1.ConditionTrue, clawv1alpha1.ConditionReasonResolved, "All credential Secrets are valid")
 
-	if err := r.applySanitizedKubeconfig(ctx, instance, resolvedCreds); err != nil {
-		logger.Error(err, "Failed to apply sanitized kubeconfig")
+	proxyCACert, err := r.applyProxyCA(ctx, instance)
+	if err != nil {
+		logger.Error(err, "Failed to apply proxy CA")
 		return nil, err
 	}
 
-	if err := r.applyProxyCA(ctx, instance); err != nil {
-		logger.Error(err, "Failed to apply proxy CA")
+	if err := r.applySanitizedKubeconfig(ctx, instance, resolvedCreds, proxyCACert); err != nil {
+		logger.Error(err, "Failed to apply sanitized kubeconfig")
 		return nil, err
 	}
 

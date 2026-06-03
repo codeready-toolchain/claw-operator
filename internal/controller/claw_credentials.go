@@ -422,9 +422,13 @@ func parseServerURL(server string) (string, string, error) {
 	return hostname, port, nil
 }
 
-// sanitizeKubeconfig replaces all user tokens with a placeholder and returns
-// the sanitized kubeconfig YAML bytes.
-func sanitizeKubeconfig(rawBytes []byte) ([]byte, error) {
+// sanitizeKubeconfig replaces all user tokens with a placeholder and swaps
+// the cluster CA with the proxy CA so that oc/kubectl trusts the MITM proxy.
+func sanitizeKubeconfig(rawBytes []byte, proxyCACert []byte) ([]byte, error) {
+	if len(proxyCACert) == 0 {
+		return nil, fmt.Errorf("proxy CA certificate is empty, cannot sanitize kubeconfig")
+	}
+
 	cfg, err := clientcmd.Load(rawBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse kubeconfig for sanitization: %w", err)
@@ -440,12 +444,17 @@ func sanitizeKubeconfig(rawBytes []byte) ([]byte, error) {
 		}
 	}
 
+	for _, cluster := range cfg.Clusters {
+		cluster.CertificateAuthorityData = proxyCACert
+		cluster.InsecureSkipTLSVerify = false
+	}
+
 	return clientcmd.Write(*cfg)
 }
 
 // applySanitizedKubeconfig creates or updates the sanitized kubeconfig ConfigMap
 // for the gateway pod. Only created when a kubernetes credential is present.
-func (r *ClawResourceReconciler) applySanitizedKubeconfig(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) error {
+func (r *ClawResourceReconciler) applySanitizedKubeconfig(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential, proxyCACert []byte) error {
 	configMapName := getKubeConfigMapName(instance.Name)
 	var kd *kubeconfigData
 	for i := range resolvedCreds {
@@ -465,7 +474,7 @@ func (r *ClawResourceReconciler) applySanitizedKubeconfig(ctx context.Context, i
 
 	logger := log.FromContext(ctx)
 
-	sanitized, err := sanitizeKubeconfig(kd.RawBytes)
+	sanitized, err := sanitizeKubeconfig(kd.RawBytes, proxyCACert)
 	if err != nil {
 		return fmt.Errorf("failed to sanitize kubeconfig: %w", err)
 	}
