@@ -33,10 +33,23 @@ func pluginsEnabled(instance *clawv1alpha1.Claw) bool {
 	return len(instance.Spec.Plugins) > 0
 }
 
+// pluginPackageName strips a trailing @version suffix from a plugin spec,
+// returning just the package name for deduplication purposes.
+func pluginPackageName(spec string) string {
+	// Scoped packages start with @, so find the LAST @ for the version separator.
+	// "@openclaw/foo@1.2.3" → "@openclaw/foo"
+	// "@openclaw/foo" → "@openclaw/foo"
+	if idx := strings.LastIndex(spec, "@"); idx > 0 {
+		return spec[:idx]
+	}
+	return spec
+}
+
 // effectivePlugins returns the complete list of plugins to install: explicit
 // spec.plugins plus any implicitly required by the configured credentials
 // (e.g., Vertex AI SDK providers that need an external plugin).
-// Duplicates are removed (spec declarations take precedence).
+// Duplicates are removed by package name (spec declarations take precedence
+// over implicit ones, allowing users to override the pinned version).
 func effectivePlugins(instance *clawv1alpha1.Claw) []string {
 	implicit := requiredProviderPlugins(instance)
 	if len(implicit) == 0 {
@@ -44,13 +57,13 @@ func effectivePlugins(instance *clawv1alpha1.Claw) []string {
 	}
 	seen := make(map[string]bool, len(instance.Spec.Plugins))
 	for _, p := range instance.Spec.Plugins {
-		seen[p] = true
+		seen[pluginPackageName(p)] = true
 	}
 	merged := append([]string{}, instance.Spec.Plugins...)
 	for _, p := range implicit {
-		if !seen[p] {
+		if !seen[pluginPackageName(p)] {
 			merged = append(merged, p)
-			seen[p] = true
+			seen[pluginPackageName(p)] = true
 		}
 	}
 	return merged

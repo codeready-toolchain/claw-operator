@@ -302,8 +302,8 @@ func TestMergeJS(t *testing.T) {
 		require.NoError(t, err, "SOUL.md should be seeded to workspace")
 		assert.Equal(t, cmData["SOUL.md"], string(soulContent))
 
-		bootstrapContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "BOOTSTRAP.md"))
-		require.NoError(t, err, "BOOTSTRAP.md should be seeded to workspace")
+		bootstrapContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", ".operator", "BOOTSTRAP.md"))
+		require.NoError(t, err, "BOOTSTRAP.md should be seeded to workspace/.operator/")
 		assert.Equal(t, cmData["BOOTSTRAP.md"], string(bootstrapContent))
 
 		skillContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "platform", "SKILL.md"))
@@ -322,7 +322,7 @@ func TestMergeJS(t *testing.T) {
 			pvcFiles: map[string]string{
 				"workspace/AGENTS.md":                customAgents,
 				"workspace/SOUL.md":                  customSoul,
-				"workspace/BOOTSTRAP.md":             customBootstrap,
+				"workspace/.operator/BOOTSTRAP.md":   customBootstrap,
 				"workspace/skills/platform/SKILL.md": oldSkill,
 			},
 		})
@@ -335,7 +335,7 @@ func TestMergeJS(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, customSoul, string(soulContent), "SOUL.md should NOT be overwritten (seedIfMissing)")
 
-		bootstrapContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "BOOTSTRAP.md"))
+		bootstrapContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", ".operator", "BOOTSTRAP.md"))
 		require.NoError(t, err)
 		assert.Equal(t, customBootstrap, string(bootstrapContent),
 			"BOOTSTRAP.md should NOT be overwritten (seedIfMissing)")

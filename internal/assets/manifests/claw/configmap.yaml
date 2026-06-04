@@ -131,13 +131,17 @@ data:
     }
 
     // Seed builtin user-owned files (no-op if _ws_ variant already seeded above).
-    // BOOTSTRAP.md must be seeded here because OpenClaw v2026.6.1+ treats skill
-    // directories as evidence of an already-configured workspace and skips
-    // BOOTSTRAP.md creation. Since we copy skills below, we must seed BOOTSTRAP.md
-    // before OpenClaw's ensureAgentWorkspace runs.
     seedIfMissing(path.join(configDir, "AGENTS.md"), path.join(workspaceDir, "AGENTS.md"));
     seedIfMissing(path.join(configDir, "SOUL.md"), path.join(workspaceDir, "SOUL.md"));
-    seedIfMissing(path.join(configDir, "BOOTSTRAP.md"), path.join(workspaceDir, "BOOTSTRAP.md"));
+
+    // Seed BOOTSTRAP.md into .operator/ subdirectory, NOT the workspace root.
+    // OpenClaw 6.1+ deletes root BOOTSTRAP.md when it detects "completion evidence"
+    // (custom SOUL.md or skills/*/SKILL.md). The bootstrap-extra-files hook loads
+    // it from .operator/ instead, bypassing the reconciliation logic.
+    seedIfMissing(
+      path.join(configDir, "BOOTSTRAP.md"),
+      path.join(workspaceDir, ".operator", "BOOTSTRAP.md")
+    );
 
     // Always copy operator-managed skill files
     copyAlways(
@@ -189,7 +193,8 @@ data:
 
     ## When you're done
 
-    Delete this file. You won't need it again — you're you now.
+    Delete this file (`.operator/BOOTSTRAP.md`). You won't need it again —
+    you're you now.
   AGENTS.md: |
     # OpenClaw Assistant
 
@@ -201,8 +206,8 @@ data:
 
     ## First run
 
-    If `BOOTSTRAP.md` exists, follow it first — figure out who you are,
-    then delete it. You won't need it again.
+    If `.operator/BOOTSTRAP.md` exists, follow it first — figure out who
+    you are, then delete it. You won't need it again.
 
     ## Session startup
 

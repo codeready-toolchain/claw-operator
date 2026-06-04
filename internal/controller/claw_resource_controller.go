@@ -756,6 +756,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 
 	injectMetricsConfig(config, instance)
 	injectSkipBootstrap(config, instance)
+	injectBootstrapHook(config)
 
 	updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 	if err != nil {

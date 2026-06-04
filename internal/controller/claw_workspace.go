@@ -154,3 +154,30 @@ func injectSkipBootstrap(config map[string]any, instance *clawv1alpha1.Claw) {
 		setNestedValue(config, true, "agents", "defaults", "skipBootstrap")
 	}
 }
+
+// injectBootstrapHook configures the bootstrap-extra-files hook to load
+// BOOTSTRAP.md from .operator/ instead of the workspace root. This avoids
+// OpenClaw 6.1+'s reconciliation that deletes root BOOTSTRAP.md when it
+// detects completion evidence (custom SOUL.md or skills).
+func injectBootstrapHook(config map[string]any) {
+	if instance, ok := config["hooks"]; ok {
+		if hooks, ok := instance.(map[string]any); ok {
+			if internal, ok := hooks["internal"]; ok {
+				if internalMap, ok := internal.(map[string]any); ok {
+					if entries, ok := internalMap["entries"]; ok {
+						if entriesMap, ok := entries.(map[string]any); ok {
+							if _, exists := entriesMap["bootstrap-extra-files"]; exists {
+								return
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	setNestedValue(config, true, "hooks", "internal", "enabled")
+	setNestedValue(config, map[string]any{
+		"enabled": true,
+		"paths":   []any{".operator/BOOTSTRAP.md"},
+	}, "hooks", "internal", "entries", "bootstrap-extra-files")
+}
