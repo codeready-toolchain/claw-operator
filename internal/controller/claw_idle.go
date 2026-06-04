@@ -44,9 +44,6 @@ func (r *ClawResourceReconciler) handleIdle(ctx context.Context, instance *clawv
 		getClawDeploymentName(instance.Name),
 		getProxyDeploymentName(instance.Name),
 	}
-	if !shouldDisableDevicePairing(instance.Spec.Auth) {
-		deploymentNames = append(deploymentNames, getDevicePairingDeploymentName(instance.Name))
-	}
 
 	for _, name := range deploymentNames {
 		if err := r.scaleDeploymentToZero(ctx, instance, name); err != nil {
@@ -71,7 +68,6 @@ func (r *ClawResourceReconciler) handleIdle(ctx context.Context, instance *clawv
 		clawv1alpha1.ConditionReasonIdle, "Instance is idled — set spec.idle to false to resume")
 	instance.Status.URL = "" //nolint:staticcheck // deprecated but still populated
 	instance.Status.GatewayURL = ""
-	instance.Status.DevicePairingURL = ""
 
 	if err := r.Status().Update(ctx, instance); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update status after idling: %w", err)

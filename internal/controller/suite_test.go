@@ -32,8 +32,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -150,10 +148,6 @@ func deleteAndWaitAllResources(t *testing.T, namespace string, instanceNames ...
 		{&appsv1.Deployment{}, client.ObjectKey{Name: getClawDeploymentName(instanceName), Namespace: namespace}},
 		{&corev1.Service{}, client.ObjectKey{Name: getProxyServiceName(instanceName), Namespace: namespace}},
 		{&appsv1.Deployment{}, client.ObjectKey{Name: getProxyDeploymentName(instanceName), Namespace: namespace}},
-		{&corev1.ServiceAccount{}, client.ObjectKey{Name: getDevicePairingServiceAccountName(instanceName), Namespace: namespace}},
-		{&corev1.Service{}, client.ObjectKey{Name: getDevicePairingServiceName(instanceName), Namespace: namespace}},
-		{&appsv1.Deployment{}, client.ObjectKey{Name: getDevicePairingDeploymentName(instanceName), Namespace: namespace}},
-		{newRouteUnstructured(), client.ObjectKey{Name: getDevicePairingRouteName(instanceName), Namespace: namespace}},
 	}
 
 	for _, r := range resources {
@@ -367,19 +361,17 @@ func setDeploymentAvailable(t *testing.T, ctx context.Context, name, namespace s
 	require.NoError(t, k8sClient.Status().Update(ctx, deployment), "failed to update "+name+" deployment status")
 }
 
-// setAllDeploymentsAvailable marks claw, claw-proxy, and claw-device-pairing Deployments as available.
+// setAllDeploymentsAvailable marks claw and claw-proxy Deployments as available.
 func setAllDeploymentsAvailable(t *testing.T, ctx context.Context, instanceName, namespace string) { //nolint:unparam
 	t.Helper()
 	setDeploymentAvailable(t, ctx, getClawDeploymentName(instanceName), namespace)
 	setDeploymentAvailable(t, ctx, getProxyDeploymentName(instanceName), namespace)
-	setDeploymentAvailable(t, ctx, getDevicePairingDeploymentName(instanceName), namespace)
 }
 
-// setCoreDeploymentsAvailable marks claw and claw-proxy Deployments as available (no device-pairing).
+// setCoreDeploymentsAvailable is an alias for setAllDeploymentsAvailable.
 func setCoreDeploymentsAvailable(t *testing.T, ctx context.Context, instanceName, namespace string) { //nolint:unparam
 	t.Helper()
-	setDeploymentAvailable(t, ctx, getClawDeploymentName(instanceName), namespace)
-	setDeploymentAvailable(t, ctx, getProxyDeploymentName(instanceName), namespace)
+	setAllDeploymentsAvailable(t, ctx, instanceName, namespace)
 }
 
 // reconcileClaw performs a reconciliation for the given Claw resource.
@@ -393,14 +385,4 @@ func reconcileClaw(t *testing.T, ctx context.Context, reconciler *ClawResourceRe
 		},
 	})
 	require.NoError(t, err, "reconcile failed")
-}
-
-func newRouteUnstructured() *unstructured.Unstructured {
-	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "route.openshift.io",
-		Version: "v1",
-		Kind:    RouteKind,
-	})
-	return u
 }

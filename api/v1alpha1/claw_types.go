@@ -57,13 +57,12 @@ const (
 
 // Condition types for Claw status.
 const (
-	ConditionTypeReady                   = "Ready"
-	ConditionTypeCredentialsResolved     = "CredentialsResolved"
-	ConditionTypeProxyConfigured         = "ProxyConfigured"
-	ConditionTypeDevicePairingConfigured = "DevicePairingConfigured"
-	ConditionTypeMcpServersConfigured    = "McpServersConfigured"
-	ConditionTypeWebSearchConfigured     = "WebSearchConfigured"
-	ConditionTypeIdle                    = "Idle"
+	ConditionTypeReady                = "Ready"
+	ConditionTypeCredentialsResolved  = "CredentialsResolved"
+	ConditionTypeProxyConfigured      = "ProxyConfigured"
+	ConditionTypeMcpServersConfigured = "McpServersConfigured"
+	ConditionTypeWebSearchConfigured  = "WebSearchConfigured"
+	ConditionTypeIdle                 = "Idle"
 )
 
 // Annotation keys used on pod templates to trigger rollouts on config changes.
@@ -586,11 +585,6 @@ type ClawStatus struct {
 	// GatewayURL is the HTTPS URL for accessing the Claw gateway, including the auth token fragment when applicable
 	// +optional
 	GatewayURL string `json:"gatewayURL,omitempty"`
-
-	// DevicePairingURL is the HTTPS URL for the device pairing application.
-	// Only populated when device pairing is enabled (disableDevicePairing is not true).
-	// +optional
-	DevicePairingURL string `json:"devicePairingURL,omitempty"`
 }
 
 // +kubebuilder:object:root=true

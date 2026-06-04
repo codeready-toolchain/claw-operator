@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -60,14 +59,10 @@ func (r *ClawResourceReconciler) getDeploymentAvailableStatus(ctx context.Contex
 }
 
 // checkDeploymentsReady checks if all managed Deployments are ready.
-// When device pairing is disabled, the device-pairing Deployment is excluded.
-func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, namespace, instanceName string, auth *clawv1alpha1.AuthSpec) (bool, []string, error) {
+func (r *ClawResourceReconciler) checkDeploymentsReady(ctx context.Context, namespace, instanceName string) (bool, []string, error) {
 	deployNames := []string{
 		getClawDeploymentName(instanceName),
 		getProxyDeploymentName(instanceName),
-	}
-	if !shouldDisableDevicePairing(auth) {
-		deployNames = append(deployNames, getDevicePairingDeploymentName(instanceName))
 	}
 
 	var pending []string
@@ -221,38 +216,16 @@ func buildGatewayURL(routeURL, token string) string {
 	return routeURL + "#token=" + encodeFragmentValue(token)
 }
 
-func buildDevicePairingURL(routeURL, token string) string {
-	if routeURL == "" {
-		return ""
-	}
-	base := routeURL + "/integration/device-pairing/"
-	if token == "" {
-		return base
-	}
-	return base + "#token=" + encodeFragmentValue(token)
-}
-
 // updateStatus updates the Claw status with current deployment conditions
 func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	// check deployment readiness
-	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace, instance.Name, instance.Spec.Auth)
+	ready, pending, err := r.checkDeploymentsReady(ctx, instance.Namespace, instance.Name)
 	if err != nil {
 		return fmt.Errorf("failed to check deployment readiness: %w", err)
 	}
 
 	// Set Ready condition
 	setReadyCondition(instance, ready, pending)
-
-	if shouldDisableDevicePairing(instance.Spec.Auth) {
-		meta.RemoveStatusCondition(&instance.Status.Conditions, clawv1alpha1.ConditionTypeDevicePairingConfigured)
-	} else {
-		dpReady := !slices.Contains(pending, getDevicePairingDeploymentName(instance.Name))
-		if dpReady {
-			setCondition(instance, clawv1alpha1.ConditionTypeDevicePairingConfigured, metav1.ConditionTrue, clawv1alpha1.ConditionReasonConfigured, "Device pairing deployment is available")
-		} else {
-			setCondition(instance, clawv1alpha1.ConditionTypeDevicePairingConfigured, metav1.ConditionFalse, clawv1alpha1.ConditionReasonProvisioning, "Waiting for device pairing deployment to become ready")
-		}
-	}
 
 	// Expose gateway secret name in status
 	instance.Status.GatewayTokenSecretRef = getGatewaySecretName(instance.Name)
@@ -268,27 +241,16 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 		if instance.Spec.Auth != nil && instance.Spec.Auth.Mode == clawv1alpha1.AuthModePassword {
 			instance.Status.URL = routeURL //nolint:staticcheck // deprecated but still populated
 			instance.Status.GatewayURL = routeURL
-			if !shouldDisableDevicePairing(instance.Spec.Auth) {
-				instance.Status.DevicePairingURL = buildDevicePairingURL(routeURL, "")
-			} else {
-				instance.Status.DevicePairingURL = "" // probably overkill, but just in case
-			}
 		} else {
 			token := r.getGatewayToken(ctx, instance.Namespace, instance.Name)
 			gatewayURL := buildGatewayURL(routeURL, token)
 			instance.Status.URL = gatewayURL //nolint:staticcheck // deprecated but still populated
 			instance.Status.GatewayURL = gatewayURL
-			if !shouldDisableDevicePairing(instance.Spec.Auth) {
-				instance.Status.DevicePairingURL = buildDevicePairingURL(routeURL, token)
-			} else {
-				instance.Status.DevicePairingURL = "" // probably overkill, but just in case
-			}
 		}
 	} else {
 		// Clear URLs when deployments are not ready
 		instance.Status.URL = "" //nolint:staticcheck // deprecated but still populated
 		instance.Status.GatewayURL = ""
-		instance.Status.DevicePairingURL = ""
 	}
 
 	// Update status subresource
