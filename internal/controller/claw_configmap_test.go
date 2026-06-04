@@ -305,7 +305,7 @@ func TestInjectProviders(t *testing.T) {
 		openai := providers["openai"].(map[string]any)
 		assert.Equal(t, "https://api.openai.com/v1", openai["baseUrl"])
 		assert.Equal(t, openai["baseUrl"], codex["baseUrl"])
-		assert.Equal(t, "openai-codex-responses", codex["api"])
+		assert.Equal(t, "openai-chatgpt-responses", codex["api"])
 		assert.NotContains(t, openai, "api", "OpenAI-compatible providers use OpenClaw default wire format")
 		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", codex["apiKey"])
 	})

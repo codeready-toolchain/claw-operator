@@ -149,3 +149,10 @@ func enforceTrustedProxies(config map[string]any) {
 	existing = appendIfMissing(existing, "172.16.0.0/12")
 	gateway["trustedProxies"] = stringsToAny(existing)
 }
+
+// skipDefaultPersonality tells OpenClaw not to write its built-in SOUL.md and
+// IDENTITY.md, which encourage the model to invent a persona. The operator
+// seeds its own neutral SOUL.md that asks the user to define the personality.
+func skipDefaultPersonality(config map[string]any) {
+	setNestedValue(config, []any{"SOUL.md", "IDENTITY.md"}, "agents", "defaults", "skipOptionalBootstrapFiles")
+}

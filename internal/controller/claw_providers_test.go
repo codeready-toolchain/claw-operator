@@ -142,7 +142,7 @@ func TestBuildProviderEntry(t *testing.T) {
 	}{
 		{name: "google uses native Gemini API", provider: "google", wantAPI: "google-generative-ai"},
 		{name: "anthropic uses Messages API", provider: "anthropic", wantAPI: "anthropic-messages"},
-		{name: "openai-codex uses Codex responses API", provider: "openai-codex", wantAPI: "openai-codex-responses"},
+		{name: "openai-codex uses ChatGPT responses API", provider: "openai-codex", wantAPI: "openai-chatgpt-responses"},
 		{name: "openai uses OpenClaw default wire format", provider: "openai", wantAPI: ""},
 		{name: "xai uses OpenAI Responses API", provider: "xai", wantAPI: "openai-responses"},
 		{name: "openrouter uses OpenClaw default wire format", provider: "openrouter", wantAPI: ""},

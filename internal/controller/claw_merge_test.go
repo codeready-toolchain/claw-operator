@@ -97,6 +97,8 @@ func runMergeJS(t *testing.T, setup mergeTestSetup) mergeTestResult {
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(seedJSON), 0o644))
 
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "AGENTS.md"), []byte(cmData["AGENTS.md"]), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "SOUL.md"), []byte(cmData["SOUL.md"]), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "BOOTSTRAP.md"), []byte(cmData["BOOTSTRAP.md"]), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "PLATFORM.md"), []byte(cmData["PLATFORM.md"]), 0o644))
 
 	if setup.withK8sSkill != "" {
@@ -296,6 +298,14 @@ func TestMergeJS(t *testing.T) {
 		require.NoError(t, err, "AGENTS.md should be seeded to workspace")
 		assert.Equal(t, cmData["AGENTS.md"], string(agentsContent))
 
+		soulContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "SOUL.md"))
+		require.NoError(t, err, "SOUL.md should be seeded to workspace")
+		assert.Equal(t, cmData["SOUL.md"], string(soulContent))
+
+		bootstrapContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "BOOTSTRAP.md"))
+		require.NoError(t, err, "BOOTSTRAP.md should be seeded to workspace")
+		assert.Equal(t, cmData["BOOTSTRAP.md"], string(bootstrapContent))
+
 		skillContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "platform", "SKILL.md"))
 		require.NoError(t, err, "PLATFORM.md should be copied to skills/platform/SKILL.md")
 		assert.Equal(t, cmData["PLATFORM.md"], string(skillContent))
@@ -304,11 +314,15 @@ func TestMergeJS(t *testing.T) {
 	t.Run("seed files not overwritten vs always copied", func(t *testing.T) {
 		cmData := extractConfigMapData(t)
 		customAgents := "custom user AGENTS.md content"
+		customSoul := "custom user SOUL.md content"
+		customBootstrap := "custom user BOOTSTRAP.md content"
 		oldSkill := "old skill content"
 
 		result := runMergeJS(t, mergeTestSetup{
 			pvcFiles: map[string]string{
 				"workspace/AGENTS.md":                customAgents,
+				"workspace/SOUL.md":                  customSoul,
+				"workspace/BOOTSTRAP.md":             customBootstrap,
 				"workspace/skills/platform/SKILL.md": oldSkill,
 			},
 		})
@@ -316,6 +330,15 @@ func TestMergeJS(t *testing.T) {
 		agentsContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "AGENTS.md"))
 		require.NoError(t, err)
 		assert.Equal(t, customAgents, string(agentsContent), "AGENTS.md should NOT be overwritten (seedIfMissing)")
+
+		soulContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "SOUL.md"))
+		require.NoError(t, err)
+		assert.Equal(t, customSoul, string(soulContent), "SOUL.md should NOT be overwritten (seedIfMissing)")
+
+		bootstrapContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "BOOTSTRAP.md"))
+		require.NoError(t, err)
+		assert.Equal(t, customBootstrap, string(bootstrapContent),
+			"BOOTSTRAP.md should NOT be overwritten (seedIfMissing)")
 
 		skillContent, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "skills", "platform", "SKILL.md"))
 		require.NoError(t, err)
