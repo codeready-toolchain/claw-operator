@@ -617,6 +617,34 @@ data:
 
     The proxy exchanges credentials for a bearer token and injects it on each request.
 
+    ## Codex OAuth (`type: codexOAuth`)
+
+    For ChatGPT Plus/Pro/Team subscription users who want to use Codex models
+    (GPT-5.5, GPT-5.4 Mini) via the ChatGPT backend:
+
+    ```yaml
+    - name: codex
+      type: codexOAuth
+      provider: openai-oauth
+      secretRef:
+        - name: codex-auth
+          key: auth.json
+    ```
+
+    Setup:
+    1. Run `codex login --device-auth` on your workstation to authenticate
+    2. Create a Secret: `kubectl create secret generic codex-auth --from-file=auth.json=$HOME/.codex/auth.json`
+    3. Reference it in the Claw CR as shown above
+
+    The Secret contains a Codex CLI `auth.json` file with `auth_mode: "chatgpt"`,
+    a `refresh_token`, and an `account_id`. The proxy auto-refreshes OAuth tokens
+    and injects `Authorization`, `chatgpt-account-id`, `originator`, and `OpenAI-Beta`
+    headers. The gateway never sees real tokens.
+
+    The `openai-oauth` provider and `openai` provider are fully independent — you
+    can use both simultaneously (Codex OAuth for subscription models, OpenAI API key
+    for platform features like embeddings).
+
     # Memory Search
 
     Memory search (semantic recall across sessions) is auto-configured when
@@ -1042,8 +1070,8 @@ data:
     An exact domain (e.g., `api.example.com`) matches only that host.
 
     If the service requires credential injection (API key, bearer token), use the
-    corresponding credential type (`apiKey`, `bearer`, `oauth2`, `pathToken`) with a
-    `secretRef` pointing to a Kubernetes Secret containing the credential.
+    corresponding credential type (`apiKey`, `bearer`, `oauth2`, `codexOAuth`, `pathToken`)
+    with a `secretRef` pointing to a Kubernetes Secret containing the credential.
 
     # Plugins
 

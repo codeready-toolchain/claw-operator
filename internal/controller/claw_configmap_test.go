@@ -60,7 +60,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "anthropic-vertex")
@@ -87,7 +87,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		av := providers["anthropic-vertex"].(map[string]any)
@@ -109,7 +109,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "meta-vertex")
@@ -133,7 +133,7 @@ func TestInjectProvidersVertexSDK(t *testing.T) {
 			},
 		}
 
-		err := injectProviders(config, testClawWithCredentials(credentials))
+		err := injectProviders(config, testClawWithCredentials(credentials), nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "anthropic-vertex")
@@ -154,7 +154,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "google")
@@ -181,7 +181,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		assert.Contains(t, providers, "google")
@@ -201,7 +201,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		assert.Empty(t, providers)
@@ -222,7 +222,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "google")
@@ -243,7 +243,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "anthropic")
@@ -266,7 +266,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		assert.Empty(t, providers, "pathToken credentials should not generate provider entries")
@@ -279,7 +279,7 @@ func TestInjectProviders(t *testing.T) {
 			{Name: "gemini-2", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google", Domain: "generativelanguage.googleapis.com"},
 		}
 
-		err := injectProviders(config, testClawWithCredentials(credentials))
+		err := injectProviders(config, testClawWithCredentials(credentials), nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "google")
@@ -296,7 +296,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "openai")
@@ -317,7 +317,7 @@ func TestInjectProviders(t *testing.T) {
 			{Name: "openai", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "openai", Domain: "api.openai.com"},
 		}
 
-		err := injectProviders(config, testClawWithCredentials(credentials))
+		err := injectProviders(config, testClawWithCredentials(credentials), nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "openai-codex")
@@ -335,7 +335,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "xai")
@@ -355,7 +355,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "openrouter")
@@ -377,7 +377,7 @@ func TestInjectProviders(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials)))
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "custom-llm")
@@ -385,6 +385,99 @@ func TestInjectProviders(t *testing.T) {
 		assert.Equal(t, "https://api.custom-llm.com", entry["baseUrl"])
 		assert.Equal(t, "ah-ah-ah-you-didnt-say-the-magic-word", entry["apiKey"])
 		assert.NotContains(t, entry, "api", "unknown providers should use OpenClaw default wire format")
+	})
+
+	t.Run("should inject codexOAuth provider with synthetic JWT apiKey", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "codex",
+				Type:     clawv1alpha1.CredentialTypeCodexOAuth,
+				Provider: "openai-oauth",
+				Domain:   "chatgpt.com",
+			},
+		}
+		resolvedCreds := []resolvedCredential{
+			{
+				CredentialSpec: credentials[0],
+				CodexOAuth:     &codexOAuthData{AccountID: "acct_test123"},
+			},
+		}
+
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), resolvedCreds))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "openai-oauth")
+		entry := providers["openai-oauth"].(map[string]any)
+		assert.Equal(t, "https://chatgpt.com", entry["baseUrl"])
+		assert.Equal(t, "openai-chatgpt-responses", entry["api"])
+
+		apiKey, ok := entry["apiKey"].(string)
+		require.True(t, ok, "apiKey should be a string")
+		assert.NotEqual(t, placeholderAPIKey, apiKey, "codexOAuth should use synthetic JWT, not placeholder")
+		assert.Contains(t, apiKey, ".", "apiKey should look like a JWT (contain dots)")
+	})
+
+	t.Run("should use placeholder when codexOAuth resolvedCreds is nil", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "codex",
+				Type:     clawv1alpha1.CredentialTypeCodexOAuth,
+				Provider: "openai-oauth",
+				Domain:   "chatgpt.com",
+			},
+		}
+
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), nil))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "openai-oauth")
+		entry := providers["openai-oauth"].(map[string]any)
+		assert.Equal(t, placeholderAPIKey, entry["apiKey"])
+	})
+
+	t.Run("should inject openai-oauth model catalog", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "codex", Type: clawv1alpha1.CredentialTypeCodexOAuth, Provider: "openai-oauth", Domain: "chatgpt.com"},
+		}
+
+		injectModelCatalog(config, testClawWithCredentials(credentials))
+
+		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+		assert.Contains(t, models, "openai-oauth/gpt-5.5")
+		assert.Contains(t, models, "openai-oauth/gpt-5.4-mini")
+		entry := models["openai-oauth/gpt-5.5"].(map[string]any)
+		assert.Equal(t, "GPT-5.5", entry["alias"])
+	})
+
+	t.Run("should inject both openai and openai-oauth providers independently", func(t *testing.T) {
+		config := map[string]any{"models": map[string]any{"providers": map[string]any{}}}
+		credentials := []clawv1alpha1.CredentialSpec{
+			{Name: "openai", Type: clawv1alpha1.CredentialTypeBearer, Provider: "openai", Domain: "api.openai.com"},
+			{Name: "codex", Type: clawv1alpha1.CredentialTypeCodexOAuth, Provider: "openai-oauth", Domain: "chatgpt.com"},
+		}
+		resolvedCreds := []resolvedCredential{
+			{CredentialSpec: credentials[0]},
+			{CredentialSpec: credentials[1], CodexOAuth: &codexOAuthData{AccountID: "acct_dual"}},
+		}
+
+		require.NoError(t, injectProviders(config, testClawWithCredentials(credentials), resolvedCreds))
+
+		providers := providersFromConfig(t, config)
+		require.Contains(t, providers, "openai")
+		require.Contains(t, providers, "openai-oauth")
+
+		openaiEntry := providers["openai"].(map[string]any)
+		assert.Equal(t, placeholderAPIKey, openaiEntry["apiKey"],
+			"openai should use placeholder, not synthetic JWT")
+
+		oauthEntry := providers["openai-oauth"].(map[string]any)
+		apiKey := oauthEntry["apiKey"].(string)
+		assert.NotEqual(t, placeholderAPIKey, apiKey,
+			"openai-oauth should use synthetic JWT")
+		assert.Contains(t, apiKey, ".", "apiKey should be a JWT")
 	})
 }
 
@@ -721,7 +814,7 @@ func TestInjectCustomProviders(t *testing.T) {
 			},
 		)
 
-		require.NoError(t, injectProviders(config, claw))
+		require.NoError(t, injectProviders(config, claw, nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "my-vllm")
@@ -751,7 +844,7 @@ func TestInjectCustomProviders(t *testing.T) {
 			},
 		)
 
-		require.NoError(t, injectProviders(config, claw))
+		require.NoError(t, injectProviders(config, claw, nil))
 
 		providers := providersFromConfig(t, config)
 		ollama := providers["ollama"].(map[string]any)
@@ -774,7 +867,7 @@ func TestInjectCustomProviders(t *testing.T) {
 			},
 		)
 
-		require.NoError(t, injectProviders(config, claw))
+		require.NoError(t, injectProviders(config, claw, nil))
 
 		providers := providersFromConfig(t, config)
 		vllm := providers["my-vllm"].(map[string]any)
@@ -801,7 +894,7 @@ func TestInjectCustomProviders(t *testing.T) {
 			},
 		)
 
-		require.NoError(t, injectProviders(config, claw))
+		require.NoError(t, injectProviders(config, claw, nil))
 
 		providers := providersFromConfig(t, config)
 		assert.Contains(t, providers, "google")
@@ -827,7 +920,7 @@ func TestInjectCustomProviders(t *testing.T) {
 			},
 		)
 
-		err := injectProviders(config, claw)
+		err := injectProviders(config, claw, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate provider")
 		assert.Contains(t, err.Error(), "google")
@@ -853,7 +946,7 @@ func TestInjectCustomProviders(t *testing.T) {
 			},
 		)
 
-		require.NoError(t, injectProviders(config, claw))
+		require.NoError(t, injectProviders(config, claw, nil))
 
 		providers := providersFromConfig(t, config)
 		require.Contains(t, providers, "vllm")

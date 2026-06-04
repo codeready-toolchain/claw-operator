@@ -1117,6 +1117,73 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 		assert.True(t, envNames["CRED_OPENAI"], "should have CRED_OPENAI")
 	})
 
+	t.Run("should add codexOAuth volume with items projection", func(t *testing.T) {
+		const testCodexCredVolume = "cred-codex"
+
+		instance, objects := buildObjects(t)
+		creds := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "codex",
+				Type:      clawv1alpha1.CredentialTypeCodexOAuth,
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "codex-auth", Key: "auth.json"}},
+				Domain:    "chatgpt.com",
+			},
+		}
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
+
+		container := findProxyContainer(t, objects)
+		mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
+
+		var foundMount bool
+		for _, m := range mounts {
+			mount := m.(map[string]any)
+			if mount["name"] == testCodexCredVolume {
+				assert.Equal(t, "/etc/proxy/credentials/codex", mount["mountPath"])
+				assert.Equal(t, true, mount["readOnly"])
+				foundMount = true
+			}
+		}
+		assert.True(t, foundMount, "codexOAuth credential volume mount should be present")
+
+		volumes := findVolumes(t, objects)
+		var foundVol bool
+		for _, v := range volumes {
+			vol := v.(map[string]any)
+			if vol["name"] == testCodexCredVolume {
+				foundVol = true
+				secret, ok := vol["secret"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, "codex-auth", secret["secretName"])
+
+				items := secret["items"].([]any)
+				require.Len(t, items, 1)
+				item := items[0].(map[string]any)
+				assert.Equal(t, "auth.json", item["key"])
+				assert.Equal(t, "auth.json", item["path"])
+			}
+		}
+		assert.True(t, foundVol, "codexOAuth credential volume should be present")
+	})
+
+	t.Run("should skip codexOAuth credential with nil secretRef", func(t *testing.T) {
+		instance, objects := buildObjects(t)
+		creds := []clawv1alpha1.CredentialSpec{
+			{
+				Name:   "codex-no-ref",
+				Type:   clawv1alpha1.CredentialTypeCodexOAuth,
+				Domain: "chatgpt.com",
+			},
+		}
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
+
+		volumes := findVolumes(t, objects)
+		for _, v := range volumes {
+			vol := v.(map[string]any)
+			assert.NotEqual(t, "cred-codex-no-ref", vol["name"],
+				"should not add volume for codexOAuth without secretRef")
+		}
+	})
+
 	t.Run("should add kubernetes kubeconfig volume mount", func(t *testing.T) {
 		instance, objects := buildObjects(t)
 		creds := []resolvedCredential{
@@ -1640,4 +1707,47 @@ func TestMcpCredentialRefRoutes(t *testing.T) {
 		}
 		assert.True(t, found, "should have an api_key route for mcp-server")
 	})
+}
+
+// --- Codex OAuth proxy config tests ---
+
+func TestGenerateProxyConfigCodexOAuth(t *testing.T) {
+	t.Run("should generate config with codex_oauth route for chatgpt.com", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "codex",
+				Type:     clawv1alpha1.CredentialTypeCodexOAuth,
+				Provider: "openai-oauth",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{
+					Name: "codex-auth",
+					Key:  "auth.json",
+				}},
+				Domain: "chatgpt.com",
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "chatgpt.com")
+		assert.Equal(t, injectorCodexOAuth, route.Injector)
+		assert.Equal(t, "/etc/proxy/credentials/codex/auth.json", route.CodexAuthFilePath)
+		assert.Equal(t, "/codex", route.PathPrefix)
+		assert.Equal(t, "https://chatgpt.com", route.Upstream)
+	})
+}
+
+func TestBuildCredentialRouteCodexOAuth(t *testing.T) {
+	cred := clawv1alpha1.CredentialSpec{
+		Name:   "codex",
+		Type:   clawv1alpha1.CredentialTypeCodexOAuth,
+		Domain: "chatgpt.com",
+	}
+
+	route := buildCredentialRoute(cred)
+	assert.Equal(t, injectorCodexOAuth, route.Injector)
+	assert.Equal(t, "/etc/proxy/credentials/codex/auth.json", route.CodexAuthFilePath)
+	assert.Empty(t, route.EnvVar, "codexOAuth should not use env var")
 }
