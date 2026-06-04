@@ -79,9 +79,9 @@ The proxy needs to reach `auth.openai.com:443` to refresh tokens. The operator m
 - **Pro:** Consistent with how GCP auto-adds `oauth2.googleapis.com`
 - **Con:** None significant
 
-**Decision:** Option A — auto-add `auth.openai.com:443` and `chatgpt.com:443` egress when any `codexOAuth` credential is present. Follows the GCP pattern.
+**Decision:** No NetworkPolicy changes needed. The existing `{instance}-proxy-egress` policy already allows all TCP/443 egress. The proxy's L7 route table is the real allowlist — `chatgpt.com` gets a route from the credential definition, and `auth.openai.com` is reached directly by the proxy's `oauth2.TokenSource` (bypassing the route table). This is consistent with how GCP credentials work — GCP also has no dedicated NP rule for `oauth2.googleapis.com`.
 
-_Considered and rejected: Option B (poor UX — forgetting causes silent token refresh failures, inconsistent with GCP behavior)_
+_Considered and rejected: Option A auto-add (unnecessary — proxy egress already allows TCP/443; Option B manual config was also rejected for the same reason)_
 
 ---
 

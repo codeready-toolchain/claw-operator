@@ -90,12 +90,8 @@ func (c *CodexOAuthInjector) init() {
 	}
 
 	initialToken := &oauth2.Token{
-		AccessToken:  auth.AccessToken,
 		RefreshToken: auth.RefreshToken,
 		TokenType:    "Bearer",
-	}
-	if auth.AccessToken != "" {
-		initialToken.Expiry = time.Now().Add(23 * time.Hour)
 	}
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}

@@ -42,7 +42,7 @@ The core challenge is that Codex OAuth tokens expire (~24 hours) and must be ref
 
 ### Data flow
 
-```
+```text
 User workstation                          Kubernetes cluster
 ─────────────────                         ──────────────────
 

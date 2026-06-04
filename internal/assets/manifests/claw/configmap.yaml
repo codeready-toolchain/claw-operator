@@ -419,8 +419,8 @@ data:
     Claw CR. There are two ways providers contribute models:
 
     1. **Built-in catalog providers** — credentials with `provider` set to a known
-       value (`google`, `anthropic`, `openai`, `xai`, `openrouter`) auto-populate the
-       picker with the operator's hardcoded model catalog.
+       value (`google`, `anthropic`, `openai`, `openai-oauth`, `xai`, `openrouter`)
+       auto-populate the picker with the operator's hardcoded model catalog.
     2. **Custom providers** — `spec.customProviders` entries explicitly declare the
        `baseUrl`, wire format, and model list for any OpenAI-compatible endpoint.
 
