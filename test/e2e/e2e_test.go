@@ -201,46 +201,40 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 		}
 	}
 
-	t.Run("Manager", func(t *testing.T) {
-		t.Run("should run successfully", func(t *testing.T) {
-			t.Cleanup(func() { collectDebugInfo(t) })
-
-			t.Log("validating that the controller-manager pod is running as expected")
-			deadline := time.Now().Add(defaultTimeout)
-			var podOutput string
-			for time.Now().Before(deadline) {
-				cmd := exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
-					"-o", "go-template={{ range .items }}"+
-						"{{ if not .metadata.deletionTimestamp }}"+
-						"{{ .metadata.name }}"+
-						"{{ \"\\n\" }}{{ end }}{{ end }}",
-					"-n", operatorNamespace,
-				)
-
-				var err error
-				podOutput, err = utils.Run(t, cmd)
-				if err == nil {
-					podNames := utils.GetNonEmptyLines(podOutput)
-					if len(podNames) == 1 {
-						controllerPodName = podNames[0]
-						if strings.Contains(controllerPodName, "controller-manager") {
-							cmd = exec.Command("kubectl", "get",
-								"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
-								"-n", operatorNamespace,
-							)
-							output, err := utils.Run(t, cmd)
-							if err == nil && output == podPhaseRunning {
-								return
-							}
-						}
+	t.Log("waiting for the controller-manager pod to be running")
+	deadline := time.Now().Add(defaultTimeout)
+	for time.Now().Before(deadline) {
+		cmd = exec.Command("kubectl", "get",
+			"pods", "-l", "control-plane=controller-manager",
+			"-o", "go-template={{ range .items }}"+
+				"{{ if not .metadata.deletionTimestamp }}"+
+				"{{ .metadata.name }}"+
+				"{{ \"\\n\" }}{{ end }}{{ end }}",
+			"-n", operatorNamespace,
+		)
+		podOutput, podErr := utils.Run(t, cmd)
+		if podErr == nil {
+			podNames := utils.GetNonEmptyLines(podOutput)
+			if len(podNames) == 1 {
+				controllerPodName = podNames[0]
+				if strings.Contains(controllerPodName, "controller-manager") {
+					cmd = exec.Command("kubectl", "get",
+						"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
+						"-n", operatorNamespace,
+					)
+					output, phaseErr := utils.Run(t, cmd)
+					if phaseErr == nil && output == podPhaseRunning {
+						break
 					}
 				}
-				time.Sleep(pollInterval)
 			}
-			require.Fail(t, "timeout waiting for controller-manager pod to be running")
-		})
+		}
+		time.Sleep(pollInterval)
+	}
+	require.NotEmpty(t, controllerPodName,
+		"timeout waiting for controller-manager pod to be running")
 
+	t.Run("Manager", func(t *testing.T) {
 		t.Run("should ensure the metrics endpoint is serving metrics", func(t *testing.T) {
 			t.Cleanup(func() { collectDebugInfo(t) })
 
@@ -332,6 +326,47 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Log("getting the metrics by checking curl-metrics logs")
 			metricsOutput := getMetricsOutput(t)
 			assert.Contains(t, metricsOutput, "controller_runtime_reconcile_total")
+
+			t.Log("creating credential Secret and Claw instance for operator metrics check")
+			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value")
+			cmd = exec.Command("kubectl", "apply", "-f",
+				"config/samples/claw_v1alpha1_claw.yaml", "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err)
+
+			t.Log("waiting for Claw to become Ready")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", clawInstanceName,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, runErr := utils.Run(t, cmd)
+					return runErr == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw should become Ready")
+
+			t.Log("verifying claw_instance_status metric for ready instance")
+			metricsOutput = fetchFreshMetrics(t, "curl-metrics-status")
+			assert.Contains(t, metricsOutput, `claw_instance_status{status="ready"} 1`)
+			assert.Contains(t, metricsOutput, `claw_instance_status{status="provisioning"} 0`)
+			assert.Contains(t, metricsOutput, `claw_instance_status{status="failed"} 0`)
+
+			t.Log("verifying claw_instance_info metric")
+			assert.Contains(t, metricsOutput,
+				`claw_instance_info{auth_mode="token",idle="false"} 1`)
+
+			t.Log("cleaning up Claw instance after metrics check")
+			cmd = exec.Command("kubectl", "delete", "claw", clawInstanceName,
+				"-n", userNamespace)
+			_, _ = utils.Run(t, cmd)
+			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
@@ -2035,6 +2070,19 @@ func fetchFreshMetrics(t *testing.T, podName string) string {
 			output, err := utils.Run(t, cmd)
 			return err == nil && output == podPhaseSucceeded, nil
 		})
+	if err != nil {
+		t.Logf("error getting pod %s to %s phase: %v", podName, podPhaseSucceeded, err)
+		// cmd = exec.Command("kubectl", "describe", "pod", podName, "-n", operatorNamespace)
+		// logs, _ := utils.Run(t, cmd)
+		// t.Logf("pod %s description: %s", podName, logs)
+		cmd = exec.Command("kubectl", "logs", podName, "-n", operatorNamespace)
+		logs, err := utils.Run(t, cmd)
+		if err == nil {
+			t.Logf("pod %s logs: %s", podName, logs)
+		} else {
+			t.Logf("error getting pod %s logs: %v", podName, err)
+		}
+	}
 	require.NoError(t, err, "pod %s did not reach Succeeded phase within %v", podName, defaultTimeout)
 
 	cmd = exec.Command("kubectl", "logs", podName, "-n", operatorNamespace)

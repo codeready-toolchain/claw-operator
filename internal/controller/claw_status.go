@@ -291,6 +291,8 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 		instance.Status.DevicePairingURL = ""
 	}
 
+	recordClawMetrics(instance)
+
 	// Update status subresource
 	if err := r.Status().Update(ctx, instance); err != nil {
 		return fmt.Errorf("failed to update Claw status: %w", err)

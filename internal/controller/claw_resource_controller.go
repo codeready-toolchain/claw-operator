@@ -435,6 +435,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			logger.Info("Claw resource not found, ignoring since object must be deleted")
+			clearClawMetrics()
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get Claw")
