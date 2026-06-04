@@ -738,6 +738,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	enforceInfrastructureKeys(config)
 	enforceTrustedProxies(config)
 	disableUpdateCheck(config)
+	skipDefaultPersonality(config)
 	injectRouteHost(config, routeHost)
 	injectAuthMode(config, instance)
 	if err := injectProviders(config, instance); err != nil {
@@ -755,6 +756,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 
 	injectMetricsConfig(config, instance)
 	injectSkipBootstrap(config, instance)
+	injectBootstrapHook(config)
 
 	updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 	if err != nil {
