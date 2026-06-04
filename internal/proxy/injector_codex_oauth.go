@@ -89,6 +89,10 @@ func (c *CodexOAuthInjector) init() {
 		},
 	}
 
+	// AccessToken is intentionally left empty so Token.Valid() returns false
+	// and the first call to TokenSource.Token() triggers an immediate refresh.
+	// Do NOT set AccessToken without also setting a real Expiry — a zero Expiry
+	// with a non-empty AccessToken causes the token to be reused forever.
 	initialToken := &oauth2.Token{
 		RefreshToken: auth.RefreshToken,
 		TokenType:    "Bearer",

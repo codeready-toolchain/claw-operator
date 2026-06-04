@@ -130,8 +130,9 @@ var knownProviders = map[string]providerDefaults{
 		Domain:   "chatgpt.com",
 		API:      "openai-chatgpt-responses",
 		Models: []modelEntry{
-			{Name: "gpt-5.5", Alias: "GPT-5.5"},
 			{Name: "gpt-5.4-mini", Alias: "GPT-5.4 Mini"},
+			{Name: "gpt-5.5", Alias: "GPT-5.5"},
+			{Name: "gpt-5.4", Alias: "GPT-5.4"},
 		},
 	},
 	"xai": {

@@ -446,10 +446,11 @@ func TestInjectProviders(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-		assert.Contains(t, models, "openai-oauth/gpt-5.5")
 		assert.Contains(t, models, "openai-oauth/gpt-5.4-mini")
-		entry := models["openai-oauth/gpt-5.5"].(map[string]any)
-		assert.Equal(t, "GPT-5.5", entry["alias"])
+		assert.Contains(t, models, "openai-oauth/gpt-5.5")
+		assert.Contains(t, models, "openai-oauth/gpt-5.4")
+		entry := models["openai-oauth/gpt-5.4-mini"].(map[string]any)
+		assert.Equal(t, "GPT-5.4 Mini", entry["alias"])
 	})
 
 	t.Run("should inject both openai and openai-oauth providers independently", func(t *testing.T) {
