@@ -306,6 +306,36 @@ func TestDisableUpdateCheck(t *testing.T) {
 	})
 }
 
+func TestSkipDefaultPersonality(t *testing.T) {
+	t.Run("sets skipOptionalBootstrapFiles on empty config", func(t *testing.T) {
+		config := map[string]any{}
+		skipDefaultPersonality(config)
+
+		agents := config["agents"].(map[string]any)
+		defaults := agents["defaults"].(map[string]any)
+		skip := defaults["skipOptionalBootstrapFiles"].([]any)
+		assert.ElementsMatch(t, []any{"SOUL.md", "IDENTITY.md"}, skip)
+	})
+
+	t.Run("overrides user-set skipOptionalBootstrapFiles", func(t *testing.T) {
+		config := map[string]any{
+			"agents": map[string]any{
+				"defaults": map[string]any{
+					"skipOptionalBootstrapFiles": []any{"USER.md"},
+					"model":                      map[string]any{"primary": "test"},
+				},
+			},
+		}
+		skipDefaultPersonality(config)
+
+		agents := config["agents"].(map[string]any)
+		defaults := agents["defaults"].(map[string]any)
+		skip := defaults["skipOptionalBootstrapFiles"].([]any)
+		assert.ElementsMatch(t, []any{"SOUL.md", "IDENTITY.md"}, skip)
+		assert.Equal(t, map[string]any{"primary": "test"}, defaults["model"], "non-target keys preserved")
+	})
+}
+
 // --- spec.config.raw full pipeline integration tests ---
 
 func TestSpecConfigRawIntegration(t *testing.T) {

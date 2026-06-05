@@ -123,7 +123,7 @@ var knownProviders = map[string]providerDefaults{
 		},
 	},
 	"openai-codex": {
-		API: "openai-codex-responses",
+		API: "openai-chatgpt-responses",
 	},
 	"xai": {
 		CredType: clawv1alpha1.CredentialTypeBearer,

@@ -279,159 +279,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			assert.Equal(t, clawv1alpha1.ConditionReasonReady, condition.Reason, "Ready condition reason")
 		})
 
-		t.Run("should set DevicePairingConfigured to False after initial reconcile", func(t *testing.T) {
-			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-			})
-
-			createClawInstance(t, ctx, resourceName, namespace)
-			instance := &clawv1alpha1.Claw{}
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
-			instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
-			require.NoError(t, k8sClient.Update(ctx, instance))
-
-			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			updatedInstance := &clawv1alpha1.Claw{}
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeDevicePairingConfigured)
-			require.NotNil(t, condition, "DevicePairingConfigured condition should exist")
-			assert.Equal(t, metav1.ConditionFalse, condition.Status)
-			assert.Equal(t, clawv1alpha1.ConditionReasonProvisioning, condition.Reason)
-		})
-
-		t.Run("should set DevicePairingConfigured to True when device-pairing Deployment is available", func(t *testing.T) {
-			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-			})
-
-			createClawInstance(t, ctx, resourceName, namespace)
-			instance := &clawv1alpha1.Claw{}
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
-			instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
-			require.NoError(t, k8sClient.Update(ctx, instance))
-
-			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			setDeploymentAvailable(t, ctx, getDevicePairingDeploymentName(testInstanceName), namespace)
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			updatedInstance := &clawv1alpha1.Claw{}
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeDevicePairingConfigured)
-			require.NotNil(t, condition, "DevicePairingConfigured condition should exist")
-			assert.Equal(t, metav1.ConditionTrue, condition.Status)
-			assert.Equal(t, clawv1alpha1.ConditionReasonConfigured, condition.Reason)
-		})
-
-		t.Run("should set Ready True when claw and proxy are ready and device-pairing is disabled", func(t *testing.T) {
-			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-			})
-
-			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
-
-			instance := &clawv1alpha1.Claw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			instance.Spec.Credentials = testCredentials()
-			instance.Spec.Auth = &clawv1alpha1.AuthSpec{
-				DisableDevicePairing: boolPtr(true),
-			}
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
-
-			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			setDeploymentAvailable(t, ctx, getClawDeploymentName(testInstanceName), namespace)
-			setDeploymentAvailable(t, ctx, getProxyDeploymentName(testInstanceName), namespace)
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			updatedInstance := &clawv1alpha1.Claw{}
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
-			require.NotNil(t, condition)
-			assert.Equal(t, metav1.ConditionTrue, condition.Status, "Ready should be True when claw+proxy are ready and device-pairing is disabled")
-		})
-
-		t.Run("should not set DevicePairingConfigured when device-pairing is disabled", func(t *testing.T) {
-			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-			})
-
-			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
-
-			instance := &clawv1alpha1.Claw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			instance.Spec.Credentials = testCredentials()
-			instance.Spec.Auth = &clawv1alpha1.AuthSpec{
-				DisableDevicePairing: boolPtr(true),
-			}
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
-
-			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			updatedInstance := &clawv1alpha1.Claw{}
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
-			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeDevicePairingConfigured)
-			assert.Nil(t, condition, "DevicePairingConfigured should not be set when device pairing is disabled")
-		})
-
-		t.Run("should clear stale DevicePairingURL when device pairing is later disabled", func(t *testing.T) {
-			t.Cleanup(func() {
-				deleteAndWaitAllResources(t, namespace)
-			})
-
-			// 1. Create instance with device pairing explicitly enabled
-			secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-			require.NoError(t, k8sClient.Create(ctx, secret), "failed to create API key Secret")
-
-			instance := &clawv1alpha1.Claw{}
-			instance.Name = resourceName
-			instance.Namespace = namespace
-			instance.Spec.Credentials = testCredentials()
-			instance.Spec.Auth = &clawv1alpha1.AuthSpec{
-				DisableDevicePairing: boolPtr(false),
-			}
-			require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
-
-			reconciler := createClawReconciler()
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			// 2. Make all deployments ready (including device-pairing)
-			setAllDeploymentsAvailable(t, ctx, testInstanceName, namespace)
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			// 3. Simulate a stale DevicePairingURL from a previous reconcile
-			// (in envtest there's no Route CRD so URLs are empty; inject a stale value directly)
-			updatedInstance := &clawv1alpha1.Claw{}
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
-			updatedInstance.Status.DevicePairingURL = "https://stale-host/integration/device-pairing/#token=stale"
-			require.NoError(t, k8sClient.Status().Update(ctx, updatedInstance))
-
-			// 4. Disable device pairing
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
-			updatedInstance.Spec.Auth = &clawv1alpha1.AuthSpec{
-				DisableDevicePairing: boolPtr(true),
-			}
-			require.NoError(t, k8sClient.Update(ctx, updatedInstance))
-
-			// 5. Reconcile again
-			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-			// 6. Verify DevicePairingURL is cleared
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
-			assert.Empty(t, updatedInstance.Status.DevicePairingURL,
-				"DevicePairingURL should be cleared when device pairing is disabled")
-		})
-
-		t.Run("should keep Ready False when claw and proxy are ready but device-pairing is not", func(t *testing.T) {
+		t.Run("should reconcile successfully with disableDevicePairing=false without creating device-pairing deployment", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)
 			})
@@ -451,16 +299,19 @@ func TestOpenClawStatusConditions(t *testing.T) {
 			reconciler := createClawReconciler()
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
-			setDeploymentAvailable(t, ctx, getClawDeploymentName(testInstanceName), namespace)
-			setDeploymentAvailable(t, ctx, getProxyDeploymentName(testInstanceName), namespace)
+			setCoreDeploymentsAvailable(t, ctx, testInstanceName, namespace)
 			reconcileClaw(t, ctx, reconciler, resourceName, namespace)
 
 			updatedInstance := &clawv1alpha1.Claw{}
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance))
+
 			condition := meta.FindStatusCondition(updatedInstance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 			require.NotNil(t, condition)
-			assert.Equal(t, metav1.ConditionFalse, condition.Status, "Ready should be False when device-pairing is not ready")
-			assert.Equal(t, clawv1alpha1.ConditionReasonProvisioning, condition.Reason)
+			assert.Equal(t, metav1.ConditionTrue, condition.Status, "Ready should be True even with disableDevicePairing=false")
+
+			dpDeployment := &appsv1.Deployment{}
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: testInstanceName + "-device-pairing", Namespace: namespace}, dpDeployment)
+			assert.True(t, apierrors.IsNotFound(err), "device-pairing Deployment should not exist")
 		})
 
 		t.Run("should update LastTransitionTime only on status change", func(t *testing.T) {
@@ -707,7 +558,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
 				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
-				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
+
 			})
 
 			t.Run("should keep status.url empty when only claw deployment is ready", func(t *testing.T) {
@@ -764,7 +615,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
 				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
-				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
+
 			})
 
 			t.Run("should keep status.url empty when only proxy deployment is ready", func(t *testing.T) {
@@ -821,7 +672,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
 				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
-				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
+
 			})
 
 			t.Run("should clear status.url when deployments transition from ready to not ready", func(t *testing.T) {
@@ -890,7 +741,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
 				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
-				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
+
 			})
 
 			t.Run("should not set status.url when Route does not exist (vanilla Kubernetes)", func(t *testing.T) {
@@ -935,7 +786,7 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated instance")
 				assert.Empty(t, updatedInstance.Status.URL, "expected empty status.url") //nolint:staticcheck
 				assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty status.gatewayURL")
-				assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty status.devicePairingURL")
+
 			})
 
 			t.Run("should set status.url with token fragment when deployments are ready and Route exists", func(t *testing.T) {
@@ -952,10 +803,6 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				require.NoError(t, k8sClient.Create(ctx, secret), "failed to create secret")
 
 				instance.Spec.Credentials = testCredentials()
-				enablePairing := false
-				instance.Spec.Auth = &clawv1alpha1.AuthSpec{
-					DisableDevicePairing: &enablePairing,
-				}
 				require.NoError(t, k8sClient.Create(ctx, instance), "failed to create Claw instance")
 
 				reconciler := &ClawResourceReconciler{
@@ -1112,8 +959,6 @@ func TestOpenClawStatusConditions(t *testing.T) {
 				assert.Equal(t, expectedToken, urlParts[1], "URL token")
 
 				assert.Equal(t, updatedInstance.Status.URL, updatedInstance.Status.GatewayURL, "gatewayURL should equal url") //nolint:staticcheck
-				assert.Equal(t, "https://"+routeHost+"/integration/device-pairing/#token="+encodeFragmentValue(expectedToken),
-					updatedInstance.Status.DevicePairingURL, "devicePairingURL should include device-pairing path")
 
 				_ = k8sClient.Delete(ctx, route)
 
@@ -1183,7 +1028,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated Claw instance")
 			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL") //nolint:staticcheck
 			assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty GatewayURL")
-			assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty DevicePairingURL")
+
 		})
 
 		t.Run("should leave URL field empty when Route does not exist", func(t *testing.T) {
@@ -1228,7 +1073,7 @@ func TestOpenClawURLStatusField(t *testing.T) {
 			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updatedInstance), "failed to get updated Claw instance")
 			assert.Empty(t, updatedInstance.Status.URL, "expected empty URL") //nolint:staticcheck
 			assert.Empty(t, updatedInstance.Status.GatewayURL, "expected empty GatewayURL")
-			assert.Empty(t, updatedInstance.Status.DevicePairingURL, "expected empty DevicePairingURL")
+
 		})
 
 		t.Run("should include https:// scheme in URL format", func(t *testing.T) {
@@ -1401,50 +1246,4 @@ func TestURLConstructionWithTokenFragment(t *testing.T) {
 		assert.True(t, strings.HasPrefix(result, "https://"), "expected result to start with https://")
 		assert.Contains(t, result, "#token=")
 	})
-}
-
-func TestDevicePairingURLConstruction(t *testing.T) {
-	tests := []struct {
-		name     string
-		routeURL string
-		token    string
-		expected string
-	}{
-		{
-			name:     "should insert device-pairing path before token fragment",
-			routeURL: "https://claw-route.apps.example.com",
-			token:    "abc123def456",
-			expected: "https://claw-route.apps.example.com/integration/device-pairing/#token=abc123def456",
-		},
-		{
-			name:     "should return device-pairing path without fragment when token is empty",
-			routeURL: "https://claw-route.apps.example.com",
-			token:    "",
-			expected: "https://claw-route.apps.example.com/integration/device-pairing/",
-		},
-		{
-			name:     "should return empty string when route URL is empty",
-			routeURL: "",
-			token:    "abc123def456",
-			expected: "",
-		},
-		{
-			name:     "should return empty string when both route and token are empty",
-			routeURL: "",
-			token:    "",
-			expected: "",
-		},
-		{
-			name:     "should percent-encode special characters in token",
-			routeURL: "https://claw-route.apps.example.com",
-			token:    "token+with=special&chars#fragment",
-			expected: "https://claw-route.apps.example.com/integration/device-pairing/#token=token%2Bwith%3Dspecial%26chars%23fragment",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := buildDevicePairingURL(tt.routeURL, tt.token)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }

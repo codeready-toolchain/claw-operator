@@ -5,6 +5,10 @@
 
 An OpenShift-oriented Kubernetes operator that manages [OpenClaw](https://github.com/openclaw/openclaw) instances. It handles deployment, credential injection for LLM providers, HTTPS routing, and gateway authentication through a single `Claw` custom resource. While the operator can run on vanilla Kubernetes, it is designed for OpenShift where the restricted Security Context Constraint (SCC) provides the primary pod security boundary -- non-root UID enforcement, SELinux confinement, seccomp filtering, and privilege escalation prevention are all handled by the platform.
 
+## Try It on Developer Sandbox
+
+The easiest way to try an OpenClaw instance managed by this operator is on the [Red Hat Developer Sandbox](https://developers.redhat.com/developer-sandbox). You can get a live environment running for free with zero cluster setup. Read more about the Dev Sandbox deployment in our [launch blog post](docs/blog-openclaw-dev-sandbox-launch.md).
+
 ## Security
 
 The operator applies multiple layers of defense:
