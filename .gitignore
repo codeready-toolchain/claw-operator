@@ -28,6 +28,7 @@ go.work
 *.swo
 *~
 tmp
+refs
 
 # Generated overlays (created by make deploy/bundle)
 config/.deploy/
