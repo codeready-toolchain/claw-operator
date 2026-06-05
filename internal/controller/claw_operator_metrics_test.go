@@ -47,13 +47,13 @@ func TestRecordClawMetrics(t *testing.T) {
 		recordClawMetrics(instance)
 
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusReady,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusReady,
 		})))
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusProvisioning,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusProvisioning,
 		})))
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusFailed,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusFailed,
 		})))
 	})
 
@@ -71,13 +71,13 @@ func TestRecordClawMetrics(t *testing.T) {
 		recordClawMetrics(instance)
 
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusReady,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusReady,
 		})))
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusProvisioning,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusProvisioning,
 		})))
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusFailed,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusFailed,
 		})))
 	})
 
@@ -95,13 +95,13 @@ func TestRecordClawMetrics(t *testing.T) {
 		recordClawMetrics(instance)
 
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusReady,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusReady,
 		})))
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusProvisioning,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusProvisioning,
 		})))
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusFailed,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusFailed,
 		})))
 	})
 
@@ -114,13 +114,13 @@ func TestRecordClawMetrics(t *testing.T) {
 		recordClawMetrics(instance)
 
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusReady,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusReady,
 		})))
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusProvisioning,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusProvisioning,
 		})))
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusFailed,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusFailed,
 		})))
 	})
 
@@ -138,13 +138,13 @@ func TestRecordClawMetrics(t *testing.T) {
 		recordClawMetrics(instance)
 
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
-			"status": metricStatusProvisioning,
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusProvisioning,
 		})))
 	})
 }
 
 func TestClearClawMetrics(t *testing.T) {
-	t.Run("should remove all series from both gauge vectors", func(t *testing.T) {
+	t.Run("should remove all series for the given instance", func(t *testing.T) {
 		t.Cleanup(resetMetrics)
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-claw", Namespace: "test-ns"},
@@ -159,10 +159,43 @@ func TestClearClawMetrics(t *testing.T) {
 		assert.Equal(t, 3, testutil.CollectAndCount(clawInstanceStatus))
 		assert.Equal(t, 1, testutil.CollectAndCount(clawInstanceInfo))
 
-		clearClawMetrics()
+		clearClawMetrics("my-claw", "test-ns")
 
 		assert.Equal(t, 0, testutil.CollectAndCount(clawInstanceStatus))
 		assert.Equal(t, 0, testutil.CollectAndCount(clawInstanceInfo))
+	})
+
+	t.Run("should only remove series for the specified instance", func(t *testing.T) {
+		t.Cleanup(resetMetrics)
+		instance1 := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: "claw-1", Namespace: "ns-1"},
+			Status: clawv1alpha1.ClawStatus{
+				Conditions: []metav1.Condition{
+					{Type: clawv1alpha1.ConditionTypeReady, Status: metav1.ConditionTrue, Reason: clawv1alpha1.ConditionReasonReady},
+				},
+			},
+		}
+		instance2 := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: "claw-2", Namespace: "ns-2"},
+			Status: clawv1alpha1.ClawStatus{
+				Conditions: []metav1.Condition{
+					{Type: clawv1alpha1.ConditionTypeReady, Status: metav1.ConditionFalse, Reason: clawv1alpha1.ConditionReasonProvisioning},
+				},
+			},
+		}
+		recordClawMetrics(instance1)
+		recordClawMetrics(instance2)
+
+		assert.Equal(t, 6, testutil.CollectAndCount(clawInstanceStatus))
+		assert.Equal(t, 2, testutil.CollectAndCount(clawInstanceInfo))
+
+		clearClawMetrics("claw-1", "ns-1")
+
+		assert.Equal(t, 3, testutil.CollectAndCount(clawInstanceStatus))
+		assert.Equal(t, 1, testutil.CollectAndCount(clawInstanceInfo))
+		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "claw-2", "namespace": "ns-2", "status": metricStatusProvisioning,
+		})))
 	})
 }
 
@@ -181,7 +214,7 @@ func TestClawInstanceInfoMetric(t *testing.T) {
 		recordClawMetrics(instance)
 
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceInfo.With(prometheus.Labels{
-			"auth_mode": "token", "idle": "false",
+			"name": "my-claw", "namespace": "test-ns", "auth_mode": "token", "idle": "false",
 		})))
 	})
 
@@ -203,7 +236,7 @@ func TestClawInstanceInfoMetric(t *testing.T) {
 		recordClawMetrics(instance)
 
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceInfo.With(prometheus.Labels{
-			"auth_mode": "password", "idle": "false",
+			"name": "my-claw", "namespace": "test-ns", "auth_mode": "password", "idle": "false",
 		})))
 	})
 
@@ -225,7 +258,7 @@ func TestClawInstanceInfoMetric(t *testing.T) {
 		recordClawMetrics(instance)
 
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceInfo.With(prometheus.Labels{
-			"auth_mode": "token", "idle": "true",
+			"name": "my-claw", "namespace": "test-ns", "auth_mode": "token", "idle": "true",
 		})))
 	})
 
@@ -249,7 +282,7 @@ func TestClawInstanceInfoMetric(t *testing.T) {
 		assert.Equal(t, 1, testutil.CollectAndCount(clawInstanceInfo),
 			"old series should be removed, only one info series should exist")
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceInfo.With(prometheus.Labels{
-			"auth_mode": "token", "idle": "true",
+			"name": "my-claw", "namespace": "test-ns", "auth_mode": "token", "idle": "true",
 		})))
 	})
 }

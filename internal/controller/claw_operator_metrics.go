@@ -39,7 +39,7 @@ var clawInstanceStatus = prometheus.NewGaugeVec(
 		Name: "claw_instance_status",
 		Help: "Current status of a Claw instance (1 for the active status, 0 for others)",
 	},
-	[]string{"status"},
+	[]string{"name", "namespace", "status"},
 )
 
 var clawInstanceInfo = prometheus.NewGaugeVec(
@@ -47,7 +47,7 @@ var clawInstanceInfo = prometheus.NewGaugeVec(
 		Name: "claw_instance_info",
 		Help: "Metadata labels for a Claw instance (always 1)",
 	},
-	[]string{"auth_mode", "idle"},
+	[]string{"name", "namespace", "auth_mode", "idle"},
 )
 
 func init() {
@@ -66,6 +66,9 @@ func conditionReasonToStatus(reason string) string {
 }
 
 func recordClawMetrics(instance *clawv1alpha1.Claw) {
+	name := instance.Name
+	namespace := instance.Namespace
+
 	readyCond := meta.FindStatusCondition(instance.Status.Conditions, clawv1alpha1.ConditionTypeReady)
 	var currentStatus string
 	if readyCond != nil {
@@ -79,10 +82,11 @@ func recordClawMetrics(instance *clawv1alpha1.Claw) {
 		if s == currentStatus {
 			val = 1
 		}
-		clawInstanceStatus.WithLabelValues(s).Set(val)
+		clawInstanceStatus.WithLabelValues(name, namespace, s).Set(val)
 	}
 
-	clawInstanceInfo.Reset()
+	instanceLabels := prometheus.Labels{"name": name, "namespace": namespace}
+	clawInstanceInfo.DeletePartialMatch(instanceLabels)
 
 	authMode := string(clawv1alpha1.AuthModeToken)
 	if instance.Spec.Auth != nil && instance.Spec.Auth.Mode != "" {
@@ -90,12 +94,15 @@ func recordClawMetrics(instance *clawv1alpha1.Claw) {
 	}
 
 	clawInstanceInfo.WithLabelValues(
+		name,
+		namespace,
 		authMode,
 		strconv.FormatBool(instance.Spec.Idle),
 	).Set(1)
 }
 
-func clearClawMetrics() {
-	clawInstanceStatus.Reset()
-	clawInstanceInfo.Reset()
+func clearClawMetrics(name, namespace string) {
+	instanceLabels := prometheus.Labels{"name": name, "namespace": namespace}
+	clawInstanceStatus.DeletePartialMatch(instanceLabels)
+	clawInstanceInfo.DeletePartialMatch(instanceLabels)
 }

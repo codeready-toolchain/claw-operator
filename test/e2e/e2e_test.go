@@ -348,13 +348,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 			t.Log("verifying claw_instance_status metric for ready instance")
 			metricsOutput = fetchFreshMetrics(t, "curl-metrics-status")
-			assert.Contains(t, metricsOutput, `claw_instance_status{status="ready"} 1`)
-			assert.Contains(t, metricsOutput, `claw_instance_status{status="provisioning"} 0`)
-			assert.Contains(t, metricsOutput, `claw_instance_status{status="failed"} 0`)
+			t.Logf("metricsOutput: %s", metricsOutput)
+			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="ready"} 1`)
+			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="provisioning"} 0`)
+			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="failed"} 0`)
 
 			t.Log("verifying claw_instance_info metric")
-			assert.Contains(t, metricsOutput,
-				`claw_instance_info{auth_mode="token",idle="false"} 1`)
+			assert.Contains(t, metricsOutput, `claw_instance_info{auth_mode="token",idle="false",name="instance",namespace="default"} 1`)
 
 			t.Log("cleaning up Claw instance after metrics check")
 			cmd = exec.Command("kubectl", "delete", "claw", clawInstanceName,
