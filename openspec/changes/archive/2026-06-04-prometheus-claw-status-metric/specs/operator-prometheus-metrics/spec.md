@@ -26,11 +26,11 @@ The operator SHALL expose a Prometheus gauge vector named `claw_instance_status`
 - **THEN** the metric SHALL default to `status="provisioning"` with value `1`
 
 ### Requirement: Operator exposes claw_instance_info gauge
-The operator SHALL expose a Prometheus gauge vector named `claw_instance_info` with labels `name`, `namespace`, `auth_mode`, `metrics_enabled`, and `idle`. The value SHALL always be `1` for each reconciled instance.
+The operator SHALL expose a Prometheus gauge vector named `claw_instance_info` with labels `name`, `namespace`, `auth_mode`, and `idle`. The value SHALL always be `1` for each reconciled instance.
 
 #### Scenario: Info metric reflects instance spec
-- **WHEN** a Claw instance is reconciled with auth mode "token", metrics disabled, and idle=false
-- **THEN** the metric `claw_instance_info{name=<instance>, namespace=<ns>, auth_mode="token", metrics_enabled="false", idle="false"}` SHALL be `1`
+- **WHEN** a Claw instance is reconciled with auth mode "token" and idle=false
+- **THEN** the metric `claw_instance_info{name=<instance>, namespace=<ns>, auth_mode="token", idle="false"}` SHALL be `1`
 
 #### Scenario: Info metric reflects password auth mode
 - **WHEN** a Claw instance has spec.auth.mode="password"

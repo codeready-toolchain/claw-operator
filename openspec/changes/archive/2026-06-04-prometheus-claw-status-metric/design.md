@@ -40,11 +40,10 @@ This keeps the metric consistent with the CRD status without introducing a separ
 
 ### 3. Info metric as a separate GaugeVec
 
-`claw_instance_info{name, namespace, auth_mode, metrics_enabled, idle}` is always `1` for each reconciled instance. This is the standard Prometheus info-metric pattern for attaching metadata to time series via `* on (name, namespace) group_left(auth_mode, ...) claw_instance_info`.
+`claw_instance_info{name, namespace, auth_mode, idle}` is always `1` for each reconciled instance. This is the standard Prometheus info-metric pattern for attaching metadata to time series via `* on (name, namespace) group_left(auth_mode, ...) claw_instance_info`.
 
 Label values:
 - `auth_mode`: `"token"` or `"password"` (from `spec.auth.mode`, default `"token"`)
-- `metrics_enabled`: `"true"` or `"false"` (from `spec.metrics.enabled`)
 - `idle`: `"true"` or `"false"` (from `spec.idle`)
 
 ### 4. Registration via controller-runtime metrics registry

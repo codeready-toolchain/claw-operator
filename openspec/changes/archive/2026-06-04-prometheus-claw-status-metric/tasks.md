@@ -1,6 +1,6 @@
 ## 1. Metric Registration
 
-- [x] 1.1 Create `internal/controller/claw_operator_metrics.go` with `claw_instance_status` GaugeVec (labels: `name`, `namespace`, `status`) and `claw_instance_info` GaugeVec (labels: `name`, `namespace`, `auth_mode`, `metrics_enabled`, `idle`). Register both on the controller-runtime metrics registry via `init()`.
+- [x] 1.1 Create `internal/controller/claw_operator_metrics.go` with `claw_instance_status` GaugeVec (labels: `name`, `namespace`, `status`) and `claw_instance_info` GaugeVec (labels: `name`, `namespace`, `auth_mode`, `idle`). Register both on the controller-runtime metrics registry via `init()`.
 - [x] 1.2 Define the status label constants (`ready`, `provisioning`, `failed`) and the mapping function from Ready condition reason to status label value.
 
 ## 2. Metric Update Logic
@@ -17,7 +17,7 @@
 
 - [x] 4.1 Create `internal/controller/claw_operator_metrics_test.go` with tests for `recordClawMetrics`: verify correct gauge values for each Ready condition reason (Ready, Provisioning, ValidationFailed, missing condition).
 - [x] 4.2 Add tests for `clearClawMetrics`: verify all series for the instance are removed from both gauge vectors after cleanup.
-- [x] 4.3 Add tests for the info metric: verify label values match spec (auth_mode, metrics_enabled, idle) and that stale labels are cleaned on spec change.
+- [x] 4.3 Add tests for the info metric: verify label values match spec (auth_mode, idle) and that stale labels are cleaned on spec change.
 
 ## 5. E2e Tests
 

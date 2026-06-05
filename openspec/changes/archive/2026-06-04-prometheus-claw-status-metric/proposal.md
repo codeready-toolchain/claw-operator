@@ -5,7 +5,7 @@ The operator currently has no visibility into how many Claw instances exist or w
 ## What Changes
 
 - Expose a `claw_instance_status` gauge vector with labels `name`, `namespace`, and `status` (`ready`, `provisioning`, `failed`). For each instance, the current status is set to `1` and the others to `0`.
-- Expose a `claw_instance_info` gauge vector with labels `name`, `namespace`, `auth_mode`, `metrics_enabled`, `idle` — set to `1` for every reconciled instance. Useful for PromQL join queries in dashboards.
+- Expose a `claw_instance_info` gauge vector with labels `name`, `namespace`, `auth_mode`, `idle` — set to `1` for every reconciled instance. Useful for PromQL join queries in dashboards.
 - Register both metrics with the controller-runtime metrics registry so they are served on the operator's existing `/metrics` endpoint.
 - Update the metrics inside `updateStatus()` on every reconcile, deriving `status` from the `Ready` condition.
 - Add a finalizer to clean up stale metric series when a Claw resource is deleted.

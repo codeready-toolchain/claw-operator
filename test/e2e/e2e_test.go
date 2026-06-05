@@ -324,6 +324,14 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			assert.Contains(t, metricsOutput, "controller_runtime_reconcile_total")
 
 			t.Log("creating credential Secret and Claw instance for operator metrics check")
+			t.Cleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "claw", clawInstanceName,
+					"-n", userNamespace, "--ignore-not-found")
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+					"-n", userNamespace, "--ignore-not-found")
+				_, _ = utils.Run(t, cmd)
+			})
 			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key",
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
@@ -355,14 +363,6 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 			t.Log("verifying claw_instance_info metric")
 			assert.Contains(t, metricsOutput, `claw_instance_info{auth_mode="token",idle="false",name="instance",namespace="default"} 1`)
-
-			t.Log("cleaning up Claw instance after metrics check")
-			cmd = exec.Command("kubectl", "delete", "claw", clawInstanceName,
-				"-n", userNamespace)
-			_, _ = utils.Run(t, cmd)
-			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key",
-				"-n", userNamespace, "--ignore-not-found")
-			_, _ = utils.Run(t, cmd)
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
