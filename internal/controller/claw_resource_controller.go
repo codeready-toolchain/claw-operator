@@ -381,18 +381,6 @@ func getProxyConfigMapName(instanceName string) string {
 	return instanceName + "-proxy-config"
 }
 
-func getDevicePairingDeploymentName(instanceName string) string {
-	return instanceName + "-device-pairing"
-}
-
-func getDevicePairingServiceName(instanceName string) string {
-	return instanceName + "-device-pairing"
-}
-
-func getDevicePairingServiceAccountName(instanceName string) string {
-	return instanceName + "-device-pairing"
-}
-
 // ClawResourceReconciler reconciles all resources for Claw
 type ClawResourceReconciler struct {
 	client.Client
@@ -454,16 +442,9 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	// Delete legacy ClusterRole left by pre-Role versions of the operator
-	if err := r.cleanupLegacyDevicePairingClusterRole(ctx, instance.Name); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to clean up legacy device-pairing ClusterRole: %w", err)
-	}
-
-	// Clean up device-pairing resources if device pairing is now disabled
-	if shouldDisableDevicePairing(instance.Spec.Auth) {
-		if err := r.cleanupDevicePairingResources(ctx, instance); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to clean up device-pairing resources: %w", err)
-		}
+	// Clean up device-pairing deployment resources from previous operator versions
+	if err := r.cleanupDevicePairingResources(ctx, instance); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to clean up device-pairing resources: %w", err)
 	}
 
 	// Create or update the gateway Secret with token
@@ -568,14 +549,6 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{Requeue: true, RequeueAfter: 5 * time.Second}, nil
 		}
 
-		if !shouldDisableDevicePairing(instance.Spec.Auth) {
-			if err := injectRouteHostIntoDevicePairingRoute(objects, routeHost, instance.Name); err != nil {
-				return ctrl.Result{}, err
-			}
-			if _, err := r.applyRouteByName(ctx, objects, instance, getDevicePairingRouteName(instance.Name)); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to apply device-pairing Route: %w", err)
-			}
-		}
 	} else {
 		// Route CRD not registered - proceed with localhost fallback
 		logger.Info("Route CRD not registered, using localhost fallback for CORS")
@@ -586,7 +559,6 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.Error(err, "Failed to resolve auth password")
 		instance.Status.URL = "" //nolint:staticcheck // deprecated but still populated
 		instance.Status.GatewayURL = ""
-		instance.Status.DevicePairingURL = ""
 		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
 			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
@@ -968,20 +940,6 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 	maps.Copy(allManifests, clawManifests)
 	maps.Copy(allManifests, proxyManifests)
 
-	devicePairingEnabled := !shouldDisableDevicePairing(instance.Spec.Auth)
-	if devicePairingEnabled {
-		devicePairingManifests := map[string][]byte{
-			"manifests/claw-device-pairing/kustomization.yaml":  readEmbeddedFile("manifests/claw-device-pairing/kustomization.yaml"),
-			"manifests/claw-device-pairing/serviceaccount.yaml": readEmbeddedFile("manifests/claw-device-pairing/serviceaccount.yaml"),
-			"manifests/claw-device-pairing/role.yaml":           readEmbeddedFile("manifests/claw-device-pairing/role.yaml"),
-			"manifests/claw-device-pairing/rolebinding.yaml":    readEmbeddedFile("manifests/claw-device-pairing/rolebinding.yaml"),
-			"manifests/claw-device-pairing/deployment.yaml":     readEmbeddedFile("manifests/claw-device-pairing/deployment.yaml"),
-			"manifests/claw-device-pairing/service.yaml":        readEmbeddedFile("manifests/claw-device-pairing/service.yaml"),
-			"manifests/claw-device-pairing/route.yaml":          readEmbeddedFile("manifests/claw-device-pairing/route.yaml"),
-		}
-		maps.Copy(allManifests, devicePairingManifests)
-	}
-
 	for path, content := range allManifests {
 		replaced := bytes.ReplaceAll(content, []byte("CLAW_INSTANCE_NAME"), []byte(instance.Name))
 		if err := fs.WriteFile(path, replaced); err != nil {
@@ -1003,14 +961,6 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 
 	// Merge all object lists
 	allObjects := append(clawObjects, proxyObjects...)
-
-	if devicePairingEnabled {
-		devicePairingObjects, err := r.buildKustomizeFromPath(fs, "manifests/claw-device-pairing")
-		if err != nil {
-			return nil, err
-		}
-		allObjects = append(allObjects, devicePairingObjects...)
-	}
 
 	// Inject instance labels into selectors for multi-instance discrimination
 	if err := injectInstanceLabels(allObjects, instance.Name); err != nil {
@@ -1136,26 +1086,20 @@ func (r *ClawResourceReconciler) applyRouteByName(ctx context.Context, objects [
 	return r.applyResources(ctx, routeObjects)
 }
 
-func getDevicePairingRouteName(instanceName string) string {
-	return instanceName + "-device-pairing"
-}
-
-func getDevicePairingRoleBindingName(instanceName string) string {
-	return instanceName + "-device-pairing"
-}
-
 func (r *ClawResourceReconciler) cleanupDevicePairingResources(ctx context.Context, instance *clawv1alpha1.Claw) error {
 	logger := log.FromContext(ctx)
 	name := instance.Name
 	ns := instance.Namespace
+	dpName := name + "-device-pairing"
 
 	resources := []client.Object{
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: getDevicePairingDeploymentName(name), Namespace: ns}},
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: getDevicePairingServiceName(name), Namespace: ns}},
-		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: getDevicePairingServiceAccountName(name), Namespace: ns}},
-		newDevicePairingRouteUnstructured(name, ns),
-		newDevicePairingRoleBindingUnstructured(name, ns),
-		newDevicePairingRoleUnstructured(name, ns),
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: dpName, Namespace: ns}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: dpName, Namespace: ns}},
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: dpName, Namespace: ns}},
+		newUnstructuredResource("route.openshift.io", RouteKind, dpName, ns),
+		newUnstructuredResource("rbac.authorization.k8s.io", "RoleBinding", dpName, ns),
+		newUnstructuredResource("rbac.authorization.k8s.io", "Role", dpName, ns),
+		newUnstructuredResource("rbac.authorization.k8s.io", "ClusterRole", dpName, ""),
 	}
 
 	for _, obj := range resources {
@@ -1173,76 +1117,14 @@ func (r *ClawResourceReconciler) cleanupDevicePairingResources(ctx context.Conte
 	return nil
 }
 
-func newDevicePairingRouteUnstructured(instanceName, ns string) *unstructured.Unstructured {
+func newUnstructuredResource(group, kind, name, ns string) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "route.openshift.io",
-		Version: "v1",
-		Kind:    RouteKind,
-	})
-	u.SetName(getDevicePairingRouteName(instanceName))
-	u.SetNamespace(ns)
-	return u
-}
-
-func newDevicePairingRoleBindingUnstructured(instanceName, ns string) *unstructured.Unstructured {
-	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "rbac.authorization.k8s.io",
-		Version: "v1",
-		Kind:    "RoleBinding",
-	})
-	u.SetName(getDevicePairingRoleBindingName(instanceName))
-	u.SetNamespace(ns)
-	return u
-}
-
-func newDevicePairingRoleUnstructured(instanceName, ns string) *unstructured.Unstructured {
-	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "rbac.authorization.k8s.io",
-		Version: "v1",
-		Kind:    "Role",
-	})
-	u.SetName(instanceName + "-device-pairing")
-	u.SetNamespace(ns)
-	return u
-}
-
-func (r *ClawResourceReconciler) cleanupLegacyDevicePairingClusterRole(ctx context.Context, instanceName string) error {
-	logger := log.FromContext(ctx)
-	legacyCR := &unstructured.Unstructured{}
-	legacyCR.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "rbac.authorization.k8s.io",
-		Version: "v1",
-		Kind:    "ClusterRole",
-	})
-	legacyCR.SetName(instanceName + "-device-pairing")
-	if err := r.Delete(ctx, legacyCR); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to delete legacy device-pairing ClusterRole %q: %w", legacyCR.GetName(), err)
+	u.SetGroupVersionKind(schema.GroupVersionKind{Group: group, Version: "v1", Kind: kind})
+	u.SetName(name)
+	if ns != "" {
+		u.SetNamespace(ns)
 	}
-	logger.Info("Deleted legacy device-pairing ClusterRole", "name", legacyCR.GetName())
-	return nil
-}
-
-// injectRouteHostIntoDevicePairingRoute replaces the OPENCLAW_ROUTE_HOST placeholder
-// in the device-pairing Route's .spec.host with the resolved Claw Route host.
-// Returns an error if the device-pairing Route is not found in the objects.
-func injectRouteHostIntoDevicePairingRoute(objects []*unstructured.Unstructured, routeHost, instanceName string) error {
-	routeName := getDevicePairingRouteName(instanceName)
-	host := strings.TrimPrefix(routeHost, "https://")
-	for _, obj := range objects {
-		if obj.GetKind() == RouteKind && obj.GetName() == routeName {
-			if err := unstructured.SetNestedField(obj.Object, host, "spec", "host"); err != nil {
-				return fmt.Errorf("failed to set host on device-pairing Route %q: %w", routeName, err)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("device-pairing Route %q not found in rendered manifests", routeName)
+	return u
 }
 
 // injectRouteHost appends the Route host (or localhost fallback) to

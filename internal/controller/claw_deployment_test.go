@@ -1449,49 +1449,10 @@ func TestDeploymentCreateOrUpdateIntegration(t *testing.T) {
 			"proxy generation should not increment on idempotent reconcile")
 	})
 
-	t.Run("should not increment device-pairing generation on idempotent reconcile", func(t *testing.T) {
-		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-
-		createClawInstance(t, ctx, resourceName, namespace)
-
-		instance := &clawv1alpha1.Claw{}
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
-		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
-		require.NoError(t, k8sClient.Update(ctx, instance))
-
-		reconciler := createClawReconciler()
-		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-		dpDeploy := &appsv1.Deployment{}
-		waitFor(t, timeout, interval, func() bool {
-			return k8sClient.Get(ctx, client.ObjectKey{
-				Name:      getDevicePairingDeploymentName(testInstanceName),
-				Namespace: namespace,
-			}, dpDeploy) == nil
-		}, "device-pairing Deployment should be created")
-
-		dpGen := dpDeploy.Generation
-
-		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
-
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
-			Name:      getDevicePairingDeploymentName(testInstanceName),
-			Namespace: namespace,
-		}, dpDeploy))
-
-		assert.Equal(t, dpGen, dpDeploy.Generation,
-			"device-pairing generation should not increment on idempotent reconcile")
-	})
-
 	t.Run("should set owner references on deployments", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		createClawInstance(t, ctx, resourceName, namespace)
-
-		instance := &clawv1alpha1.Claw{}
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, instance))
-		instance.Spec.Auth = &clawv1alpha1.AuthSpec{DisableDevicePairing: boolPtr(false)}
-		require.NoError(t, k8sClient.Update(ctx, instance))
 
 		reconciler := createClawReconciler()
 		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
@@ -1499,7 +1460,6 @@ func TestDeploymentCreateOrUpdateIntegration(t *testing.T) {
 		for _, name := range []string{
 			getClawDeploymentName(testInstanceName),
 			getProxyDeploymentName(testInstanceName),
-			getDevicePairingDeploymentName(testInstanceName),
 		} {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
@@ -1840,7 +1800,6 @@ func TestEnableServiceLinks(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 			Spec: clawv1alpha1.ClawSpec{
 				Credentials: testCredentials(),
-				Auth:        &clawv1alpha1.AuthSpec{DisableDevicePairing: ptr.To(false)},
 			},
 		}
 		require.NoError(t, k8sClient.Create(ctx, instance))
@@ -1851,7 +1810,6 @@ func TestEnableServiceLinks(t *testing.T) {
 		for _, name := range []string{
 			getClawDeploymentName(testInstanceName),
 			getProxyDeploymentName(testInstanceName),
-			getDevicePairingDeploymentName(testInstanceName),
 		} {
 			deployment := &appsv1.Deployment{}
 			waitFor(t, timeout, interval, func() bool {
