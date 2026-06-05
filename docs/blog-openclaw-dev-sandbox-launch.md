@@ -108,9 +108,9 @@ proxy routing, NetworkPolicy updates, and pod rollout. Stdio MCP servers work to
 You can also use the `openclaw` CLI directly by exec-ing into the pod from your cluster. This gives you a terminal-based interface to the same
 assistant — useful for scripting, piping context in, or just preferring the command line over the web UI.
 
-For teams running on their own clusters, the operator exposes more knobs: custom OpenAI-compatible endpoints, in-cluster network bypass,
-additional egress rules, and full config override via `spec.config.raw`. The security model scales from "locked-down shared platform" to
-"wide-open dev cluster" depending on what you configure.
+Whether you're tweaking the pre-configured instance on Dev Sandbox or deploying it on your team's own cluster, you have full control over the `Claw` custom resource. The operator exposes knobs for adding custom AI providers and messaging channels (like Slack, Discord, or Telegram), configuring in-cluster network bypass, adding egress rules, and performing full config overrides via `spec.config.raw`. The security model scales from "locked-down shared platform" to "wide-open dev cluster" depending on what you configure.
+
+Not sure how to configure a specific feature? Just ask OpenClaw! The assistant is fully aware of its own CRD and will gladly write the YAML for you.
 
 ---
 
