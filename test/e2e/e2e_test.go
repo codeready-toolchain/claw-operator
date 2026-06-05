@@ -1561,19 +1561,6 @@ func fetchFreshMetrics(t *testing.T, podName string) string {
 			output, err := utils.Run(t, cmd)
 			return err == nil && output == podPhaseSucceeded, nil
 		})
-	if err != nil {
-		t.Logf("error getting pod %s to %s phase: %v", podName, podPhaseSucceeded, err)
-		// cmd = exec.Command("kubectl", "describe", "pod", podName, "-n", operatorNamespace)
-		// logs, _ := utils.Run(t, cmd)
-		// t.Logf("pod %s description: %s", podName, logs)
-		cmd = exec.Command("kubectl", "logs", podName, "-n", operatorNamespace)
-		logs, err := utils.Run(t, cmd)
-		if err == nil {
-			t.Logf("pod %s logs: %s", podName, logs)
-		} else {
-			t.Logf("error getting pod %s logs: %v", podName, err)
-		}
-	}
 	require.NoError(t, err, "pod %s did not reach Succeeded phase within %v", podName, defaultTimeout)
 
 	cmd = exec.Command("kubectl", "logs", podName, "-n", operatorNamespace)
