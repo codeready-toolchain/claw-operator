@@ -17,32 +17,31 @@ limitations under the License.
 package proxy
 
 import (
-	"fmt"
 	"net/http"
-	"os"
 	"strings"
 )
 
 // BearerInjector injects Authorization: Bearer <token>.
 type BearerInjector struct {
-	envVar         string
+	source         credentialSource
 	defaultHeaders map[string]string
 }
 
 func NewBearerInjector(route *Route) (*BearerInjector, error) {
-	if route.EnvVar == "" {
-		return nil, fmt.Errorf("bearer injector requires envVar")
+	source, err := newCredentialSource(route, "bearer")
+	if err != nil {
+		return nil, err
 	}
 	return &BearerInjector{
-		envVar:         route.EnvVar,
+		source:         source,
 		defaultHeaders: route.DefaultHeaders,
 	}, nil
 }
 
 func (b *BearerInjector) Inject(req *http.Request) error {
-	token := os.Getenv(b.envVar)
-	if token == "" {
-		return fmt.Errorf("credential env var %s is empty", b.envVar)
+	token, err := b.source.Value()
+	if err != nil {
+		return err
 	}
 	for k, v := range b.defaultHeaders {
 		if strings.EqualFold(k, "Authorization") {

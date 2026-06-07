@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 
@@ -35,7 +34,7 @@ import (
 // It also implements token vending: intercepts POST to oauth2.googleapis.com/token
 // and returns a dummy token so Google SDK clients work with placeholder ADC credentials.
 type GCPInjector struct {
-	saFilePath     string
+	source         credentialSource
 	defaultHeaders map[string]string
 
 	mu          sync.Mutex
@@ -43,13 +42,24 @@ type GCPInjector struct {
 }
 
 func NewGCPInjector(route *Route) (*GCPInjector, error) {
-	if route.SAFilePath == "" {
-		return nil, fmt.Errorf("gcp injector requires saFilePath")
+	hasFile := route.SAFilePath != ""
+	hasCredentialFile := route.CredentialFile != ""
+	switch {
+	case hasFile && hasCredentialFile:
+		return nil, fmt.Errorf("gcp injector requires exactly one of saFilePath or credentialFile")
+	case hasCredentialFile:
+		return &GCPInjector{
+			source:         fileCredentialSource{path: route.CredentialFile},
+			defaultHeaders: route.DefaultHeaders,
+		}, nil
+	case hasFile:
+		return &GCPInjector{
+			source:         fileCredentialSource{path: route.SAFilePath},
+			defaultHeaders: route.DefaultHeaders,
+		}, nil
+	default:
+		return nil, fmt.Errorf("gcp injector requires saFilePath or credentialFile")
 	}
-	return &GCPInjector{
-		saFilePath:     route.SAFilePath,
-		defaultHeaders: route.DefaultHeaders,
-	}, nil
 }
 
 func (g *GCPInjector) getTokenSource(ctx context.Context) (*google.Credentials, error) {
@@ -60,10 +70,11 @@ func (g *GCPInjector) getTokenSource(ctx context.Context) (*google.Credentials, 
 		return g.tokenSource, nil
 	}
 
-	saJSON, err := os.ReadFile(g.saFilePath)
+	saJSONValue, err := g.source.Value()
 	if err != nil {
-		return nil, fmt.Errorf("read SA key file %s: %w", g.saFilePath, err)
+		return nil, fmt.Errorf("read GCP credentials: %w", err)
 	}
+	saJSON := []byte(saJSONValue)
 
 	credType, err := detectCredentialType(saJSON)
 	if err != nil {

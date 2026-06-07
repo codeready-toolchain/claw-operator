@@ -64,6 +64,9 @@ const (
 	ClawInitConfigContainerName = "init-config"
 	ClawConfigModeEnvVar        = "CLAW_CONFIG_MODE"
 	DefaultKubectlImage         = "quay.io/openshift/origin-cli:4.21"
+	VaultAgentSecretsPath       = "/vault/secrets"
+	VaultDefaultKVMount         = "secret"
+	VaultDefaultKVVersion       = "2"
 
 	// OpenClaw JSON config keys shared across enrichment functions
 	configKeyGateway   = "gateway"
@@ -87,6 +90,7 @@ const (
 	ConfigMapKind             = "ConfigMap"
 	NetworkPolicyKind         = "NetworkPolicy"
 	ServiceKind               = "Service"
+	ServiceAccountKind        = "ServiceAccount"
 	PersistentVolumeClaimKind = "PersistentVolumeClaim"
 )
 
@@ -782,6 +786,11 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 			return fmt.Errorf("failed to inject MCP proxy egress rules: %w", err)
 		}
 	}
+	if anyCredentialUsesVault(resolvedCreds) {
+		if err := injectVaultProxyEgressRule(objects, instance.Name); err != nil {
+			return fmt.Errorf("failed to inject Vault proxy egress rule: %w", err)
+		}
+	}
 	if err := injectMcpProxyEgressPorts(objects, mcpTargets, instance.Name); err != nil {
 		return fmt.Errorf("failed to inject MCP proxy egress ports: %w", err)
 	}
@@ -815,6 +824,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	}
 	if err := configureProxyForCredentials(objects, instance, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to configure proxy deployment for credentials: %w", err)
+	}
+	if err := configureProxyForVault(objects, instance, resolvedCreds); err != nil {
+		return fmt.Errorf("failed to configure proxy deployment for Vault: %w", err)
 	}
 	if err := configureProxyForWebSearch(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure proxy for web search: %w", err)
@@ -930,6 +942,7 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 	// Claw component manifests
 	clawManifests := map[string][]byte{
 		"manifests/claw/kustomization.yaml":  readEmbeddedFile("manifests/claw/kustomization.yaml"),
+		"manifests/claw/serviceaccount.yaml": readEmbeddedFile("manifests/claw/serviceaccount.yaml"),
 		"manifests/claw/configmap.yaml":      readEmbeddedFile("manifests/claw/configmap.yaml"),
 		"manifests/claw/pvc.yaml":            readEmbeddedFile("manifests/claw/pvc.yaml"),
 		"manifests/claw/deployment.yaml":     readEmbeddedFile("manifests/claw/deployment.yaml"),

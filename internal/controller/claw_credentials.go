@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -85,6 +86,15 @@ func secretForRole(cred clawv1alpha1.CredentialSpec, role string) *clawv1alpha1.
 	return nil
 }
 
+func vaultRefForRole(cred clawv1alpha1.CredentialSpec, role string) *clawv1alpha1.VaultRefEntry {
+	for i := range cred.VaultRef {
+		if cred.VaultRef[i].Role == role {
+			return &cred.VaultRef[i]
+		}
+	}
+	return nil
+}
+
 // proxySecretForCredential returns the SecretRefEntry that the MITM proxy uses
 // for credential injection. For multi-secret channels (e.g., Slack botToken/appToken),
 // it matches the channel's primary SecretRole rather than blindly picking SecretRef[0].
@@ -101,6 +111,22 @@ func proxySecretForCredential(cred clawv1alpha1.CredentialSpec) *clawv1alpha1.Se
 	return primarySecret(cred)
 }
 
+func proxyVaultRefForCredential(cred clawv1alpha1.CredentialSpec) *clawv1alpha1.VaultRefEntry {
+	if cred.Channel != "" && len(cred.VaultRef) > 1 {
+		if defaults, ok := knownChannels[cred.Channel]; ok && len(defaults.SecretRoles) > 0 {
+			if role := defaults.SecretRoles[0].Role; role != "" {
+				if ref := vaultRefForRole(cred, role); ref != nil {
+					return ref
+				}
+			}
+		}
+	}
+	if len(cred.VaultRef) == 0 {
+		return nil
+	}
+	return &cred.VaultRef[0]
+}
+
 // referencesSecret returns true if any SecretRefEntry in the credential references the given secret name.
 func referencesSecret(cred clawv1alpha1.CredentialSpec, secretName string) bool {
 	for _, ref := range cred.SecretRef {
@@ -109,6 +135,47 @@ func referencesSecret(cred clawv1alpha1.CredentialSpec, secretName string) bool 
 		}
 	}
 	return false
+}
+
+func credentialUsesVault(cred clawv1alpha1.CredentialSpec) bool {
+	return len(cred.VaultRef) > 0
+}
+
+type vaultRefID struct {
+	secretPath string
+	field      string
+}
+
+func parseVaultRefID(id string) (vaultRefID, error) {
+	parts := strings.Split(id, "/")
+	normalized := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	if len(normalized) < 2 {
+		return vaultRefID{}, fmt.Errorf("vaultRef id %q must use <path>/<field>", id)
+	}
+	return vaultRefID{
+		secretPath: strings.Join(normalized[:len(normalized)-1], "/"),
+		field:      normalized[len(normalized)-1],
+	}, nil
+}
+
+func vaultRefSupportedByProxy(cred clawv1alpha1.CredentialSpec) bool {
+	switch cred.Type {
+	case clawv1alpha1.CredentialTypeAPIKey, clawv1alpha1.CredentialTypeBearer,
+		clawv1alpha1.CredentialTypeGCP, clawv1alpha1.CredentialTypePathToken,
+		clawv1alpha1.CredentialTypeOAuth2:
+		return true
+	}
+	return false
+}
+
+func validateVaultRefID(id string) bool {
+	_, err := parseVaultRefID(id)
+	return err == nil
 }
 
 // generateGatewayToken generates a cryptographically secure random token
@@ -203,10 +270,30 @@ func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instanc
 	for _, cred := range instance.Spec.Credentials {
 		rc := resolvedCredential{CredentialSpec: cred}
 
-		// Validate SecretRef exists for types that require it
+		if len(cred.SecretRef) > 0 && len(cred.VaultRef) > 0 {
+			errs = append(errs, fmt.Errorf("credential %q: secretRef and vaultRef are mutually exclusive", cred.Name))
+			continue
+		}
+		if credentialUsesVault(cred) {
+			if instance.Spec.Vault == nil {
+				errs = append(errs, fmt.Errorf("credential %q: spec.vault is required when vaultRef is used", cred.Name))
+				continue
+			}
+			if !vaultRefSupportedByProxy(cred) {
+				errs = append(errs, fmt.Errorf("credential %q (type %s): vaultRef is only supported for apiKey, bearer, pathToken, and oauth2 credentials", cred.Name, cred.Type))
+				continue
+			}
+			for _, ref := range cred.VaultRef {
+				if !validateVaultRefID(ref.ID) {
+					errs = append(errs, fmt.Errorf("credential %q: vaultRef id %q must use <path>/<field>", cred.Name, ref.ID))
+				}
+			}
+		}
+
+		// Validate credential source exists for types that require it.
 		if cred.Type != clawv1alpha1.CredentialTypeNone {
-			if len(cred.SecretRef) == 0 {
-				errs = append(errs, fmt.Errorf("credential %q (type %s): secretRef is required", cred.Name, cred.Type))
+			if len(cred.SecretRef) == 0 && len(cred.VaultRef) == 0 {
+				errs = append(errs, fmt.Errorf("credential %q (type %s): secretRef or vaultRef is required", cred.Name, cred.Type))
 				continue
 			}
 			var credFailed bool

@@ -19,14 +19,13 @@ package proxy
 import (
 	"fmt"
 	"net/http"
-	"os"
 )
 
 // APIKeyInjector injects a secret value into a custom header.
 type APIKeyInjector struct {
 	header         string
 	valuePrefix    string
-	envVar         string
+	source         credentialSource
 	defaultHeaders map[string]string
 }
 
@@ -34,21 +33,22 @@ func NewAPIKeyInjector(route *Route) (*APIKeyInjector, error) {
 	if route.Header == "" {
 		return nil, fmt.Errorf("api_key injector requires header")
 	}
-	if route.EnvVar == "" {
-		return nil, fmt.Errorf("api_key injector requires envVar")
+	source, err := newCredentialSource(route, "api_key")
+	if err != nil {
+		return nil, err
 	}
 	return &APIKeyInjector{
 		header:         route.Header,
 		valuePrefix:    route.ValuePrefix,
-		envVar:         route.EnvVar,
+		source:         source,
 		defaultHeaders: route.DefaultHeaders,
 	}, nil
 }
 
 func (a *APIKeyInjector) Inject(req *http.Request) error {
-	value := os.Getenv(a.envVar)
-	if value == "" {
-		return fmt.Errorf("credential env var %s is empty", a.envVar)
+	value, err := a.source.Value()
+	if err != nil {
+		return err
 	}
 	req.Header.Set(a.header, a.valuePrefix+value)
 	for k, v := range a.defaultHeaders {

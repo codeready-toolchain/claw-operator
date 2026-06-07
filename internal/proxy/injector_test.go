@@ -113,6 +113,24 @@ func TestNewInjector(t *testing.T) {
 			route: Route{Injector: "gcp", SAFilePath: "/tmp/sa.json"},
 		},
 		{
+			name:  "gcp injector with credentialFile",
+			route: Route{Injector: "gcp", CredentialFile: "/vault/secrets/vertex"},
+		},
+		{
+			name:    "gcp injector without credential source",
+			route:   Route{Injector: "gcp"},
+			wantErr: true,
+		},
+		{
+			name: "gcp injector with two credential files",
+			route: Route{
+				Injector:       "gcp",
+				SAFilePath:     "/tmp/sa.json",
+				CredentialFile: "/vault/secrets/vertex",
+			},
+			wantErr: true,
+		},
+		{
 			name:    "unknown injector",
 			route:   Route{Injector: "bogus"},
 			wantErr: true,

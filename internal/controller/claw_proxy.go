@@ -22,6 +22,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -63,6 +64,7 @@ type proxyRoute struct {
 	Header         string            `json:"header,omitempty"`
 	ValuePrefix    string            `json:"valuePrefix,omitempty"`
 	EnvVar         string            `json:"envVar,omitempty"`
+	CredentialFile string            `json:"credentialFile,omitempty"`
 	SAFilePath     string            `json:"saFilePath,omitempty"`
 	GCPProject     string            `json:"gcpProject,omitempty"`
 	GCPLocation    string            `json:"gcpLocation,omitempty"`
@@ -87,6 +89,75 @@ type proxyConfig struct {
 func credEnvVarName(credName string) string {
 	upper := strings.ToUpper(credName)
 	return "CRED_" + strings.ReplaceAll(upper, "-", "_")
+}
+
+func vaultValue(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
+func vaultKVVersion(version int) string {
+	if version == 0 {
+		return VaultDefaultKVVersion
+	}
+	return fmt.Sprint(version)
+}
+
+func vaultCredentialFileName(cred clawv1alpha1.CredentialSpec) string {
+	name := strings.ToLower(cred.Name)
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteByte('-')
+		default:
+			b.WriteByte('-')
+		}
+	}
+	file := strings.Trim(b.String(), "-")
+	if file == "" {
+		file = "credential"
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cred.Name)))[:8]
+	if len(file) > 54 {
+		file = file[:54]
+	}
+	return file + "-" + hash
+}
+
+func vaultCredentialFilePath(cred clawv1alpha1.CredentialSpec) string {
+	return VaultAgentSecretsPath + "/" + vaultCredentialFileName(cred)
+}
+
+func vaultDataPath(vault *clawv1alpha1.VaultSpec, ref clawv1alpha1.VaultRefEntry) (string, string, error) {
+	parsed, err := parseVaultRefID(ref.ID)
+	if err != nil {
+		return "", "", err
+	}
+	mount := strings.Trim(vaultValue(vault.KVMount, VaultDefaultKVMount), "/")
+	if mount == "" {
+		return "", "", fmt.Errorf("vault kvMount must not be empty")
+	}
+	if vaultKVVersion(vault.KVVersion) == "2" {
+		return mount + "/data/" + parsed.secretPath, parsed.field, nil
+	}
+	return mount + "/" + parsed.secretPath, parsed.field, nil
+}
+
+func vaultAgentTemplate(vault *clawv1alpha1.VaultSpec, ref clawv1alpha1.VaultRefEntry) (string, error) {
+	secretPath, field, err := vaultDataPath(vault, ref)
+	if err != nil {
+		return "", err
+	}
+	data := ".Data"
+	if vaultKVVersion(vault.KVVersion) == "2" {
+		data = ".Data.data"
+	}
+	return fmt.Sprintf(`{{- with secret %q -}}{{- index %s %q -}}{{- end -}}`, secretPath, data, field), nil
 }
 
 // builtinPassthrough defines a domain the proxy always allows without credential injection.
@@ -236,21 +307,32 @@ func buildCredentialRoute(cred clawv1alpha1.CredentialSpec) proxyRoute {
 		DefaultHeaders: cred.DefaultHeaders,
 		AllowedPaths:   cred.AllowedPaths,
 	}
+	applyProxyCredentialSource := func() {
+		if proxyVaultRefForCredential(cred) != nil {
+			route.CredentialFile = vaultCredentialFilePath(cred)
+			return
+		}
+		route.EnvVar = credEnvVarName(cred.Name)
+	}
 
 	switch cred.Type {
 	case clawv1alpha1.CredentialTypeAPIKey:
 		route.Injector = injectorAPIKey
-		route.EnvVar = credEnvVarName(cred.Name)
+		applyProxyCredentialSource()
 		if cred.APIKey != nil {
 			route.Header = cred.APIKey.Header
 			route.ValuePrefix = cred.APIKey.ValuePrefix
 		}
 	case clawv1alpha1.CredentialTypeBearer:
 		route.Injector = injectorBearer
-		route.EnvVar = credEnvVarName(cred.Name)
+		applyProxyCredentialSource()
 	case clawv1alpha1.CredentialTypeGCP:
 		route.Injector = injectorGCP
-		route.SAFilePath = "/etc/proxy/credentials/" + cred.Name + "/sa-key.json"
+		if proxyVaultRefForCredential(cred) != nil {
+			route.CredentialFile = vaultCredentialFilePath(cred)
+		} else {
+			route.SAFilePath = "/etc/proxy/credentials/" + cred.Name + "/sa-key.json"
+		}
 		if cred.GCP != nil {
 			route.GCPProject = cred.GCP.Project
 			route.GCPLocation = cred.GCP.Location
@@ -259,13 +341,13 @@ func buildCredentialRoute(cred clawv1alpha1.CredentialSpec) proxyRoute {
 		route.Injector = injectorNone
 	case clawv1alpha1.CredentialTypePathToken:
 		route.Injector = injectorPathToken
-		route.EnvVar = credEnvVarName(cred.Name)
+		applyProxyCredentialSource()
 		if cred.PathToken != nil {
 			route.PathPrefix = cred.PathToken.Prefix
 		}
 	case clawv1alpha1.CredentialTypeOAuth2:
 		route.Injector = injectorOAuth2
-		route.EnvVar = credEnvVarName(cred.Name)
+		applyProxyCredentialSource()
 		if cred.OAuth2 != nil {
 			route.ClientID = cred.OAuth2.ClientID
 			route.TokenURL = cred.OAuth2.TokenURL
@@ -496,6 +578,9 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, instance
 			switch cred.Type {
 			case clawv1alpha1.CredentialTypeAPIKey, clawv1alpha1.CredentialTypeBearer,
 				clawv1alpha1.CredentialTypePathToken, clawv1alpha1.CredentialTypeOAuth2:
+				if credentialUsesVault(cred) {
+					continue
+				}
 				if ref == nil {
 					continue
 				}
@@ -510,6 +595,9 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, instance
 				})
 
 			case clawv1alpha1.CredentialTypeGCP:
+				if credentialUsesVault(cred) {
+					continue
+				}
 				if ref == nil {
 					continue
 				}
@@ -571,6 +659,78 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, instance
 			return fmt.Errorf("failed to set volumes: %w", err)
 		}
 
+		return nil
+	}
+	return fmt.Errorf("claw-proxy deployment not found in manifests")
+}
+
+func anyCredentialUsesVault(credentials []resolvedCredential) bool {
+	for _, rc := range credentials {
+		if credentialUsesVault(rc.CredentialSpec) {
+			return true
+		}
+	}
+	return false
+}
+
+func configureProxyForVault(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw, credentials []resolvedCredential) error {
+	if instance.Spec.Vault == nil || !anyCredentialUsesVault(credentials) {
+		return nil
+	}
+
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(instance.GetName()) {
+			continue
+		}
+
+		vault := instance.Spec.Vault
+		if vault.AuthRole == "" {
+			return fmt.Errorf("vault.authRole is required for Vault Agent auth")
+		}
+
+		if err := unstructured.SetNestedField(obj.Object, instance.Name, "spec", "template", "spec", "serviceAccountName"); err != nil {
+			return fmt.Errorf("failed to set serviceAccountName on proxy deployment: %w", err)
+		}
+		if err := unstructured.SetNestedField(obj.Object, true, "spec", "template", "spec", "automountServiceAccountToken"); err != nil {
+			return fmt.Errorf("failed to enable service account token automount on proxy deployment: %w", err)
+		}
+
+		annotations, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "template", "metadata", "annotations")
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations["vault.hashicorp.com/agent-inject"] = "true"
+		annotations["vault.hashicorp.com/agent-inject-status"] = "update"
+		annotations["vault.hashicorp.com/role"] = vault.AuthRole
+		annotations["vault.hashicorp.com/auth-type"] = "kubernetes"
+		annotations["vault.hashicorp.com/auth-path"] = "auth/kubernetes"
+		if vault.Namespace != "" {
+			annotations["vault.hashicorp.com/namespace"] = vault.Namespace
+		}
+
+		for _, rc := range credentials {
+			cred := rc.CredentialSpec
+			ref := proxyVaultRefForCredential(cred)
+			if ref == nil {
+				continue
+			}
+			fileName := vaultCredentialFileName(cred)
+			secretPath, _, err := vaultDataPath(vault, *ref)
+			if err != nil {
+				return fmt.Errorf("credential %q: %w", cred.Name, err)
+			}
+			template, err := vaultAgentTemplate(vault, *ref)
+			if err != nil {
+				return fmt.Errorf("credential %q: %w", cred.Name, err)
+			}
+			annotations["vault.hashicorp.com/agent-inject-secret-"+fileName] = secretPath
+			annotations["vault.hashicorp.com/agent-inject-template-"+fileName] = template
+			annotations["vault.hashicorp.com/agent-inject-file-"+fileName] = fileName
+		}
+
+		if err := unstructured.SetNestedStringMap(obj.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
+			return fmt.Errorf("failed to set Vault Agent annotations: %w", err)
+		}
 		return nil
 	}
 	return fmt.Errorf("claw-proxy deployment not found in manifests")

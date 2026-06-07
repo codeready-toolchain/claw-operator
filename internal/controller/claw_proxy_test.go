@@ -242,6 +242,31 @@ func TestGenerateProxyConfig(t *testing.T) {
 		assert.Equal(t, "org-123", route.DefaultHeaders["OpenAI-Organization"])
 	})
 
+	t.Run("should generate config with Vault-backed bearer route", func(t *testing.T) {
+		cred := clawv1alpha1.CredentialSpec{
+			Name:     "openai",
+			Type:     clawv1alpha1.CredentialTypeBearer,
+			Provider: "openai",
+			VaultRef: []clawv1alpha1.VaultRefEntry{{
+				ID: "providers/openai/apiKey",
+			}},
+			Domain: "api.openai.com",
+		}
+		credentials := []clawv1alpha1.CredentialSpec{
+			cred,
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, "api.openai.com")
+		assert.Equal(t, "bearer", route.Injector)
+		assert.Empty(t, route.EnvVar)
+		assert.Equal(t, vaultCredentialFilePath(cred), route.CredentialFile)
+	})
+
 	t.Run("should generate config with GCP route and Vertex AI gateway", func(t *testing.T) {
 		credentials := []clawv1alpha1.CredentialSpec{
 			{
@@ -268,6 +293,38 @@ func TestGenerateProxyConfig(t *testing.T) {
 		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
 		assert.Equal(t, "gcp", route.Injector)
 		assert.Equal(t, "/etc/proxy/credentials/vertex/sa-key.json", route.SAFilePath)
+		assert.Equal(t, "my-project", route.GCPProject)
+		assert.Equal(t, "/vertex", route.PathPrefix)
+		assert.Equal(t, "https://us-central1-aiplatform.googleapis.com", route.Upstream)
+	})
+
+	t.Run("should generate config with Vault-backed GCP route", func(t *testing.T) {
+		cred := clawv1alpha1.CredentialSpec{
+			Name:     "vertex",
+			Type:     clawv1alpha1.CredentialTypeGCP,
+			Provider: "google",
+			VaultRef: []clawv1alpha1.VaultRefEntry{{
+				ID: "team-a/vertex/credentialsJson",
+			}},
+			Domain: ".googleapis.com",
+			GCP: &clawv1alpha1.GCPConfig{
+				Project:  "my-project",
+				Location: "us-central1",
+			},
+		}
+		credentials := []clawv1alpha1.CredentialSpec{
+			cred,
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
+		assert.Equal(t, "gcp", route.Injector)
+		assert.Empty(t, route.SAFilePath)
+		assert.Equal(t, vaultCredentialFilePath(cred), route.CredentialFile)
 		assert.Equal(t, "my-project", route.GCPProject)
 		assert.Equal(t, "/vertex", route.PathPrefix)
 		assert.Equal(t, "https://us-central1-aiplatform.googleapis.com", route.Upstream)
@@ -1086,6 +1143,55 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 		}
 	})
 
+	t.Run("should not add credential env var for Vault-backed apiKey credential", func(t *testing.T) {
+		instance, objects := buildObjects(t)
+		creds := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "openai",
+				Type:     clawv1alpha1.CredentialTypeBearer,
+				Provider: "openai",
+				VaultRef: []clawv1alpha1.VaultRefEntry{{ID: "providers/openai/apiKey"}},
+				Domain:   "api.openai.com",
+			},
+		}
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
+
+		container := findProxyContainer(t, objects)
+		envVars, _, _ := unstructured.NestedSlice(container, "env")
+		for _, e := range envVars {
+			env := e.(map[string]any)
+			assert.NotEqual(t, "CRED_OPENAI", env["name"], "Vault-backed credential should not be injected from a Kubernetes Secret")
+		}
+	})
+
+	t.Run("should not add GCP volume or mount for Vault-backed GCP credential", func(t *testing.T) {
+		instance, objects := buildObjects(t)
+		creds := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "google",
+				VaultRef: []clawv1alpha1.VaultRefEntry{{ID: "team-a/vertex/credentialsJson"}},
+				Domain:   ".googleapis.com",
+				GCP:      &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
+			},
+		}
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
+
+		container := findProxyContainer(t, objects)
+		mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
+		for _, m := range mounts {
+			mount := m.(map[string]any)
+			assert.NotEqual(t, "cred-vertex", mount["name"], "Vault-backed GCP credential should not mount a Kubernetes Secret")
+		}
+
+		volumes := findVolumes(t, objects)
+		for _, v := range volumes {
+			vol := v.(map[string]any)
+			assert.NotEqual(t, "cred-vertex", vol["name"], "Vault-backed GCP credential should not add a Kubernetes Secret volume")
+		}
+	})
+
 	t.Run("should handle multiple credential types together", func(t *testing.T) {
 		instance, objects := buildObjects(t)
 		creds := []clawv1alpha1.CredentialSpec{
@@ -1152,6 +1258,80 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 			assert.True(t, foundVol, "kubernetes credential volume should be present")
 		}
 	})
+}
+
+func TestConfigureProxyForVault(t *testing.T) {
+	buildObjects := func(t *testing.T) (*clawv1alpha1.Claw, []*unstructured.Unstructured, []resolvedCredential) {
+		t.Helper()
+		reconciler := createClawReconciler()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Vault = &clawv1alpha1.VaultSpec{
+			AuthRole:  "openclaw",
+			KVMount:   "users",
+			KVVersion: 2,
+		}
+		creds := []resolvedCredential{
+			{
+				CredentialSpec: clawv1alpha1.CredentialSpec{
+					Name:     "openai",
+					Type:     clawv1alpha1.CredentialTypeBearer,
+					VaultRef: []clawv1alpha1.VaultRefEntry{{ID: "providers/openai/apiKey"}},
+					Domain:   "api.openai.com",
+				},
+			},
+		}
+		objects, err := reconciler.buildKustomizedObjects(instance)
+		require.NoError(t, err)
+		return instance, objects, creds
+	}
+
+	findProxyDeployment := func(t *testing.T, objects []*unstructured.Unstructured) *unstructured.Unstructured {
+		t.Helper()
+		for _, obj := range objects {
+			if obj.GetKind() == DeploymentKind && obj.GetName() == getProxyDeploymentName(testInstanceName) {
+				return obj
+			}
+		}
+		t.Fatal("proxy deployment not found")
+		return nil
+	}
+
+	t.Run("should configure proxy for Kubernetes Vault Agent auth", func(t *testing.T) {
+		instance, objects, creds := buildObjects(t)
+		instance.Spec.Vault.Namespace = "admin/team-a"
+
+		require.NoError(t, configureProxyForVault(objects, instance, creds))
+
+		deployment := findProxyDeployment(t, objects)
+		serviceAccountName, _, _ := unstructured.NestedString(
+			deployment.Object, "spec", "template", "spec", "serviceAccountName",
+		)
+		assert.Equal(t, testInstanceName, serviceAccountName)
+
+		automount, _, _ := unstructured.NestedBool(
+			deployment.Object, "spec", "template", "spec", "automountServiceAccountToken",
+		)
+		assert.True(t, automount)
+
+		annotations, _, _ := unstructured.NestedStringMap(deployment.Object, "spec", "template", "metadata", "annotations")
+		assert.Equal(t, "true", annotations["vault.hashicorp.com/agent-inject"])
+		assert.Equal(t, "update", annotations["vault.hashicorp.com/agent-inject-status"])
+		assert.Equal(t, "openclaw", annotations["vault.hashicorp.com/role"])
+		assert.Equal(t, "kubernetes", annotations["vault.hashicorp.com/auth-type"])
+		assert.Equal(t, "auth/kubernetes", annotations["vault.hashicorp.com/auth-path"])
+		assert.Equal(t, "admin/team-a", annotations["vault.hashicorp.com/namespace"])
+
+		fileName := vaultCredentialFileName(creds[0].CredentialSpec)
+		assert.Equal(t, "users/data/providers/openai", annotations["vault.hashicorp.com/agent-inject-secret-"+fileName])
+		assert.Equal(t, fileName, annotations["vault.hashicorp.com/agent-inject-file-"+fileName])
+		assert.Equal(t,
+			`{{- with secret "users/data/providers/openai" -}}{{- index .Data.data "apiKey" -}}{{- end -}}`,
+			annotations["vault.hashicorp.com/agent-inject-template-"+fileName],
+		)
+	})
+
 }
 
 // --- Secret version annotation tests ---

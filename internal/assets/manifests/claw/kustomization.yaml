@@ -6,6 +6,7 @@ labels:
       app.kubernetes.io/name: claw
 
 resources:
+  - serviceaccount.yaml
   - pvc.yaml
   - configmap.yaml
   - deployment.yaml

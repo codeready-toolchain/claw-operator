@@ -19,7 +19,6 @@ package proxy
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 )
 
@@ -28,29 +27,30 @@ import (
 // (e.g., /bot<placeholder>/sendMessage). The injector strips the placeholder
 // segment and inserts the real token from an env var.
 type PathTokenInjector struct {
-	envVar         string
+	source         credentialSource
 	pathPrefix     string
 	defaultHeaders map[string]string
 }
 
 func NewPathTokenInjector(route *Route) (*PathTokenInjector, error) {
-	if route.EnvVar == "" {
-		return nil, fmt.Errorf("path_token injector requires envVar")
+	source, err := newCredentialSource(route, "path_token")
+	if err != nil {
+		return nil, err
 	}
 	if route.PathPrefix == "" {
 		return nil, fmt.Errorf("path_token injector requires pathPrefix")
 	}
 	return &PathTokenInjector{
-		envVar:         route.EnvVar,
+		source:         source,
 		pathPrefix:     route.PathPrefix,
 		defaultHeaders: route.DefaultHeaders,
 	}, nil
 }
 
 func (p *PathTokenInjector) Inject(req *http.Request) error {
-	token := os.Getenv(p.envVar)
-	if token == "" {
-		return fmt.Errorf("credential env var %s is empty", p.envVar)
+	token, err := p.source.Value()
+	if err != nil {
+		return err
 	}
 
 	path := req.URL.Path

@@ -286,6 +286,32 @@ spec:
                       - none
                       - kubernetes
                       type: string
+                    vaultRef:
+                      description: |-
+                        VaultRef references Vault fields holding credential values.
+                        For single-secret credentials, use a one-element array.
+                        For multi-secret channels (e.g., Slack), use role to distinguish entries.
+                        Vault refs are resolved inside the proxy container so provider secrets do
+                        not enter the gateway pod.
+                      items:
+                        description: VaultRefEntry references a string field in Vault.
+                        properties:
+                          id:
+                            description: |-
+                              ID is the Vault SecretRef id in "<path>/<field>" form.
+                              The final segment is the field name; preceding segments are the secret path.
+                            minLength: 3
+                            type: string
+                          role:
+                            description: |-
+                              Role distinguishes multiple Vault refs for the same credential.
+                              Required when multiple vaultRef entries are present (e.g., Slack botToken/appToken).
+                            maxLength: 63
+                            type: string
+                        required:
+                        - id
+                        type: object
+                      type: array
                   required:
                   - name
                   type: object
@@ -297,10 +323,12 @@ spec:
                       'openrouter'])
                   - message: provider and channel are mutually exclusive
                     rule: '!has(self.provider) || !has(self.channel)'
-                  - message: secretRef is required unless type is none or channel
-                      is set
+                  - message: secretRef or vaultRef is required unless type is none
+                      or channel is set
                     rule: has(self.channel) || (has(self.type) && self.type == 'none')
-                      || has(self.secretRef)
+                      || has(self.secretRef) || has(self.vaultRef)
+                  - message: secretRef and vaultRef are mutually exclusive
+                    rule: '!(has(self.secretRef) && has(self.vaultRef))'
                   - message: apiKey config is required when type is apiKey without
                       inferred defaults
                     rule: '!has(self.type) || self.type != ''apiKey'' || has(self.apiKey)
@@ -760,6 +788,37 @@ spec:
                   workspace/skills/<name>/SKILL.md, overwritten on every pod restart
                   (operator-managed).
                 type: object
+              vault:
+                description: Vault configures Vault Agent credential projection for
+                  proxy-injected credentials.
+                properties:
+                  authRole:
+                    description: AuthRole is the Vault role used by this Claw instance.
+                    minLength: 1
+                    type: string
+                  kvMount:
+                    default: secret
+                    description: |-
+                      KVMount is the Vault KV mount used by SecretRef ids.
+                      Defaults to "secret".
+                    type: string
+                  kvVersion:
+                    default: 2
+                    description: |-
+                      KVVersion selects Vault KV v1 or v2.
+                      Defaults to 2.
+                    enum:
+                    - 1
+                    - 2
+                    type: integer
+                  namespace:
+                    description: Namespace is the Vault Enterprise namespace, when
+                      used.
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: authRole is required for Vault Agent auth
+                  rule: has(self.authRole)
               webFetch:
                 description: |-
                   WebFetch enables the web_fetch tool for arbitrary URL fetching.

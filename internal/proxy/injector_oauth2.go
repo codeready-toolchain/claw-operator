@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +33,7 @@ import (
 // The client secret is read from an environment variable; client ID, token URL,
 // and scopes are provided via the route config.
 type OAuth2Injector struct {
-	envVar         string
+	source         credentialSource
 	clientID       string
 	tokenURL       string
 	scopes         []string
@@ -46,8 +45,9 @@ type OAuth2Injector struct {
 }
 
 func NewOAuth2Injector(route *Route) (*OAuth2Injector, error) {
-	if route.EnvVar == "" {
-		return nil, fmt.Errorf("oauth2 injector requires envVar (for client secret)")
+	source, err := newCredentialSource(route, "oauth2")
+	if err != nil {
+		return nil, err
 	}
 	if route.ClientID == "" {
 		return nil, fmt.Errorf("oauth2 injector requires clientID")
@@ -56,7 +56,7 @@ func NewOAuth2Injector(route *Route) (*OAuth2Injector, error) {
 		return nil, fmt.Errorf("oauth2 injector requires tokenURL")
 	}
 	return &OAuth2Injector{
-		envVar:         route.EnvVar,
+		source:         source,
 		clientID:       route.ClientID,
 		tokenURL:       route.TokenURL,
 		scopes:         route.Scopes,
@@ -65,9 +65,9 @@ func NewOAuth2Injector(route *Route) (*OAuth2Injector, error) {
 }
 
 func (o *OAuth2Injector) initTokenSource() {
-	clientSecret := os.Getenv(o.envVar)
-	if clientSecret == "" {
-		o.initErr = fmt.Errorf("credential env var %s is empty", o.envVar)
+	clientSecret, err := o.source.Value()
+	if err != nil {
+		o.initErr = err
 		return
 	}
 

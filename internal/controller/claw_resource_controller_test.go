@@ -859,6 +859,27 @@ func TestOpenClawRouteConfiguration(t *testing.T) {
 		const resourceName = testInstanceName
 		ctx := context.Background()
 
+		t.Run("should build instance ServiceAccount without token automount", func(t *testing.T) {
+			reconciler := createClawReconciler()
+			instance := &clawv1alpha1.Claw{}
+			instance.Name = resourceName
+			instance.Namespace = namespace
+			objects, err := reconciler.buildKustomizedObjects(instance)
+			require.NoError(t, err, "buildKustomizedObjects failed")
+
+			var serviceAccount *unstructured.Unstructured
+			for _, obj := range objects {
+				if obj.GetKind() == ServiceAccountKind && obj.GetName() == resourceName {
+					serviceAccount = obj
+				}
+			}
+			require.NotNil(t, serviceAccount, "instance ServiceAccount not found")
+			automount, found, err := unstructured.NestedBool(serviceAccount.Object, "automountServiceAccountToken")
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.False(t, automount)
+		})
+
 		t.Run("should build kustomized objects with proxy deployment", func(t *testing.T) {
 			t.Cleanup(func() {
 				deleteAndWaitAllResources(t, namespace)

@@ -132,7 +132,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
 	})
 
-	t.Run("should reject creation via CEL when secretRef is empty for apiKey type", func(t *testing.T) {
+	t.Run("should reject creation via CEL when credential source is empty for apiKey type", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
@@ -147,8 +147,8 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			},
 		}
 		err := k8sClient.Create(ctx, instance)
-		require.Error(t, err, "CEL should reject apiKey credential without secretRef")
-		assert.Contains(t, err.Error(), "secretRef is required")
+		require.Error(t, err, "CEL should reject apiKey credential without secretRef or vaultRef")
+		assert.Contains(t, err.Error(), "secretRef or vaultRef is required")
 	})
 
 	t.Run("should reject creation via CEL when apiKey config is nil", func(t *testing.T) {
@@ -269,7 +269,7 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("should reject creation via CEL when known provider is set without secretRef", func(t *testing.T) {
+	t.Run("should reject creation via CEL when known provider is set without credential source", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		instance := &clawv1alpha1.Claw{}
@@ -282,8 +282,8 @@ func TestOpenClawCredentialValidation(t *testing.T) {
 			},
 		}
 		err := k8sClient.Create(ctx, instance)
-		require.Error(t, err, "admission should still require secretRef for known providers")
-		assert.Contains(t, err.Error(), "secretRef is required")
+		require.Error(t, err, "admission should still require secretRef or vaultRef for known providers")
+		assert.Contains(t, err.Error(), "secretRef or vaultRef is required")
 	})
 
 	t.Run("should admit apiKey type with known apiKey provider without apiKey config", func(t *testing.T) {

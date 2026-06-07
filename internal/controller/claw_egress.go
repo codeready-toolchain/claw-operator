@@ -304,6 +304,56 @@ func injectMcpProxyEgressRules(
 	return fmt.Errorf("NetworkPolicy %q not found in manifests", npName)
 }
 
+// injectVaultProxyEgressRule allows the Vault Agent sidecar in the proxy pod to
+// reach the standard Helm-deployed Vault server Service endpoints.
+func injectVaultProxyEgressRule(objects []*unstructured.Unstructured, instanceName string) error {
+	npName := getProxyEgressNetworkPolicyName(instanceName)
+	for _, obj := range objects {
+		if obj.GetKind() != NetworkPolicyKind || obj.GetName() != npName {
+			continue
+		}
+
+		egress, found, err := unstructured.NestedSlice(obj.Object, "spec", "egress")
+		if err != nil {
+			return fmt.Errorf("failed to get egress rules from proxy NetworkPolicy: %w", err)
+		}
+		if !found {
+			egress = []any{}
+		}
+
+		egress = append(egress, map[string]any{
+			"to": []any{
+				map[string]any{
+					"namespaceSelector": map[string]any{
+						"matchLabels": map[string]any{
+							"kubernetes.io/metadata.name": "vault",
+						},
+					},
+					"podSelector": map[string]any{
+						"matchLabels": map[string]any{
+							"app.kubernetes.io/instance": "vault",
+							"app.kubernetes.io/name":     "vault",
+							"component":                  "server",
+						},
+					},
+				},
+			},
+			"ports": []any{
+				map[string]any{
+					"port":     int64(8200),
+					"protocol": "TCP",
+				},
+			},
+		})
+
+		if err := unstructured.SetNestedSlice(obj.Object, egress, "spec", "egress"); err != nil {
+			return fmt.Errorf("failed to set egress rules on proxy NetworkPolicy: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("NetworkPolicy %q not found in manifests", npName)
+}
+
 // injectMcpProxyEgressPorts adds non-443 external MCP ports to the first egress
 // rule in {instance}-proxy-egress, following the injectKubePortsIntoNetworkPolicy
 // pattern.

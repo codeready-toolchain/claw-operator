@@ -1244,6 +1244,65 @@ spec:
 EOF
 ```
 
+## Vault SecretRefs
+
+The operator can resolve proxy-injected credentials from Vault instead of Kubernetes Secrets. Configure Vault Agent auth once in `spec.vault`, then use `vaultRef` on individual `spec.credentials` entries. The operator annotates the proxy pod for Vault Agent injection; Vault Agent renders the requested Vault fields as files under `/vault/secrets`, and the proxy reads those files when it injects outbound provider, channel, or MCP requests. The gateway pod does not receive the provider secret.
+
+### Kubernetes auth
+
+Vault-backed operator credentials use Vault Agent with Vault's Kubernetes auth method. The operator creates an instance-scoped ServiceAccount and sets it only on the proxy pod when Vault-backed credentials are used.
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  vault:
+    authRole: openclaw-$NS
+    kvMount: users
+    kvVersion: 2
+  credentials:
+    - name: openai
+      provider: openai
+      vaultRef:
+        - id: providers/openai/apiKey
+EOF
+```
+
+Vault refs use `<path>/<field>` form. With `kvMount: users` and `kvVersion: 2`, `team-a/openrouter/apiKey` reads `users/data/team-a/openrouter` and returns the `apiKey` field.
+
+GCP credentials can also use `vaultRef`. Store the full GCP credential JSON as a string field in Vault, then reference that field from a `type: gcp` credential:
+
+```sh
+vault kv put users/team-a/vertex credentialsJson=@gcp-credentials.json
+
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  vault:
+    authRole: openclaw-$NS
+    kvMount: users
+    kvVersion: 2
+  credentials:
+    - name: anthropic-vertex
+      type: gcp
+      provider: anthropic
+      domain: .googleapis.com
+      gcp:
+        project: my-gcp-project
+        location: us-east5
+      vaultRef:
+        - id: team-a/vertex/credentialsJson
+EOF
+```
+
+Vault must have an auth role that binds the Claw instance ServiceAccount name and namespace. The operator does not grant that ServiceAccount Kubernetes permissions; Vault uses it only as the workload identity for Agent auth.
+
 ## Memory Search
 
 OpenClaw's memory search feature uses embeddings for semantic recall across agent sessions. The operator automatically configures it when an embedding-capable LLM credential is present — no manual setup required.

@@ -32,6 +32,7 @@ type Route struct {
 	Header         string            `json:"header,omitempty"`
 	ValuePrefix    string            `json:"valuePrefix,omitempty"`
 	EnvVar         string            `json:"envVar,omitempty"`
+	CredentialFile string            `json:"credentialFile,omitempty"`
 	SAFilePath     string            `json:"saFilePath,omitempty"`
 	GCPProject     string            `json:"gcpProject,omitempty"`
 	GCPLocation    string            `json:"gcpLocation,omitempty"`

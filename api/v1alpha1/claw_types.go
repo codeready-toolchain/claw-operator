@@ -106,6 +106,21 @@ type SecretRefEntry struct {
 	Role string `json:"role,omitempty"`
 }
 
+// VaultRefEntry references a string field in Vault.
+type VaultRefEntry struct {
+	// ID is the Vault SecretRef id in "<path>/<field>" form.
+	// The final segment is the field name; preceding segments are the secret path.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=3
+	ID string `json:"id"`
+
+	// Role distinguishes multiple Vault refs for the same credential.
+	// Required when multiple vaultRef entries are present (e.g., Slack botToken/appToken).
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Role string `json:"role,omitempty"`
+}
+
 // APIKeyConfig configures injection of a secret value into a custom header.
 type APIKeyConfig struct {
 	// Header name where the API key is injected (e.g., "x-goog-api-key", "x-api-key")
@@ -154,7 +169,8 @@ type OAuth2Config struct {
 // CredentialSpec defines a single credential entry for proxy injection.
 // +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || (has(self.provider) && self.provider in ['google', 'anthropic', 'openai', 'xai', 'openrouter'])",message="type is required (inferred only for known providers: google, anthropic, openai, xai, openrouter)"
 // +kubebuilder:validation:XValidation:rule="!has(self.provider) || !has(self.channel)",message="provider and channel are mutually exclusive"
-// +kubebuilder:validation:XValidation:rule="has(self.channel) || (has(self.type) && self.type == 'none') || has(self.secretRef)",message="secretRef is required unless type is none or channel is set"
+// +kubebuilder:validation:XValidation:rule="has(self.channel) || (has(self.type) && self.type == 'none') || has(self.secretRef) || has(self.vaultRef)",message="secretRef or vaultRef is required unless type is none or channel is set"
+// +kubebuilder:validation:XValidation:rule="!(has(self.secretRef) && has(self.vaultRef))",message="secretRef and vaultRef are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'apiKey' || has(self.apiKey) || (has(self.provider) && self.provider in ['google', 'anthropic']) || has(self.channel)",message="apiKey config is required when type is apiKey without inferred defaults"
 // +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'gcp' || has(self.gcp) || has(self.channel)",message="gcp config is required when type is gcp without inferred defaults"
 // +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'pathToken' || has(self.pathToken) || has(self.channel)",message="pathToken config is required when type is pathToken without inferred defaults"
@@ -177,6 +193,14 @@ type CredentialSpec struct {
 	// non-secret auth (e.g., WhatsApp QR pairing).
 	// +optional
 	SecretRef []SecretRefEntry `json:"secretRef,omitempty"`
+
+	// VaultRef references Vault fields holding credential values.
+	// For single-secret credentials, use a one-element array.
+	// For multi-secret channels (e.g., Slack), use role to distinguish entries.
+	// Vault refs are resolved inside the proxy container so provider secrets do
+	// not enter the gateway pod.
+	// +optional
+	VaultRef []VaultRefEntry `json:"vaultRef,omitempty"`
 
 	// Domain the proxy matches against the request Host header.
 	// Exact match: "api.github.com". Suffix match: ".googleapis.com" (leading dot).
@@ -314,6 +338,31 @@ type WebFetchSpec struct {
 	// the proxy allowlist.
 	// +kubebuilder:default=true
 	Enabled bool `json:"enabled"`
+}
+
+// VaultSpec configures Vault Agent credential projection for the proxy pod.
+// +kubebuilder:validation:XValidation:rule="has(self.authRole)",message="authRole is required for Vault Agent auth"
+type VaultSpec struct {
+	// AuthRole is the Vault role used by this Claw instance.
+	// +kubebuilder:validation:MinLength=1
+	AuthRole string `json:"authRole,omitempty"`
+
+	// KVMount is the Vault KV mount used by SecretRef ids.
+	// Defaults to "secret".
+	// +optional
+	// +kubebuilder:default=secret
+	KVMount string `json:"kvMount,omitempty"`
+
+	// KVVersion selects Vault KV v1 or v2.
+	// Defaults to 2.
+	// +optional
+	// +kubebuilder:validation:Enum=1;2
+	// +kubebuilder:default=2
+	KVVersion int `json:"kvVersion,omitempty"`
+
+	// Namespace is the Vault Enterprise namespace, when used.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // AuthMode selects the gateway authentication mechanism.
@@ -530,6 +579,10 @@ type ClawSpec struct {
 	// permitted by credentials, search providers, or builtins are reachable.
 	// +optional
 	WebFetch *WebFetchSpec `json:"webFetch,omitempty"`
+
+	// Vault configures Vault Agent credential projection for proxy-injected credentials.
+	// +optional
+	Vault *VaultSpec `json:"vault,omitempty"`
 
 	// Metrics configures Prometheus metrics collection via an OTel Collector sidecar.
 	// +optional
