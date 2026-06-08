@@ -55,6 +55,9 @@ func TestRecordClawMetrics(t *testing.T) {
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
 			"name": "my-claw", "namespace": "test-ns", "status": metricStatusFailed,
 		})))
+		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusIdled,
+		})))
 	})
 
 	t.Run("should set provisioning=1 when condition reason is Provisioning", func(t *testing.T) {
@@ -78,6 +81,9 @@ func TestRecordClawMetrics(t *testing.T) {
 		})))
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
 			"name": "my-claw", "namespace": "test-ns", "status": metricStatusFailed,
+		})))
+		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusIdled,
 		})))
 	})
 
@@ -103,6 +109,9 @@ func TestRecordClawMetrics(t *testing.T) {
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
 			"name": "my-claw", "namespace": "test-ns", "status": metricStatusFailed,
 		})))
+		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusIdled,
+		})))
 	})
 
 	t.Run("should default to provisioning when no Ready condition exists", func(t *testing.T) {
@@ -122,9 +131,12 @@ func TestRecordClawMetrics(t *testing.T) {
 		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
 			"name": "my-claw", "namespace": "test-ns", "status": metricStatusFailed,
 		})))
+		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusIdled,
+		})))
 	})
 
-	t.Run("should default to provisioning for unknown reason (e.g. Idle)", func(t *testing.T) {
+	t.Run("should set idled=1 when condition reason is Idle", func(t *testing.T) {
 		t.Cleanup(resetMetrics)
 		instance := &clawv1alpha1.Claw{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-claw", Namespace: "test-ns"},
@@ -137,8 +149,17 @@ func TestRecordClawMetrics(t *testing.T) {
 
 		recordClawMetrics(instance)
 
-		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusReady,
+		})))
+		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
 			"name": "my-claw", "namespace": "test-ns", "status": metricStatusProvisioning,
+		})))
+		assert.Equal(t, float64(0), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusFailed,
+		})))
+		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "my-claw", "namespace": "test-ns", "status": metricStatusIdled,
 		})))
 	})
 }
@@ -156,7 +177,7 @@ func TestClearClawMetrics(t *testing.T) {
 		}
 		recordClawMetrics(instance)
 
-		assert.Equal(t, 3, testutil.CollectAndCount(clawInstanceStatus))
+		assert.Equal(t, 4, testutil.CollectAndCount(clawInstanceStatus))
 		assert.Equal(t, 1, testutil.CollectAndCount(clawInstanceInfo))
 
 		clearClawMetrics("my-claw", "test-ns")
@@ -186,12 +207,12 @@ func TestClearClawMetrics(t *testing.T) {
 		recordClawMetrics(instance1)
 		recordClawMetrics(instance2)
 
-		assert.Equal(t, 6, testutil.CollectAndCount(clawInstanceStatus))
+		assert.Equal(t, 8, testutil.CollectAndCount(clawInstanceStatus))
 		assert.Equal(t, 2, testutil.CollectAndCount(clawInstanceInfo))
 
 		clearClawMetrics("claw-1", "ns-1")
 
-		assert.Equal(t, 3, testutil.CollectAndCount(clawInstanceStatus))
+		assert.Equal(t, 4, testutil.CollectAndCount(clawInstanceStatus))
 		assert.Equal(t, 1, testutil.CollectAndCount(clawInstanceInfo))
 		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
 			"name": "claw-2", "namespace": "ns-2", "status": metricStatusProvisioning,
@@ -295,7 +316,7 @@ func TestConditionReasonToStatus(t *testing.T) {
 		{clawv1alpha1.ConditionReasonReady, metricStatusReady},
 		{clawv1alpha1.ConditionReasonProvisioning, metricStatusProvisioning},
 		{clawv1alpha1.ConditionReasonValidationFailed, metricStatusFailed},
-		{clawv1alpha1.ConditionReasonIdle, metricStatusProvisioning},
+		{clawv1alpha1.ConditionReasonIdle, metricStatusIdled},
 		{"UnknownReason", metricStatusProvisioning},
 		{"", metricStatusProvisioning},
 	}

@@ -360,6 +360,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="ready"} 1`)
 			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="provisioning"} 0`)
 			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="failed"} 0`)
+			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="idled"} 0`)
 
 			t.Log("verifying claw_instance_info metric")
 			assert.Contains(t, metricsOutput, `claw_instance_info{auth_mode="token",idle="false",name="instance",namespace="default"} 1`)
@@ -1098,6 +1099,13 @@ spec:
 					return err == nil && (output == "[]" || output == ""), nil
 				})
 			require.NoError(t, err, "Pods should be terminated after idling")
+
+			t.Log("verifying claw_instance_status metric for idled instance")
+			idleMetrics := fetchFreshMetrics(t, "curl-metrics-idle")
+			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="default",status="idled"} 1`)
+			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="default",status="ready"} 0`)
+			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="default",status="provisioning"} 0`)
+			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="default",status="failed"} 0`)
 
 			t.Log("unidling the instance")
 			cmd = exec.Command("kubectl", "patch", "claw", "instance",
