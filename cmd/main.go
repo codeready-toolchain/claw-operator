@@ -263,6 +263,7 @@ func main() {
 		KubectlImage:       os.Getenv("KUBECTL_IMAGE"),
 		OTelCollectorImage: os.Getenv("OTEL_COLLECTOR_IMAGE"),
 		ImagePullPolicy:    imagePullPolicy,
+		MetricsRefreshed:   make(chan struct{}),
 	}
 	if err = clawReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Claw")

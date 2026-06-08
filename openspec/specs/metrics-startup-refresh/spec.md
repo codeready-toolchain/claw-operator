@@ -36,6 +36,21 @@ The operator SHALL implement the startup metric refresh as a `Runnable` register
 - **WHEN** the operator starts and the manager cache is synced
 - **THEN** the metric refresh SHALL execute using the cached client (no direct API server calls)
 
+### Requirement: Reconciliation blocked until metrics refresh completes
+The controller SHALL NOT process any reconcile events until the startup metric refresh has completed. This ensures no mismatch or double-counting between the refresh and normal reconciliation.
+
+#### Scenario: Reconcile waits for refresh
+- **WHEN** a reconcile event is triggered before the metric refresh has completed
+- **THEN** the reconciler SHALL block until the refresh finishes before proceeding
+
+#### Scenario: Reconcile proceeds after refresh
+- **WHEN** the metric refresh has completed
+- **THEN** subsequent reconcile events SHALL proceed without delay
+
+#### Scenario: Context cancelled while waiting
+- **WHEN** a reconcile event is waiting for the metric refresh and the context is cancelled
+- **THEN** the reconciler SHALL return the context error immediately
+
 ### Requirement: Unit tests cover startup refresh
 The operator SHALL have unit tests verifying that the startup refresh correctly populates metrics for existing Claw resources.
 

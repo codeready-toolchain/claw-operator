@@ -393,6 +393,9 @@ type ClawResourceReconciler struct {
 	KubectlImage       string
 	OTelCollectorImage string
 	ImagePullPolicy    string
+	// MetricsRefreshed is closed by Start() after the initial metrics refresh.
+	// Reconcile() waits on it so no reconciliation runs before metrics are populated.
+	MetricsRefreshed chan struct{}
 }
 
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;delete
@@ -414,6 +417,13 @@ type ClawResourceReconciler struct {
 
 // Reconcile manages the complete lifecycle of resources for Claw instances
 func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) { //nolint:gocyclo
+	if r.MetricsRefreshed != nil {
+		select {
+		case <-r.MetricsRefreshed:
+		case <-ctx.Done():
+			return ctrl.Result{}, ctx.Err()
+		}
+	}
 	logger := log.FromContext(ctx)
 	logger.Info("Reconciling Claw", "name", req.Name, "namespace", req.Namespace)
 
@@ -1474,6 +1484,7 @@ func parseYAMLToObjects(yamlData []byte) ([]*unstructured.Unstructured, error) {
 // mgr.Add(). It refreshes Prometheus gauge metrics for all existing Claw
 // resources, ensuring they are populated immediately after a restart.
 func (r *ClawResourceReconciler) Start(ctx context.Context) error {
+	defer close(r.MetricsRefreshed)
 	logger := log.FromContext(ctx).WithName("claw-metrics-refresh")
 	if err := refreshClawMetrics(log.IntoContext(ctx, logger), r.Client); err != nil {
 		logger.Error(err, "failed to refresh Claw metrics on startup")
