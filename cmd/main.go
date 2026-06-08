@@ -255,7 +255,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.ClawResourceReconciler{
+	clawReconciler := &controller.ClawResourceReconciler{
 		Client:             mgr.GetClient(),
 		Scheme:             mgr.GetScheme(),
 		UserSecretReader:   controller.NewLoggingUserSecretReader(mgr.GetAPIReader()),
@@ -263,8 +263,13 @@ func main() {
 		KubectlImage:       os.Getenv("KUBECTL_IMAGE"),
 		OTelCollectorImage: os.Getenv("OTEL_COLLECTOR_IMAGE"),
 		ImagePullPolicy:    imagePullPolicy,
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err = clawReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Claw")
+		os.Exit(1)
+	}
+	if err = mgr.Add(clawReconciler); err != nil {
+		setupLog.Error(err, "unable to add metrics refresh runnable")
 		os.Exit(1)
 	}
 	pairingClientset, err := kubernetes.NewForConfig(mgr.GetConfig())

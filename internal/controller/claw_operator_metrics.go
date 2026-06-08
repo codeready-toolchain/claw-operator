@@ -17,10 +17,13 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
@@ -102,6 +105,19 @@ func recordClawMetrics(instance *clawv1alpha1.Claw) {
 		authMode,
 		strconv.FormatBool(instance.Spec.Idle),
 	).Set(1)
+}
+
+func refreshClawMetrics(ctx context.Context, c client.Client) error {
+	logger := log.FromContext(ctx)
+	var list clawv1alpha1.ClawList
+	if err := c.List(ctx, &list); err != nil {
+		return err
+	}
+	logger.Info("refreshing Claw metrics on startup", "count", len(list.Items))
+	for i := range list.Items {
+		recordClawMetrics(&list.Items[i])
+	}
+	return nil
 }
 
 func clearClawMetrics(name, namespace string) {

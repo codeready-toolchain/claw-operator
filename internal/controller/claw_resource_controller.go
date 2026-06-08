@@ -1470,6 +1470,17 @@ func parseYAMLToObjects(yamlData []byte) ([]*unstructured.Unstructured, error) {
 	return objects, nil
 }
 
+// Start implements manager.Runnable so the reconciler can be registered with
+// mgr.Add(). It refreshes Prometheus gauge metrics for all existing Claw
+// resources, ensuring they are populated immediately after a restart.
+func (r *ClawResourceReconciler) Start(ctx context.Context) error {
+	logger := log.FromContext(ctx).WithName("claw-metrics-refresh")
+	if err := refreshClawMetrics(log.IntoContext(ctx, logger), r.Client); err != nil {
+		logger.Error(err, "failed to refresh Claw metrics on startup")
+	}
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
