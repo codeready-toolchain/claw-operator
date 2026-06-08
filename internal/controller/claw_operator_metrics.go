@@ -30,9 +30,10 @@ const (
 	metricStatusReady        = "ready"
 	metricStatusProvisioning = "provisioning"
 	metricStatusFailed       = "failed"
+	metricStatusIdled        = "idled"
 )
 
-var allStatusValues = []string{metricStatusReady, metricStatusProvisioning, metricStatusFailed}
+var allStatusValues = []string{metricStatusReady, metricStatusProvisioning, metricStatusFailed, metricStatusIdled}
 
 var clawInstanceStatus = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
@@ -60,6 +61,8 @@ func conditionReasonToStatus(reason string) string {
 		return metricStatusReady
 	case clawv1alpha1.ConditionReasonValidationFailed:
 		return metricStatusFailed
+	case clawv1alpha1.ConditionReasonIdle:
+		return metricStatusIdled
 	default:
 		return metricStatusProvisioning
 	}
