@@ -17,12 +17,16 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
@@ -326,4 +330,101 @@ func TestConditionReasonToStatus(t *testing.T) {
 			assert.Equal(t, tt.expected, conditionReasonToStatus(tt.reason))
 		})
 	}
+}
+
+func TestRefreshClawMetrics(t *testing.T) {
+	t.Run("should populate metrics for multiple instances in different states and namespaces", func(t *testing.T) {
+		t.Cleanup(resetMetrics)
+		testCtx := context.Background()
+
+		ns1 := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "metrics-refresh-ns1"}}
+		ns2 := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "metrics-refresh-ns2"}}
+		require.NoError(t, k8sClient.Create(testCtx, ns1))
+		require.NoError(t, k8sClient.Create(testCtx, ns2))
+		t.Cleanup(func() {
+			_ = k8sClient.Delete(testCtx, ns1)
+			_ = k8sClient.Delete(testCtx, ns2)
+		})
+
+		instances := []*clawv1alpha1.Claw{
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "claw-ready", Namespace: ns1.Name},
+				Spec:       clawv1alpha1.ClawSpec{},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "claw-failed", Namespace: ns1.Name},
+				Spec:       clawv1alpha1.ClawSpec{},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "claw-idled", Namespace: ns2.Name},
+				Spec:       clawv1alpha1.ClawSpec{Idle: true},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "claw-provisioning", Namespace: ns2.Name},
+				Spec:       clawv1alpha1.ClawSpec{},
+			},
+		}
+		for _, inst := range instances {
+			require.NoError(t, k8sClient.Create(testCtx, inst))
+		}
+		t.Cleanup(func() {
+			for _, inst := range instances {
+				_ = k8sClient.Delete(testCtx, inst)
+			}
+		})
+
+		// Set status conditions on the created resources
+		statusUpdates := []struct {
+			name, namespace, reason string
+			condStatus              metav1.ConditionStatus
+		}{
+			{"claw-ready", ns1.Name, clawv1alpha1.ConditionReasonReady, metav1.ConditionTrue},
+			{"claw-failed", ns1.Name, clawv1alpha1.ConditionReasonValidationFailed, metav1.ConditionFalse},
+			{"claw-idled", ns2.Name, clawv1alpha1.ConditionReasonIdle, metav1.ConditionFalse},
+			// claw-provisioning: no condition set — should default to provisioning
+		}
+		for _, su := range statusUpdates {
+			inst := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(testCtx, client.ObjectKey{Name: su.name, Namespace: su.namespace}, inst))
+			inst.Status.Conditions = []metav1.Condition{
+				{Type: clawv1alpha1.ConditionTypeReady, Status: su.condStatus, Reason: su.reason, LastTransitionTime: metav1.Now()},
+			}
+			require.NoError(t, k8sClient.Status().Update(testCtx, inst))
+		}
+
+		require.NoError(t, refreshClawMetrics(testCtx, k8sClient))
+
+		// 4 instances * 4 status values = 16 status series + 4 info series
+		assert.Equal(t, 16, testutil.CollectAndCount(clawInstanceStatus))
+		assert.Equal(t, 4, testutil.CollectAndCount(clawInstanceInfo))
+
+		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "claw-ready", "namespace": ns1.Name, "status": metricStatusReady,
+		})))
+		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "claw-failed", "namespace": ns1.Name, "status": metricStatusFailed,
+		})))
+		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "claw-idled", "namespace": ns2.Name, "status": metricStatusIdled,
+		})))
+		assert.Equal(t, float64(1), testutil.ToFloat64(clawInstanceStatus.With(prometheus.Labels{
+			"name": "claw-provisioning", "namespace": ns2.Name, "status": metricStatusProvisioning,
+		})))
+	})
+
+	t.Run("should not set any metrics when no Claw instances exist", func(t *testing.T) {
+		t.Cleanup(resetMetrics)
+		testCtx := context.Background()
+
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "metrics-refresh-empty"}}
+		require.NoError(t, k8sClient.Create(testCtx, ns))
+		t.Cleanup(func() {
+			_ = k8sClient.Delete(testCtx, ns)
+		})
+
+		require.NoError(t, refreshClawMetrics(testCtx, k8sClient))
+
+		assert.Equal(t, 0, testutil.CollectAndCount(clawInstanceStatus))
+		assert.Equal(t, 0, testutil.CollectAndCount(clawInstanceInfo))
+	})
 }
