@@ -48,7 +48,8 @@ jobs:
             docker://ghcr.io/openclaw/openclaw:slim 2>/dev/null || echo "unknown")
           OPENCLAW_CREATED=$(skopeo inspect --format '{{.Created}}' \
             docker://ghcr.io/openclaw/openclaw:slim 2>/dev/null \
-            | cut -d'T' -f1 || echo "unknown")
+            | cut -d'T' -f1) || true
+          OPENCLAW_CREATED=${OPENCLAW_CREATED:-unknown}
           KIND_VERSION=$(kind version | head -1)
           GO_VERSION=$(go version | awk '{print $3}')
 
