@@ -1,0 +1,83 @@
+name: Daily E2E Health Check
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-e2e
+  cancel-in-progress: true
+
+jobs:
+  test-e2e:
+    name: Daily E2E
+    runs-on: ubuntu-latest
+    env:
+      # Pinned kind release; bump when upgrading the e2e cluster tooling.
+      KIND_VERSION: v0.32.0
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install kind
+        run: |
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" -o kind-linux-amd64.sha256sum
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o kind-linux-amd64
+          sha256sum -c kind-linux-amd64.sha256sum
+          chmod +x kind-linux-amd64
+          sudo mv kind-linux-amd64 /usr/local/bin/kind
+
+      - name: Verify kind installation
+        run: kind version
+
+      - name: Capture dependency versions
+        id: versions
+        run: |
+          OPENCLAW_DIGEST=$(skopeo inspect --format '{{.Digest}}' \
+            docker://ghcr.io/openclaw/openclaw:slim 2>/dev/null || echo "unknown")
+          OPENCLAW_CREATED=$(skopeo inspect --format '{{.Created}}' \
+            docker://ghcr.io/openclaw/openclaw:slim 2>/dev/null \
+            | cut -d'T' -f1) || true
+          OPENCLAW_CREATED=${OPENCLAW_CREATED:-unknown}
+          KIND_VERSION=$(kind version | head -1)
+          GO_VERSION=$(go version | awk '{print $3}')
+
+          echo "openclaw_digest=${OPENCLAW_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "openclaw_created=${OPENCLAW_CREATED}" >> "$GITHUB_OUTPUT"
+          echo "kind_version=${KIND_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "go_version=${GO_VERSION}" >> "$GITHUB_OUTPUT"
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Dependency Versions
+          | Dependency | Version |
+          |---|---|
+          | \`openclaw:slim\` digest | \`${OPENCLAW_DIGEST}\` |
+          | \`openclaw:slim\` built | ${OPENCLAW_CREATED} |
+          | Kind | ${KIND_VERSION} |
+          | Go | ${GO_VERSION} |
+          EOF
+
+      - name: Running Test e2e
+        run: |
+          go mod tidy
+          make test-e2e
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: "${{ job.status == 'success' && ':white_check_mark:' || ':x:' }} Daily E2E: *${{ job.status }}* | openclaw:slim \`${{ steps.versions.outputs.openclaw_digest }}\` | <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
