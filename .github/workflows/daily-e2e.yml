@@ -80,4 +80,4 @@ jobs:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
-            text: "${{ job.status == 'success' && ':white_check_mark:' || ':x:' }} Daily E2E: *${{ job.status }}* | openclaw:slim \`${{ steps.versions.outputs.openclaw_digest }}\` | <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+            text: "${{ job.status == 'success' && ':white_check_mark:' || ':x:' }} Daily E2E: *${{ job.status }}* | openclaw:slim `${{ steps.versions.outputs.openclaw_digest }}` | <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
