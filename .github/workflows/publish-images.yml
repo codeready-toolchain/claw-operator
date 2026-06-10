@@ -101,8 +101,8 @@ jobs:
             podman push "${PROXY_LATEST_IMAGE}"
           fi
 
-      - name: Publish staging bundle and catalog
-        run: make push-to-quay-staging QUAY_NAMESPACE="${QUAY_NAMESPACE}"
+      - name: Generate scorecard bundle manifests
+        run: make generate-cd-release-manifests QUAY_NAMESPACE="${QUAY_NAMESPACE}"
 
       - name: Create Kind cluster for scorecard
         continue-on-error: true
