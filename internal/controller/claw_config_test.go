@@ -642,6 +642,32 @@ func TestSpecConfigRawIntegration(t *testing.T) {
 		assert.Equal(t, true, plugin["enabled"],
 			"user-managed plugin entry should be preserved")
 	})
+
+	t.Run("user-managed config keeps OpenClaw default profile files enabled", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				Config: &clawv1alpha1.ConfigSpec{
+					Management: clawv1alpha1.ConfigManagementUser,
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		config := getReconciled(t, ctx)
+		_, hasSkipOptional := nestedValue(config, "agents.defaults.skipOptionalBootstrapFiles")
+		assert.False(t, hasSkipOptional,
+			"user-managed Claws should let OpenClaw create SOUL.md and IDENTITY.md")
+	})
 }
 
 // getReconciled reads operator.json from the reconciled ConfigMap.

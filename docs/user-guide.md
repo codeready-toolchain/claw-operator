@@ -1368,6 +1368,97 @@ spec:
       # ...
 ```
 
+### `spec.config.management`
+
+Set `spec.config.management: user` when users should manage OpenClaw through the normal OpenClaw files and UI instead of through CR fields.
+
+In user-managed mode, the operator:
+
+- Seeds `openclaw.json` on first boot from `spec.config.raw`, provider/model settings, and any `spec.agentFiles` source
+- Preserves runtime edits to `openclaw.json`, skills, plugins, MCP config, and workspace files on later restarts
+- Continues to enforce gateway infrastructure (`gateway.mode`, `gateway.bind`, `gateway.port`, gateway auth, and update config)
+- Continues to route credentials through the proxy so real secrets do not land in the gateway pod
+- Does not inject the operator's CR-management platform/Kubernetes skills, bootstrap hook, or `spec.plugins` init container
+- Seeds a user-owned deployment context skill at `skills/deployment/SKILL.md` if that file does not already exist
+
+Provider and model config from the CR is a first-boot seed in user-managed mode. This lets dashboards create a working instance with an initial provider/model, then lets users change providers and models at runtime without the operator re-adding or overwriting those choices on every restart.
+
+```yaml
+spec:
+  credentials:
+    - name: gemini
+      provider: google
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+  config:
+    management: user
+```
+
+Use `spec.agentFiles` to seed an OpenClaw files tree from either a ConfigMap archive or a Git repository. `openclaw.json` in the source is used as the initial config seed. A top-level `workspace-main/` or `workspace/` directory is copied into the OpenClaw workspace; other top-level entries are copied under `/home/node/.openclaw`.
+
+**ConfigMap source:**
+
+```sh
+tar -czf /tmp/agentfiles.tgz -C ./agentfiles .
+oc create configmap openclaw-agentfiles \
+  --from-file=agentfiles.tgz=/tmp/agentfiles.tgz \
+  -n $NS \
+  --dry-run=client -o yaml | oc apply -f -
+```
+
+```yaml
+spec:
+  config:
+    management: user
+  agentFiles:
+    configMapRef:
+      name: openclaw-agentfiles
+      key: agentfiles.tgz
+```
+
+**Git source:**
+
+```yaml
+spec:
+  config:
+    management: user
+  agentFiles:
+    git:
+      url: https://github.com/example/openclaw-agentfiles.git
+      ref: main
+      path: teams/platform
+```
+
+By default, seeded agent files use `applyPolicy: IfMissing`, so runtime edits on the PVC survive restarts. Set `applyPolicy: Always` only when the source should overwrite matching files on every pod start:
+
+```yaml
+spec:
+  agentFiles:
+    applyPolicy: Always
+    git:
+      url: https://github.com/example/openclaw-agentfiles.git
+```
+
+The operator does not sync runtime edits back to a ConfigMap or Git repository. To export the current OpenClaw files from the PVC:
+
+```sh
+POD=$(oc get pod -n $NS -l app=claw -o jsonpath='{.items[0].metadata.name}')
+oc exec -n $NS "$POD" -c gateway -- \
+  tar -czf /tmp/openclaw-files.tgz -C /home/node/.openclaw .
+oc cp -n $NS -c gateway "$POD":/tmp/openclaw-files.tgz ./openclaw-files.tgz
+```
+
+Then unpack and update your source of truth:
+
+```sh
+mkdir -p ./agentfiles
+tar -xzf ./openclaw-files.tgz -C ./agentfiles
+git -C ./agentfiles add .
+git -C ./agentfiles commit -m "Update OpenClaw files"
+git -C ./agentfiles push
+```
+
 ### What can and can't be overridden
 
 The operator enforces a three-tier model. Not all config keys are equal:

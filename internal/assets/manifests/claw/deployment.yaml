@@ -70,33 +70,9 @@ spec:
           volumeMounts:
             - name: claw-home
               mountPath: /mnt/pvc
-        - name: init-config
-          image: ghcr.io/openclaw/openclaw:slim
-          imagePullPolicy: IfNotPresent
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-          command:
-            - node
-            - /config/merge.js
-          env:
-            - name: CLAW_CONFIG_MODE
-              value: merge
-          resources:
-            requests:
-              memory: 64Mi
-              cpu: 50m
-            limits:
-              memory: 128Mi
-              cpu: 200m
-          volumeMounts:
-            - name: claw-home
-              mountPath: /home/node/.openclaw
-              subPath: home
-            - name: config
-              mountPath: /config
+        # wait-for-proxy runs before init-config so the proxy is reachable when
+        # init-config seeds agentFiles from Git (the clone routes through the
+        # proxy; see the init-config env below).
         - name: wait-for-proxy
           image: mirror.gcr.io/library/busybox:1.37
           imagePullPolicy: IfNotPresent
@@ -132,6 +108,54 @@ spec:
             limits:
               memory: 32Mi
               cpu: 50m
+        - name: init-config
+          image: ghcr.io/openclaw/openclaw:slim
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - node
+            - /config/merge.js
+          env:
+            - name: CLAW_CONFIG_MODE
+              value: merge
+            # Route the agentFiles Git clone through the proxy, exactly like the
+            # gateway container. The proxy allows github as a builtin passthrough,
+            # so Git seeding needs no direct egress. Harmless for ConfigMap/upload
+            # sources (no network used).
+            - name: HTTP_PROXY
+              value: http://CLAW_INSTANCE_NAME-proxy:8080
+            - name: HTTPS_PROXY
+              value: http://CLAW_INSTANCE_NAME-proxy:8080
+            - name: http_proxy
+              value: http://CLAW_INSTANCE_NAME-proxy:8080
+            - name: https_proxy
+              value: http://CLAW_INSTANCE_NAME-proxy:8080
+            - name: NO_PROXY
+              value: localhost,127.0.0.1,CLAW_INSTANCE_NAME-proxy
+            - name: no_proxy
+              value: localhost,127.0.0.1,CLAW_INSTANCE_NAME-proxy
+            - name: GIT_SSL_CAINFO
+              value: /etc/proxy-ca/ca.crt
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 128Mi
+              cpu: 200m
+          volumeMounts:
+            - name: claw-home
+              mountPath: /home/node/.openclaw
+              subPath: home
+            - name: config
+              mountPath: /config
+            - name: proxy-ca
+              mountPath: /etc/proxy-ca
+              readOnly: true
       containers:
         - name: gateway
           image: ghcr.io/openclaw/openclaw:slim

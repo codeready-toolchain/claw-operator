@@ -50,6 +50,7 @@ type mergeTestSetup struct {
 	seedJSON     string            // override openclaw.json seed (empty = use embedded default)
 	pvcJSON      string            // existing PVC openclaw.json (empty = no existing file)
 	configMode   string            // CLAW_CONFIG_MODE env (empty = unset, defaults to "merge" in script)
+	extraEnv     map[string]string // additional init script environment variables
 	withK8sSkill string            // KUBERNETES.md content (empty = not present)
 	pvcFiles     map[string]string // pre-existing files on PVC (relative path -> content)
 	extraConfigs map[string]string // extra files in config dir (e.g., _ws_*, _skill_* keys)
@@ -100,6 +101,7 @@ func runMergeJS(t *testing.T, setup mergeTestSetup) mergeTestResult {
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "SOUL.md"), []byte(cmData["SOUL.md"]), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "BOOTSTRAP.md"), []byte(cmData["BOOTSTRAP.md"]), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "PLATFORM.md"), []byte(cmData["PLATFORM.md"]), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "UNMANAGED.md"), []byte(cmData["UNMANAGED.md"]), 0o644))
 
 	if setup.withK8sSkill != "" {
 		require.NoError(t, os.WriteFile(filepath.Join(configDir, "KUBERNETES.md"), []byte(setup.withK8sSkill), 0o644))
@@ -122,6 +124,14 @@ func runMergeJS(t *testing.T, setup mergeTestSetup) mergeTestResult {
 	cmd := exec.Command("node", scriptPath) //nolint:gosec
 	if setup.configMode != "" {
 		cmd.Env = append(os.Environ(), "CLAW_CONFIG_MODE="+setup.configMode)
+	}
+	if len(setup.extraEnv) > 0 {
+		if len(cmd.Env) == 0 {
+			cmd.Env = os.Environ()
+		}
+		for k, v := range setup.extraEnv {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
 	}
 
 	var stdout, stderr strings.Builder
@@ -185,6 +195,48 @@ func TestMergeJS(t *testing.T) {
 		assert.Contains(t, result.stdout, "[init-config]")
 	})
 
+	t.Run("first run merges bundle sub-agents with operator default agent", func(t *testing.T) {
+		// Bundle openclaw.json (agentFiles seed): main agent + docs-checker sub-agent + MCP.
+		seedJSON := `{
+			"mcp": { "servers": { "context7": { "url": "https://mcp.context7.com/mcp", "transport": "streamable-http" } } },
+			"agents": {
+				"list": [
+					{ "id": "default", "default": true, "name": "Software Q&A", "workspace": "~/.openclaw/workspace", "subagents": { "allowAgents": ["docs-checker"] } },
+					{ "id": "docs-checker", "name": "Docs Checker", "workspace": "~/.openclaw/workspace-docs-checker", "model": { "primary": "anthropic/claude-sonnet-4-6" } }
+				]
+			}
+		}`
+		// operator.json carries the deployer-written single default agent
+		// (spec.config.raw is merged into operator.json by the controller).
+		operatorJSON := `{
+			"gateway": { "mode": "local", "bind": "lan", "port": 18789, "auth": { "mode": "token" } },
+			"agents": { "defaults": {}, "list": [ { "id": "default", "name": "Doc", "identity": { "name": "Doc" }, "workspace": "~/.openclaw/workspace" } ] }
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{seedJSON: seedJSON, operatorJSON: operatorJSON})
+
+		agentsList, ok := nestedValue(result.config, "agents.list")
+		require.True(t, ok, "result should have agents.list")
+		list, ok := agentsList.([]any)
+		require.True(t, ok)
+
+		byID := map[string]map[string]any{}
+		for _, a := range list {
+			if m, ok := a.(map[string]any); ok {
+				if id, _ := m["id"].(string); id != "" {
+					byID[id] = m
+				}
+			}
+		}
+		require.Contains(t, byID, "default", "deployer default agent should remain")
+		require.Contains(t, byID, "docs-checker", "bundle sub-agent must be preserved, not clobbered")
+		assert.Equal(t, "Doc", byID["default"]["name"], "operator/deployer name should win on the default agent")
+		_, hasAllow := nestedValue(byID["default"], "subagents.allowAgents")
+		assert.True(t, hasAllow, "bundle subagents.allowAgents should be preserved on the default agent")
+		_, hasMcp := nestedValue(result.config, "mcp.servers.context7")
+		assert.True(t, hasMcp, "bundle MCP server should be preserved")
+	})
+
 	t.Run("restart with existing PVC", func(t *testing.T) {
 		pvcJSON := `{
 			"agents": {
@@ -210,6 +262,146 @@ func TestMergeJS(t *testing.T) {
 		assert.Equal(t, "bar", pluginsFoo)
 
 		assert.Contains(t, result.stdout, "merged operator.json into existing openclaw.json")
+	})
+
+	t.Run("user-managed restart preserves runtime provider and model edits", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": { "mode": "local", "bind": "lan", "port": 18789, "auth": { "mode": "token" } },
+			"models": {
+				"providers": {
+					"google": { "baseUrl": "https://generativelanguage.googleapis.com/v1beta", "apiKey": "placeholder" }
+				}
+			},
+			"agents": {
+				"defaults": {
+					"model": { "primary": "google/gemini-3.5-flash" },
+					"models": { "google/gemini-3.5-flash": { "alias": "Gemini Flash" } }
+				}
+			}
+		}`
+		pvcJSON := `{
+			"gateway": { "mode": "local", "bind": "localhost", "port": 9999 },
+			"models": {
+				"providers": {
+					"custom": { "baseUrl": "https://models.example.test/v1", "apiKey": "runtime" }
+				}
+			},
+			"agents": {
+				"defaults": {
+					"model": { "primary": "custom/runtime-model" },
+					"models": { "custom/runtime-model": { "alias": "Runtime Model" } }
+				}
+			}
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{
+			operatorJSON: operatorJSON,
+			pvcJSON:      pvcJSON,
+			extraEnv: map[string]string{
+				"CLAW_CONFIG_MANAGEMENT": "user",
+			},
+		})
+
+		gatewayPort, hasGatewayPort := nestedValue(result.config, "gateway.port")
+		require.True(t, hasGatewayPort, "gateway.port should be refreshed from operator infrastructure")
+		assert.Equal(t, float64(18789), gatewayPort)
+
+		_, hasGoogle := nestedValue(result.config, "models.providers.google")
+		assert.False(t, hasGoogle, "operator provider seed should not be re-applied after user-managed first boot")
+
+		customBaseURL, hasCustom := nestedValue(result.config, "models.providers.custom.baseUrl")
+		require.True(t, hasCustom, "runtime provider edits should be preserved")
+		assert.Equal(t, "https://models.example.test/v1", customBaseURL)
+
+		primary, hasPrimary := nestedValue(result.config, "agents.defaults.model.primary")
+		require.True(t, hasPrimary, "runtime model selection should be preserved")
+		assert.Equal(t, "custom/runtime-model", primary)
+		assert.Contains(t, result.stdout, "preserved user openclaw.json")
+	})
+
+	t.Run("user-managed first boot seeds agent files from configmap archive without operator skills", func(t *testing.T) {
+		if _, err := exec.LookPath("tar"); err != nil {
+			t.Skip("tar not found in PATH, skipping agent files archive test")
+		}
+
+		sourceDir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(sourceDir, "workspace-main"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "workspace-main", "AGENTS.md"), []byte("# Runtime Agent\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "workspace-main", "._AGENTS.md"), []byte("appledouble metadata"), 0o644))
+		require.NoError(t, os.MkdirAll(filepath.Join(sourceDir, "skills", "runtime"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "skills", "runtime", "SKILL.md"), []byte("# Runtime Skill\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "skills", "runtime", ".DS_Store"), []byte("finder metadata"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "openclaw.json"), []byte(`{"agents":{"defaults":{"workspace":"~/.openclaw/workspace"}}}`), 0o644))
+
+		archivePath := filepath.Join(t.TempDir(), "agentfiles.tgz")
+		tarCmd := exec.Command("tar", "-czf", archivePath, "-C", sourceDir, ".") //nolint:gosec
+		require.NoError(t, tarCmd.Run())
+
+		result := runMergeJS(t, mergeTestSetup{
+			extraEnv: map[string]string{
+				"CLAW_CONFIG_MANAGEMENT":     "user",
+				"AGENT_FILES_SOURCE":         "configmap",
+				"AGENT_FILES_CONFIGMAP_PATH": archivePath,
+				"AGENT_FILES_APPLY_POLICY":   "IfMissing",
+			},
+		})
+
+		agentsBytes, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "AGENTS.md"))
+		require.NoError(t, err)
+		assert.Equal(t, "# Runtime Agent\n", string(agentsBytes))
+
+		skillBytes, err := os.ReadFile(filepath.Join(result.pvcDir, "skills", "runtime", "SKILL.md"))
+		require.NoError(t, err)
+		assert.Equal(t, "# Runtime Skill\n", string(skillBytes))
+		assert.NoFileExists(t, filepath.Join(result.pvcDir, "workspace", "._AGENTS.md"))
+		assert.NoFileExists(t, filepath.Join(result.pvcDir, "skills", "runtime", ".DS_Store"))
+		assert.NoFileExists(t, filepath.Join(result.pvcDir, ".operator", "agent-files-configmap", "workspace-main", "._AGENTS.md"))
+		assert.NoFileExists(t, filepath.Join(result.pvcDir, ".operator", "agent-files-configmap", "skills", "runtime", ".DS_Store"))
+
+		assert.NoFileExists(t, filepath.Join(result.pvcDir, "workspace", "skills", "platform", "SKILL.md"),
+			"user-managed mode should not inject the CR-oriented platform skill")
+		assert.NoFileExists(t, filepath.Join(result.pvcDir, "workspace", ".operator", "BOOTSTRAP.md"),
+			"user-managed mode should not inject the operator bootstrap file")
+
+		deploymentSkillBytes, err := os.ReadFile(filepath.Join(result.pvcDir, "skills", "deployment", "SKILL.md"))
+		require.NoError(t, err)
+		assert.Contains(t, string(deploymentSkillBytes), "user-managed OpenClaw instance")
+		assert.NoFileExists(t, filepath.Join(result.pvcDir, "workspace", "skills", "deployment", "SKILL.md"),
+			"user-managed deployment context should not create workspace skill evidence before OpenClaw bootstrap")
+	})
+
+	t.Run("user-managed agent files do not overwrite runtime edits by default", func(t *testing.T) {
+		if _, err := exec.LookPath("tar"); err != nil {
+			t.Skip("tar not found in PATH, skipping agent files archive test")
+		}
+
+		sourceDir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(sourceDir, "workspace-main"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "workspace-main", "AGENTS.md"), []byte("# Seed Agent\n"), 0o644))
+		archivePath := filepath.Join(t.TempDir(), "agentfiles.tgz")
+		tarCmd := exec.Command("tar", "-czf", archivePath, "-C", sourceDir, ".") //nolint:gosec
+		require.NoError(t, tarCmd.Run())
+
+		result := runMergeJS(t, mergeTestSetup{
+			pvcJSON: `{"gateway":{"port":18789}}`,
+			pvcFiles: map[string]string{
+				"workspace/AGENTS.md":        "# Runtime Edited Agent\n",
+				"skills/deployment/SKILL.md": "# Runtime Edited Deployment Skill\n",
+			},
+			extraEnv: map[string]string{
+				"CLAW_CONFIG_MANAGEMENT":     "user",
+				"AGENT_FILES_SOURCE":         "configmap",
+				"AGENT_FILES_CONFIGMAP_PATH": archivePath,
+			},
+		})
+
+		agentsBytes, err := os.ReadFile(filepath.Join(result.pvcDir, "workspace", "AGENTS.md"))
+		require.NoError(t, err)
+		assert.Equal(t, "# Runtime Edited Agent\n", string(agentsBytes))
+
+		deploymentSkillBytes, err := os.ReadFile(filepath.Join(result.pvcDir, "skills", "deployment", "SKILL.md"))
+		require.NoError(t, err)
+		assert.Equal(t, "# Runtime Edited Deployment Skill\n", string(deploymentSkillBytes))
 	})
 
 	t.Run("operator keys win on conflict", func(t *testing.T) {

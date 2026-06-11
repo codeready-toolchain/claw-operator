@@ -64,6 +64,7 @@ const (
 	ClawInitVolumeContainerName = "init-volume"
 	ClawInitConfigContainerName = "init-config"
 	ClawConfigModeEnvVar        = "CLAW_CONFIG_MODE"
+	ClawConfigManagementEnvVar  = "CLAW_CONFIG_MANAGEMENT"
 	DefaultKubectlImage         = "quay.io/openshift/origin-cli:4.21"
 
 	OpenClawImageBase = "ghcr.io/openclaw/openclaw"
@@ -724,7 +725,9 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	enforceInfrastructureKeys(config)
 	enforceTrustedProxies(config)
 	disableUpdateCheck(config)
-	skipDefaultPersonality(config)
+	if !userManagedConfig(instance) {
+		skipDefaultPersonality(config)
+	}
 	injectRouteHost(config, routeHost)
 	injectAuthMode(config, instance)
 	if err := injectProviders(config, instance); err != nil {
@@ -742,7 +745,9 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 
 	injectMetricsConfig(config, instance)
 	injectSkipBootstrap(config, instance)
-	injectBootstrapHook(config)
+	if !userManagedConfig(instance) {
+		injectBootstrapHook(config)
+	}
 
 	updatedJSON, err := json.MarshalIndent(config, "    ", "  ")
 	if err != nil {
@@ -755,11 +760,13 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	if err := injectWorkspaceFiles(objects, instance); err != nil {
 		return fmt.Errorf("failed to inject workspace files: %w", err)
 	}
-	if err := injectSkillFiles(objects, instance); err != nil {
-		return fmt.Errorf("failed to inject skill files: %w", err)
-	}
-	if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
-		return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
+	if !userManagedConfig(instance) {
+		if err := injectSkillFiles(objects, instance); err != nil {
+			return fmt.Errorf("failed to inject skill files: %w", err)
+		}
+		if err := injectKubernetesSkill(objects, resolvedCreds, instance.Name); err != nil {
+			return fmt.Errorf("failed to inject Kubernetes skill: %w", err)
+		}
 	}
 	if metricsEnabled(instance) {
 		if err := injectOTelCollectorConfig(objects, instance); err != nil {
@@ -849,11 +856,16 @@ func (r *ClawResourceReconciler) configureDeployments(
 			return fmt.Errorf("failed to configure metrics sidecar: %w", err)
 		}
 	}
-	plugins := effectivePlugins(instance)
-	if len(plugins) > 0 {
-		if err := configurePluginsInitContainer(objects, instance, plugins); err != nil {
-			return fmt.Errorf("failed to configure plugins init container: %w", err)
+	if !userManagedConfig(instance) {
+		plugins := effectivePlugins(instance)
+		if len(plugins) > 0 {
+			if err := configurePluginsInitContainer(objects, instance, plugins); err != nil {
+				return fmt.Errorf("failed to configure plugins init container: %w", err)
+			}
 		}
+	}
+	if err := configureUserManagedOpenClawFiles(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure user-managed OpenClaw files: %w", err)
 	}
 	if err := configureGatewayNoProxy(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure gateway NO_PROXY: %w", err)

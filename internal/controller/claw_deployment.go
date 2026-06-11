@@ -496,6 +496,228 @@ func configureClawDeploymentConfigMode(objects []*unstructured.Unstructured, ins
 	return fmt.Errorf("claw deployment not found in manifests")
 }
 
+func userManagedConfig(instance *clawv1alpha1.Claw) bool {
+	return instance.Spec.Config != nil && instance.Spec.Config.Management == clawv1alpha1.ConfigManagementUser
+}
+
+func agentFilesApplyPolicy(instance *clawv1alpha1.Claw) string {
+	if instance.Spec.AgentFiles != nil && instance.Spec.AgentFiles.ApplyPolicy != "" {
+		return string(instance.Spec.AgentFiles.ApplyPolicy)
+	}
+	return string(clawv1alpha1.AgentFilesApplyPolicyIfMissing)
+}
+
+func agentFilesConfigMapKey(ref *clawv1alpha1.AgentFilesConfigMapRef) string {
+	if ref != nil && ref.Key != "" {
+		return ref.Key
+	}
+	return "agentfiles.tgz"
+}
+
+func setOrAppendEnv(envVars []any, name, value string) []any {
+	for i, e := range envVars {
+		env, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		if env["name"] == name {
+			env["value"] = value
+			delete(env, "valueFrom")
+			envVars[i] = env
+			return envVars
+		}
+	}
+	return append(envVars, map[string]any{"name": name, "value": value})
+}
+
+func setOrAppendVolumeMount(mounts []any, mount map[string]any) []any {
+	name, _ := mount["name"].(string)
+	mountPath, _ := mount["mountPath"].(string)
+	for i, existing := range mounts {
+		existingMount, ok := existing.(map[string]any)
+		if !ok {
+			continue
+		}
+		if existingMount["name"] == name && existingMount["mountPath"] == mountPath {
+			mounts[i] = mount
+			return mounts
+		}
+	}
+	return append(mounts, mount)
+}
+
+func removeHomeVolumeMounts(mounts []any) []any {
+	filtered := mounts[:0]
+	for _, m := range mounts {
+		mount, ok := m.(map[string]any)
+		if !ok {
+			filtered = append(filtered, m)
+			continue
+		}
+		name, _ := mount["name"].(string)
+		mountPath, _ := mount["mountPath"].(string)
+		if name == "claw-home" && strings.HasPrefix(mountPath, "/home/node") {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	return filtered
+}
+
+func configureWholeHomeMount(container map[string]any) error {
+	mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
+	mounts = removeHomeVolumeMounts(mounts)
+	mounts = setOrAppendVolumeMount(mounts, map[string]any{
+		"name":      "claw-home",
+		"mountPath": "/home/node",
+		"subPath":   "home",
+	})
+	return unstructured.SetNestedSlice(container, mounts, "volumeMounts")
+}
+
+func setOrAppendVolume(volumes []any, volume map[string]any) []any {
+	name, _ := volume["name"].(string)
+	for i, existing := range volumes {
+		existingVolume, ok := existing.(map[string]any)
+		if !ok {
+			continue
+		}
+		if existingVolume["name"] == name {
+			volumes[i] = volume
+			return volumes
+		}
+	}
+	return append(volumes, volume)
+}
+
+// configureUserManagedOpenClawFiles switches user-managed deployments to mount
+// the full OpenClaw home and wires optional agent file seed sources into
+// init-config. Default operator-managed deployments keep the existing subPath
+// layout and CR-oriented workspace/skill injection.
+func configureUserManagedOpenClawFiles(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	if !userManagedConfig(instance) {
+		return nil
+	}
+
+	gatewayName := getClawDeploymentName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		initContainers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "initContainers")
+		if err != nil {
+			return fmt.Errorf("failed to get init containers from claw deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("initContainers field not found in claw deployment")
+		}
+
+		initConfigFound := false
+		for i, ic := range initContainers {
+			container, ok := ic.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _, _ := unstructured.NestedString(container, "name")
+			switch name {
+			case ClawInitConfigContainerName:
+				initConfigFound = true
+				envVars, _, _ := unstructured.NestedSlice(container, "env")
+				envVars = setOrAppendEnv(envVars, ClawConfigManagementEnvVar, string(clawv1alpha1.ConfigManagementUser))
+				envVars = setOrAppendEnv(envVars, "AGENT_FILES_APPLY_POLICY", agentFilesApplyPolicy(instance))
+				if instance.Spec.AgentFiles != nil && instance.Spec.AgentFiles.ConfigMapRef != nil {
+					key := agentFilesConfigMapKey(instance.Spec.AgentFiles.ConfigMapRef)
+					envVars = setOrAppendEnv(envVars, "AGENT_FILES_SOURCE", "configmap")
+					envVars = setOrAppendEnv(envVars, "AGENT_FILES_CONFIGMAP_PATH", "/agent-files/"+key)
+					mounts, _, _ := unstructured.NestedSlice(container, "volumeMounts")
+					mounts = setOrAppendVolumeMount(mounts, map[string]any{
+						"name":      "agent-files",
+						"mountPath": "/agent-files",
+						"readOnly":  true,
+					})
+					if err := unstructured.SetNestedSlice(container, mounts, "volumeMounts"); err != nil {
+						return fmt.Errorf("failed to set init-config agent files mount: %w", err)
+					}
+				}
+				if instance.Spec.AgentFiles != nil && instance.Spec.AgentFiles.Git != nil {
+					envVars = setOrAppendEnv(envVars, "AGENT_FILES_SOURCE", "git")
+					envVars = setOrAppendEnv(envVars, "AGENT_FILES_GIT_URL", instance.Spec.AgentFiles.Git.URL)
+					if instance.Spec.AgentFiles.Git.Ref != "" {
+						envVars = setOrAppendEnv(envVars, "AGENT_FILES_GIT_REF", instance.Spec.AgentFiles.Git.Ref)
+					}
+					if instance.Spec.AgentFiles.Git.Path != "" {
+						envVars = setOrAppendEnv(envVars, "AGENT_FILES_GIT_PATH", instance.Spec.AgentFiles.Git.Path)
+					}
+				}
+				if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
+					return fmt.Errorf("failed to set init-config env vars: %w", err)
+				}
+				if err := configureWholeHomeMount(container); err != nil {
+					return fmt.Errorf("failed to configure init-config home mount: %w", err)
+				}
+				initContainers[i] = container
+			case PluginsInitContainerName:
+				if err := configureWholeHomeMount(container); err != nil {
+					return fmt.Errorf("failed to configure init-plugins home mount: %w", err)
+				}
+				initContainers[i] = container
+			}
+		}
+		if !initConfigFound {
+			return fmt.Errorf("container %q not found in claw deployment", ClawInitConfigContainerName)
+		}
+		if err := unstructured.SetNestedSlice(obj.Object, initContainers, "spec", "template", "spec", "initContainers"); err != nil {
+			return fmt.Errorf("failed to set init containers on claw deployment: %w", err)
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from claw deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in claw deployment")
+		}
+		gatewayFound := false
+		for i, c := range containers {
+			container, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _, _ := unstructured.NestedString(container, "name")
+			if name != ClawGatewayContainerName {
+				continue
+			}
+			gatewayFound = true
+			if err := configureWholeHomeMount(container); err != nil {
+				return fmt.Errorf("failed to configure gateway home mount: %w", err)
+			}
+			containers[i] = container
+		}
+		if !gatewayFound {
+			return fmt.Errorf("container %q not found in claw deployment", ClawGatewayContainerName)
+		}
+		if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+			return fmt.Errorf("failed to set containers on claw deployment: %w", err)
+		}
+
+		if instance.Spec.AgentFiles != nil && instance.Spec.AgentFiles.ConfigMapRef != nil {
+			volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
+			volumes = setOrAppendVolume(volumes, map[string]any{
+				"name": "agent-files",
+				"configMap": map[string]any{
+					"name": instance.Spec.AgentFiles.ConfigMapRef.Name,
+				},
+			})
+			if err := unstructured.SetNestedSlice(obj.Object, volumes, "spec", "template", "spec", "volumes"); err != nil {
+				return fmt.Errorf("failed to set volumes on claw deployment: %w", err)
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
+}
+
 // configureGatewayForMcpServers adds secret-backed environment variables to the gateway
 // container for MCP servers using tier 3 envFrom. Each envFrom entry becomes an env var
 // with valueFrom.secretKeyRef, so the real secret value is available at runtime.

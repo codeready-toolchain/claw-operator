@@ -81,6 +81,36 @@ spec:
 `, secretName, secretKey)
 }
 
+func userManagedClawYAML(secretName, secretKey, agentFilesConfigMap string) string {
+	return fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: %s
+          key: %s
+      domain: ".googleapis.com"
+      apiKey:
+        header: x-goog-api-key
+  config:
+    management: user
+  agentFiles:
+    configMapRef:
+      name: %s
+      key: agentfiles.tgz
+  skills:
+    compliance: |
+      # Compliance
+      This CR-provided skill should not be injected in user-managed mode.
+  plugins:
+    - "@openclaw/matrix"
+`, secretName, secretKey, agentFilesConfigMap)
+}
+
 func TestManager(t *testing.T) { //nolint:gocyclo
 	var controllerPodName string
 
@@ -600,6 +630,136 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			kubeMd, err := utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Empty(t, kubeMd, "KUBERNETES.md should not exist without kubernetes credentials")
+		})
+
+		t.Run("should configure user-managed OpenClaw files from agentFiles ConfigMap", func(t *testing.T) {
+			const agentFilesConfigMap = "e2e-agentfiles"
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "configmap", agentFilesConfigMap, "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value")
+
+			t.Log("creating an agentfiles.tgz ConfigMap")
+			agentFilesDir := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(agentFilesDir, "workspace-main"), 0o755))
+			require.NoError(t, os.WriteFile(
+				filepath.Join(agentFilesDir, "workspace-main", "AGENTS.md"),
+				[]byte("# User Managed Agent\n"),
+				os.FileMode(0o644),
+			))
+			require.NoError(t, os.WriteFile(
+				filepath.Join(agentFilesDir, "openclaw.json"),
+				[]byte(`{"agents":{"defaults":{"workspace":"~/.openclaw/workspace"}}}`),
+				os.FileMode(0o644),
+			))
+			archivePath := filepath.Join(t.TempDir(), "agentfiles.tgz")
+			cmd = exec.Command("tar", "-czf", archivePath, "-C", agentFilesDir, ".")
+			_, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create agentfiles archive")
+
+			cmd = exec.Command("kubectl", "create", "configmap", agentFilesConfigMap,
+				"--from-file=agentfiles.tgz="+archivePath,
+				"-n", userNamespace, "--dry-run=client", "-o", "yaml")
+			configMapYAML, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to render agentfiles ConfigMap")
+			cmd = exec.Command("kubectl", "apply", "-f", "-", "-n", userNamespace)
+			cmd.Stdin = strings.NewReader(configMapYAML)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply agentfiles ConfigMap")
+
+			t.Log("applying the user-managed Claw CR")
+			crFile := filepath.Join(t.TempDir(), "claw-e2e-user-managed.yaml")
+			err = os.WriteFile(crFile,
+				[]byte(userManagedClawYAML("gemini-api-key", "api-key", agentFilesConfigMap)),
+				os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply user-managed Claw CR")
+
+			t.Log("waiting for Claw ProxyConfigured condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw ProxyConfigured did not become True")
+
+			t.Log("verifying init-config is in user-managed mode")
+			envJP := `jsonpath={.spec.template.spec.initContainers[?(@.name=="init-config")]` +
+				`.env[?(@.name=="CLAW_CONFIG_MANAGEMENT")].value}`
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", envJP, "-n", userNamespace)
+			output, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "user", output)
+
+			t.Log("verifying agentFiles ConfigMap source is mounted")
+			envJP = `jsonpath={.spec.template.spec.initContainers[?(@.name=="init-config")]` +
+				`.env[?(@.name=="AGENT_FILES_SOURCE")].value}`
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", envJP, "-n", userNamespace)
+			output, err = utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "configmap", output)
+
+			volumeJP := `jsonpath={.spec.template.spec.volumes[?(@.name=="agent-files")].configMap.name}`
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", volumeJP, "-n", userNamespace)
+			output, err = utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, agentFilesConfigMap, output)
+
+			t.Log("verifying OpenClaw home is mounted as the full home directory")
+			mountJP := `jsonpath={.spec.template.spec.containers[?(@.name=="gateway")]` +
+				`.volumeMounts[?(@.name=="claw-home")].mountPath}`
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", mountJP, "-n", userNamespace)
+			output, err = utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "/home/node", output)
+
+			t.Log("verifying CR-managed skills and plugin init are not injected")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
+				"-o", "jsonpath={.data._skill_compliance}",
+				"-n", userNamespace)
+			output, err = utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Empty(t, output, "CR-provided skills should not be injected in user-managed mode")
+
+			initNamesJP := `jsonpath={.spec.template.spec.initContainers[*].name}`
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", initNamesJP, "-n", userNamespace)
+			output, err = utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.NotContains(t, output, "init-plugins",
+				"spec.plugins init container should not be injected in user-managed mode")
+
+			t.Log("verifying unmanaged deployment context skill seed exists")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
+				"-o", "jsonpath={.data.UNMANAGED\\.md}",
+				"-n", userNamespace)
+			output, err = utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Contains(t, output, "user-managed OpenClaw instance")
 		})
 
 		t.Run("should wire credential env var with correct Secret reference", func(t *testing.T) {

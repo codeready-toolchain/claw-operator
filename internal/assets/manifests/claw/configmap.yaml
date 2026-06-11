@@ -41,7 +41,10 @@ data:
   merge.js: |
     const fs = require("fs");
     const path = require("path");
+    const childProcess = require("child_process");
     const mode = process.env.CLAW_CONFIG_MODE || "merge";
+    const management = process.env.CLAW_CONFIG_MANAGEMENT || "operator";
+    const agentFilesApplyPolicy = process.env.AGENT_FILES_APPLY_POLICY || "IfMissing";
     const configDir = "/config";
     const pvcDir = "/home/node/.openclaw";
     const workspaceDir = path.join(pvcDir, "workspace");
@@ -65,6 +68,41 @@ data:
       return result;
     }
 
+    // Merge two agents.list arrays by agent id so operator-supplied config
+    // (e.g. the deployer's default agent) composes with bundle-supplied agents
+    // (sub-agents) instead of replacing the whole list. Source fields win on a
+    // matching id; bundle-only agents are preserved; source-only agents append.
+    function mergeAgentsById(targetList, sourceList) {
+      const result = targetList.map((a) => (a && typeof a === "object" ? { ...a } : a));
+      const indexById = new Map();
+      result.forEach((a, i) => {
+        if (a && typeof a === "object" && typeof a.id === "string") indexById.set(a.id, i);
+      });
+      for (const agent of sourceList) {
+        if (!agent || typeof agent !== "object") continue;
+        const id = typeof agent.id === "string" ? agent.id : undefined;
+        if (id !== undefined && indexById.has(id)) {
+          const i = indexById.get(id);
+          result[i] = deepMerge(result[i], agent);
+        } else {
+          result.push(agent);
+        }
+      }
+      return result;
+    }
+
+    // deepMerge, but agents.list is merged by id rather than replaced.
+    function mergeConfigs(target, source) {
+      const merged = deepMerge(target, source);
+      const targetAgents = target && target.agents && target.agents.list;
+      const sourceAgents = source && source.agents && source.agents.list;
+      if (Array.isArray(targetAgents) && Array.isArray(sourceAgents)) {
+        merged.agents = merged.agents || {};
+        merged.agents.list = mergeAgentsById(targetAgents, sourceAgents);
+      }
+      return merged;
+    }
+
     function seedIfMissing(src, dest) {
       if (!fs.existsSync(dest)) {
         const dir = path.dirname(dest);
@@ -81,6 +119,109 @@ data:
       console.log(`[init-config] copied ${dest}`);
     }
 
+    function copyFileWithPolicy(src, dest) {
+      if (agentFilesApplyPolicy !== "Always" && fs.existsSync(dest)) return;
+      const dir = path.dirname(dest);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.copyFileSync(src, dest);
+      console.log(`[init-config] seeded ${dest}`);
+    }
+
+    function shouldSkipSeedEntry(src) {
+      const base = path.basename(src);
+      return base === ".DS_Store" || base.startsWith("._");
+    }
+
+    function removeSkippedSeedEntries(dir) {
+      if (!fs.existsSync(dir)) return;
+      for (const entry of fs.readdirSync(dir)) {
+        const entryPath = path.join(dir, entry);
+        if (shouldSkipSeedEntry(entryPath)) {
+          fs.rmSync(entryPath, { recursive: true, force: true });
+          continue;
+        }
+        if (fs.statSync(entryPath).isDirectory()) {
+          removeSkippedSeedEntries(entryPath);
+        }
+      }
+    }
+
+    function copyTreeWithPolicy(src, dest) {
+      if (!fs.existsSync(src)) return;
+      if (shouldSkipSeedEntry(src)) return;
+      const stat = fs.statSync(src);
+      if (stat.isDirectory()) {
+        fs.mkdirSync(dest, { recursive: true });
+        for (const entry of fs.readdirSync(src)) {
+          copyTreeWithPolicy(path.join(src, entry), path.join(dest, entry));
+        }
+        return;
+      }
+      if (stat.isFile()) copyFileWithPolicy(src, dest);
+    }
+
+    function managedInfrastructureConfig(ops) {
+      const result = {};
+      if (ops.gateway) result.gateway = ops.gateway;
+      if (ops.update) result.update = ops.update;
+      return result;
+    }
+
+    function prepareAgentFilesSource() {
+      const source = process.env.AGENT_FILES_SOURCE || "";
+      if (!source) return "";
+
+      const operatorDir = path.join(pvcDir, ".operator");
+      fs.mkdirSync(operatorDir, { recursive: true });
+
+      if (source === "configmap") {
+        const archivePath = process.env.AGENT_FILES_CONFIGMAP_PATH || "/agent-files/agentfiles.tgz";
+        if (!fs.existsSync(archivePath)) {
+          throw new Error(`agent files archive not found: ${archivePath}`);
+        }
+        const dest = path.join(operatorDir, "agent-files-configmap");
+        fs.rmSync(dest, { recursive: true, force: true });
+        fs.mkdirSync(dest, { recursive: true });
+        childProcess.execFileSync("tar", ["-xzf", archivePath, "-C", dest], { stdio: "inherit" });
+        removeSkippedSeedEntries(dest);
+        return dest;
+      }
+
+      if (source === "git") {
+        const url = process.env.AGENT_FILES_GIT_URL || "";
+        if (!url) throw new Error("AGENT_FILES_GIT_URL is required when AGENT_FILES_SOURCE=git");
+        const ref = process.env.AGENT_FILES_GIT_REF || "";
+        const subPath = process.env.AGENT_FILES_GIT_PATH || "";
+        const cloneDir = path.join(operatorDir, "agent-files-git");
+        fs.rmSync(cloneDir, { recursive: true, force: true });
+        const args = ["clone", "--depth", "1"];
+        if (ref) args.push("--branch", ref);
+        args.push(url, cloneDir);
+        childProcess.execFileSync("git", args, { stdio: "inherit" });
+        const dest = subPath ? path.join(cloneDir, subPath) : cloneDir;
+        if (!fs.existsSync(dest)) {
+          throw new Error(`agent files git path not found: ${subPath}`);
+        }
+        removeSkippedSeedEntries(dest);
+        return dest;
+      }
+
+      throw new Error(`unsupported AGENT_FILES_SOURCE: ${source}`);
+    }
+
+    function seedAgentFiles(sourceDir) {
+      if (!sourceDir) return;
+      for (const entry of fs.readdirSync(sourceDir)) {
+        if (entry === "openclaw.json") continue;
+        const src = path.join(sourceDir, entry);
+        if (entry === "workspace-main") {
+          copyTreeWithPolicy(src, workspaceDir);
+          continue;
+        }
+        copyTreeWithPolicy(src, path.join(pvcDir, entry));
+      }
+    }
+
     // Ensure directories exist
     for (const sub of ["workspace", ".local", ".cache", ".config/codex"]) {
       fs.mkdirSync(path.join(pvcDir, sub), { recursive: true });
@@ -90,8 +231,19 @@ data:
     const ops = JSON.parse(fs.readFileSync(path.join(configDir, "operator.json"), "utf8"));
     const seed = JSON.parse(fs.readFileSync(path.join(configDir, "openclaw.json"), "utf8"));
     const pvcPath = path.join(pvcDir, "openclaw.json");
+    const agentFilesSourceDir = prepareAgentFilesSource();
+    let seedConfig = seed;
+    const agentFilesConfigPath = agentFilesSourceDir ? path.join(agentFilesSourceDir, "openclaw.json") : "";
+    if (agentFilesConfigPath && fs.existsSync(agentFilesConfigPath)) {
+      seedConfig = JSON.parse(fs.readFileSync(agentFilesConfigPath, "utf8"));
+    }
 
-    if (mode === "merge" && fs.existsSync(pvcPath)) {
+    if (management === "user" && fs.existsSync(pvcPath)) {
+      let base = JSON.parse(fs.readFileSync(pvcPath, "utf8"));
+      const merged = deepMerge(base, managedInfrastructureConfig(ops));
+      fs.writeFileSync(pvcPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
+      console.log("[init-config] preserved user openclaw.json and refreshed gateway infrastructure");
+    } else if (mode === "merge" && fs.existsSync(pvcPath)) {
       let base = seed;
       try {
         base = JSON.parse(fs.readFileSync(pvcPath, "utf8"));
@@ -100,7 +252,7 @@ data:
       }
       const savedPrimary = base?.agents?.defaults?.model?.primary;
       const savedFallbacks = base?.agents?.defaults?.model?.fallbacks;
-      const merged = deepMerge(base, ops);
+      const merged = mergeConfigs(base, ops);
       if (savedPrimary || savedFallbacks) {
         merged.agents = merged.agents || {};
         merged.agents.defaults = merged.agents.defaults || {};
@@ -115,9 +267,11 @@ data:
       fs.writeFileSync(pvcPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
       console.log("[init-config] merged operator.json into existing openclaw.json");
     } else {
-      fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2), { mode: 0o600 });
+      fs.writeFileSync(pvcPath, JSON.stringify(mergeConfigs(seedConfig, ops), null, 2), { mode: 0o600 });
       console.log(`[init-config] wrote openclaw.json (mode=${mode}, first_run=${!fs.existsSync(pvcPath)})`);
     }
+
+    seedAgentFiles(agentFilesSourceDir);
 
     // Seed user-provided workspace files (_ws_* keys) before static seeds
     // so _ws_AGENTS.md takes precedence over the builtin AGENTS.md
@@ -130,39 +284,46 @@ data:
       );
     }
 
-    // Seed builtin user-owned files (no-op if _ws_ variant already seeded above).
-    seedIfMissing(path.join(configDir, "AGENTS.md"), path.join(workspaceDir, "AGENTS.md"));
-    seedIfMissing(path.join(configDir, "SOUL.md"), path.join(workspaceDir, "SOUL.md"));
-
-    // Seed BOOTSTRAP.md into .operator/ subdirectory, NOT the workspace root.
-    // OpenClaw 6.1+ deletes root BOOTSTRAP.md when it detects "completion evidence"
-    // (custom SOUL.md or skills/*/SKILL.md). The bootstrap-extra-files hook loads
-    // it from .operator/ instead, bypassing the reconciliation logic.
-    seedIfMissing(
-      path.join(configDir, "BOOTSTRAP.md"),
-      path.join(workspaceDir, ".operator", "BOOTSTRAP.md")
-    );
-
-    // Always copy operator-managed skill files
-    copyAlways(
-      path.join(configDir, "PLATFORM.md"),
-      path.join(workspaceDir, "skills", "platform", "SKILL.md")
-    );
-
-    // Copy Kubernetes skill if present in ConfigMap
-    const k8sSkill = path.join(configDir, "KUBERNETES.md");
-    if (fs.existsSync(k8sSkill)) {
-      copyAlways(k8sSkill, path.join(workspaceDir, "skills", "kubernetes", "SKILL.md"));
-    }
-
-    // Copy operator-managed skills (_skill_* keys)
-    for (const f of fs.readdirSync(configDir)) {
-      if (!f.startsWith("_skill_")) continue;
-      const skillName = f.slice(7);
-      copyAlways(
-        path.join(configDir, f),
-        path.join(workspaceDir, "skills", skillName, "SKILL.md")
+    if (management === "user") {
+      seedIfMissing(
+        path.join(configDir, "UNMANAGED.md"),
+        path.join(pvcDir, "skills", "deployment", "SKILL.md")
       );
+    } else {
+      // Seed builtin user-owned files (no-op if _ws_ variant already seeded above).
+      seedIfMissing(path.join(configDir, "AGENTS.md"), path.join(workspaceDir, "AGENTS.md"));
+      seedIfMissing(path.join(configDir, "SOUL.md"), path.join(workspaceDir, "SOUL.md"));
+
+      // Seed BOOTSTRAP.md into .operator/ subdirectory, NOT the workspace root.
+      // OpenClaw 6.1+ deletes root BOOTSTRAP.md when it detects "completion evidence"
+      // (custom SOUL.md or skills/*/SKILL.md). The bootstrap-extra-files hook loads
+      // it from .operator/ instead, bypassing the reconciliation logic.
+      seedIfMissing(
+        path.join(configDir, "BOOTSTRAP.md"),
+        path.join(workspaceDir, ".operator", "BOOTSTRAP.md")
+      );
+
+      // Always copy operator-managed skill files
+      copyAlways(
+        path.join(configDir, "PLATFORM.md"),
+        path.join(workspaceDir, "skills", "platform", "SKILL.md")
+      );
+
+      // Copy Kubernetes skill if present in ConfigMap
+      const k8sSkill = path.join(configDir, "KUBERNETES.md");
+      if (fs.existsSync(k8sSkill)) {
+        copyAlways(k8sSkill, path.join(workspaceDir, "skills", "kubernetes", "SKILL.md"));
+      }
+
+      // Copy operator-managed skills (_skill_* keys)
+      for (const f of fs.readdirSync(configDir)) {
+        if (!f.startsWith("_skill_")) continue;
+        const skillName = f.slice(7);
+        copyAlways(
+          path.join(configDir, f),
+          path.join(workspaceDir, "skills", skillName, "SKILL.md")
+        );
+      }
     }
   BOOTSTRAP.md: |
     # Hello, World
@@ -348,6 +509,51 @@ data:
     Read them at startup. Update them when things change.
 
     If you update this file, mention it — it defines who you are.
+  UNMANAGED.md: |
+    ---
+    name: deployment
+    description: "OpenShift deployment context for user-managed OpenClaw instances, including persistence, proxy-backed credentials, and operator-owned infrastructure boundaries."
+    ---
+
+    # Deployment Context
+
+    You are running in a user-managed OpenClaw instance on OpenShift. The user owns
+    the OpenClaw files on the PVC, including `openclaw.json`, workspace files,
+    skills, plugins, MCPs, and runtime configuration.
+
+    ## What the user owns
+
+    - OpenClaw state is stored under `/home/node/.openclaw` and persists across pod
+      restarts.
+    - Runtime changes made through the OpenClaw UI, CLI, or file edits should be
+      treated as durable user changes.
+    - Provider and model configuration may have been seeded during first boot, but
+      later provider/model changes are user-owned and should be made through normal
+      OpenClaw config workflows.
+
+    ## What the operator still owns
+
+    - Gateway bind address, port, auth, and update settings are managed by the
+      operator. Do not tell the user to change these in `openclaw.json`.
+    - Real credentials are not stored in this gateway container. Network requests go
+      through a credential-injecting proxy that replaces placeholder credentials with
+      real secrets.
+    - Network egress is restricted. If an external service is unreachable, the user
+      may need an operator/admin to add the right credential or allowlist entry to
+      the Claw custom resource.
+
+    ## OpenShift constraints
+
+    - The container runs as a random non-root UID with restricted security context.
+      Avoid privileged ports and writes outside writable OpenClaw paths.
+    - Use `/home/node/.openclaw` for persistent OpenClaw state. Temporary files can
+      use `/tmp`.
+
+    ## Syncing changes back to source
+
+    The operator does not sync PVC edits back to Git or ConfigMaps. If the user wants
+    to publish runtime changes, help them export `/home/node/.openclaw` from the pod
+    and commit or package those files in their chosen source of truth.
   PLATFORM.md: |
     ---
     name: platform

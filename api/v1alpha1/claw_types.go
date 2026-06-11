@@ -46,6 +46,24 @@ const (
 	ConfigModeOverwrite ConfigMode = "overwrite"
 )
 
+// ConfigManagement controls how much of openclaw.json the operator manages.
+// +kubebuilder:validation:Enum=operator;user
+type ConfigManagement string
+
+const (
+	ConfigManagementOperator ConfigManagement = "operator"
+	ConfigManagementUser     ConfigManagement = "user"
+)
+
+// AgentFilesApplyPolicy controls how agent files are seeded into the PVC.
+// +kubebuilder:validation:Enum=IfMissing;Always
+type AgentFilesApplyPolicy string
+
+const (
+	AgentFilesApplyPolicyIfMissing AgentFilesApplyPolicy = "IfMissing"
+	AgentFilesApplyPolicyAlways    AgentFilesApplyPolicy = "Always"
+)
+
 // McpTransport selects the HTTP transport type for remote MCP servers.
 // +kubebuilder:validation:Enum=streamable-http;sse
 type McpTransport string
@@ -365,6 +383,15 @@ type ConfigSpec struct {
 	// +kubebuilder:validation:Enum=merge;overwrite
 	// +kubebuilder:default=merge
 	MergeMode ConfigMode `json:"mergeMode,omitempty"`
+
+	// Management controls ownership of openclaw.json after first boot.
+	// "operator" (default) continues to merge operator-managed config on every
+	// pod start. "user" seeds provider/model config once, then preserves runtime
+	// edits while still enforcing gateway infrastructure and authentication.
+	// +optional
+	// +kubebuilder:validation:Enum=operator;user
+	// +kubebuilder:default=operator
+	Management ConfigManagement `json:"management,omitempty"`
 }
 
 // RawConfig holds arbitrary JSON configuration for openclaw.json.
@@ -385,6 +412,55 @@ type WorkspaceSpec struct {
 	// OpenClaw UI are preserved across restarts.
 	// +optional
 	Files map[string]string `json:"files,omitempty"`
+}
+
+// AgentFilesSpec configures a seed source for user-managed OpenClaw files.
+// +kubebuilder:validation:XValidation:rule="has(self.configMapRef) || has(self.git)",message="one of configMapRef or git is required"
+// +kubebuilder:validation:XValidation:rule="!(has(self.configMapRef) && has(self.git))",message="configMapRef and git are mutually exclusive"
+type AgentFilesSpec struct {
+	// ApplyPolicy controls whether seeded files overwrite existing PVC files.
+	// Defaults to IfMissing so runtime edits survive restarts.
+	// +optional
+	// +kubebuilder:default=IfMissing
+	ApplyPolicy AgentFilesApplyPolicy `json:"applyPolicy,omitempty"`
+
+	// ConfigMapRef references a ConfigMap containing an agentfiles.tgz archive.
+	// +optional
+	ConfigMapRef *AgentFilesConfigMapRef `json:"configMapRef,omitempty"`
+
+	// Git clones an agent files tree from a Git repository in the init container.
+	// +optional
+	Git *AgentFilesGitSource `json:"git,omitempty"`
+}
+
+// AgentFilesConfigMapRef references a ConfigMap archive with agent files.
+type AgentFilesConfigMapRef struct {
+	// Name is the ConfigMap name in the Claw namespace.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Key is the ConfigMap data or binaryData key containing a gzipped tar archive.
+	// Defaults to agentfiles.tgz.
+	// +optional
+	// +kubebuilder:default=agentfiles.tgz
+	Key string `json:"key,omitempty"`
+}
+
+// AgentFilesGitSource configures a Git repository source for agent files.
+type AgentFilesGitSource struct {
+	// URL is the Git repository URL.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https://`
+	URL string `json:"url"`
+
+	// Ref is the branch, tag, or commit to check out. Defaults to the repository default branch.
+	// +optional
+	Ref string `json:"ref,omitempty"`
+
+	// Path is the subdirectory within the repository containing agent files.
+	// Defaults to the repository root.
+	// +optional
+	Path string `json:"path,omitempty"`
 }
 
 // MetricsSpec configures Prometheus metrics collection via an OTel Collector sidecar.
@@ -561,6 +637,11 @@ type ClawSpec struct {
 	// Files are seeded once (seedIfMissing) — user edits are preserved.
 	// +optional
 	Workspace *WorkspaceSpec `json:"workspace,omitempty"`
+
+	// AgentFiles seeds user-managed OpenClaw files from a ConfigMap archive or Git repository.
+	// Intended for use with spec.config.management=user.
+	// +optional
+	AgentFiles *AgentFilesSpec `json:"agentFiles,omitempty"`
 
 	// Skills maps skill names to SKILL.md content. Each entry creates
 	// workspace/skills/<name>/SKILL.md, overwritten on every pod restart

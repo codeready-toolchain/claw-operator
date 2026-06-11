@@ -46,6 +46,64 @@ spec:
           spec:
             description: ClawSpec defines the desired state of Claw
             properties:
+              agentFiles:
+                description: |-
+                  AgentFiles seeds user-managed OpenClaw files from a ConfigMap archive or Git repository.
+                  Intended for use with spec.config.management=user.
+                properties:
+                  applyPolicy:
+                    default: IfMissing
+                    description: |-
+                      ApplyPolicy controls whether seeded files overwrite existing PVC files.
+                      Defaults to IfMissing so runtime edits survive restarts.
+                    enum:
+                    - IfMissing
+                    - Always
+                    type: string
+                  configMapRef:
+                    description: ConfigMapRef references a ConfigMap containing an
+                      agentfiles.tgz archive.
+                    properties:
+                      key:
+                        default: agentfiles.tgz
+                        description: |-
+                          Key is the ConfigMap data or binaryData key containing a gzipped tar archive.
+                          Defaults to agentfiles.tgz.
+                        type: string
+                      name:
+                        description: Name is the ConfigMap name in the Claw namespace.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  git:
+                    description: Git clones an agent files tree from a Git repository
+                      in the init container.
+                    properties:
+                      path:
+                        description: |-
+                          Path is the subdirectory within the repository containing agent files.
+                          Defaults to the repository root.
+                        type: string
+                      ref:
+                        description: Ref is the branch, tag, or commit to check out.
+                          Defaults to the repository default branch.
+                        type: string
+                      url:
+                        description: URL is the Git repository URL.
+                        minLength: 1
+                        pattern: ^https://
+                        type: string
+                    required:
+                    - url
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: one of configMapRef or git is required
+                  rule: has(self.configMapRef) || has(self.git)
+                - message: configMapRef and git are mutually exclusive
+                  rule: '!(has(self.configMapRef) && has(self.git))'
               auth:
                 description: |-
                   Auth configures gateway authentication. Defaults to token-based
@@ -100,6 +158,21 @@ spec:
                 description: Config provides user-supplied OpenClaw configuration
                   and merge behavior.
                 properties:
+                  management:
+                    allOf:
+                    - enum:
+                      - operator
+                      - user
+                    - enum:
+                      - operator
+                      - user
+                    default: operator
+                    description: |-
+                      Management controls ownership of openclaw.json after first boot.
+                      "operator" (default) continues to merge operator-managed config on every
+                      pod start. "user" seeds provider/model config once, then preserves runtime
+                      edits while still enforcing gateway infrastructure and authentication.
+                    type: string
                   mergeMode:
                     allOf:
                     - enum:
