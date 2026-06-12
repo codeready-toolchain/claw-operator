@@ -176,7 +176,10 @@ func (r *ClawResourceReconciler) resolvePersonaRef(
 
 	ref := instance.Spec.Restrictions.PersonaRef
 	cm := &corev1.ConfigMap{}
-	if err := r.Get(ctx, types.NamespacedName{
+	// Read directly from the API server, bypassing the informer cache.
+	// The cache only includes ConfigMaps with the instance label;
+	// user-created persona ConfigMaps are unlabeled.
+	if err := r.UserSecretReader.Get(ctx, types.NamespacedName{
 		Name:      ref.Name,
 		Namespace: instance.Namespace,
 	}, cm); err != nil {
