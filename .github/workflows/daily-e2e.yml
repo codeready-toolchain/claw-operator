@@ -16,9 +16,6 @@ jobs:
   test-e2e:
     name: Daily E2E
     runs-on: ubuntu-latest
-    env:
-      # Pinned kind release; bump when upgrading the e2e cluster tooling.
-      KIND_VERSION: v0.32.0
     steps:
       - name: Clone the code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -30,13 +27,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install kind
+      - name: Install the latest version of kind
         run: |
-          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" -o kind-linux-amd64.sha256sum
-          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o kind-linux-amd64
-          sha256sum -c kind-linux-amd64.sha256sum
-          chmod +x kind-linux-amd64
-          sudo mv kind-linux-amd64 /usr/local/bin/kind
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
 
       - name: Verify kind installation
         run: kind version
