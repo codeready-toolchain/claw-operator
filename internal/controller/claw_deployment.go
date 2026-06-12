@@ -309,6 +309,7 @@ func configureClawDeploymentForKubernetes(objects []*unstructured.Unstructured, 
 			"command":         []any{"sh", "-c", "cp /usr/bin/oc /usr/bin/kubectl /tools/"},
 			"securityContext": map[string]any{
 				"runAsNonRoot":             true,
+				"runAsUser":                int64(65532),
 				"allowPrivilegeEscalation": false,
 				"readOnlyRootFilesystem":   true,
 				"capabilities":             map[string]any{"drop": []any{"ALL"}},
