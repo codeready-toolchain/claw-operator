@@ -1244,6 +1244,103 @@ spec:
 			}
 		})
 
+		t.Run("should inject init-plugins container for anthropic vertex credential", func(t *testing.T) {
+			const gcpSecretName = "e2e-gcp-sa"
+
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", gcpSecretName, "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating a dummy GCP service account Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", gcpSecretName,
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			dummySA := `{"type":"service_account","project_id":"fake-project","private_key_id":"k","private_key":"-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n","client_email":"sa@fake.iam.gserviceaccount.com","client_id":"1","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token"}`
+			createLabeledSecret(t, gcpSecretName,
+				"--from-literal=sa.json="+dummySA)
+
+			t.Log("applying Claw CR with anthropic vertex credential (type=gcp, provider=anthropic)")
+			crYAML := fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: anthropic-vertex
+      type: gcp
+      provider: anthropic
+      secretRef:
+        - name: %s
+          key: sa.json
+      gcp:
+        project: fake-project
+        location: us-east5
+`, gcpSecretName)
+			crFile := filepath.Join("/tmp", "claw-e2e-vertex-plugins.yaml")
+			err := os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR with anthropic vertex credential")
+
+			t.Log("waiting for claw gateway Deployment to be available (init containers must complete)")
+			clawDeployName := clawInstanceName
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true,
+				func(ctx context.Context) (bool, error) {
+					availableJP := `jsonpath={.status.conditions[?(@.type=="Available")].status}`
+					cmd := exec.Command("kubectl", "get", "deployment", clawDeployName,
+						"-o", availableJP, "-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			if err != nil {
+				t.Log("deployment did not become Available — collecting init container diagnostics")
+				cmd = exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+					"-o", "jsonpath={.items[0].metadata.name}", "-n", userNamespace)
+				if podName, podErr := utils.Run(t, cmd); podErr == nil && podName != "" {
+					cmd = exec.Command("kubectl", "get", "pod", podName,
+						"-o", `jsonpath={range .status.initContainerStatuses[*]}{.name}{"\t"}{.state}{"\n"}{end}`,
+						"-n", userNamespace)
+					if statuses, sErr := utils.Run(t, cmd); sErr == nil {
+						t.Logf("Init container statuses:\n%s", statuses)
+					}
+					for _, ic := range []string{controller.PluginsInitContainerName, "wait-for-proxy", "init-config", "init-volume"} {
+						cmd = exec.Command("kubectl", "logs", podName, "-c", ic, "-n", userNamespace)
+						if logs, lErr := utils.Run(t, cmd); lErr == nil && logs != "" {
+							t.Logf("Logs from init container %q:\n%s", ic, logs)
+						}
+					}
+					cmd = exec.Command("kubectl", "describe", "pod", podName, "-n", userNamespace)
+					if desc, dErr := utils.Run(t, cmd); dErr == nil {
+						t.Logf("Pod describe:\n%s", desc)
+					}
+				}
+			}
+			require.NoError(t, err,
+				"timed out waiting for claw deployment to become Available — "+
+					"init-plugins container likely failed (see diagnostics above)")
+
+			t.Log("verifying init-plugins logs mention the anthropic-vertex-provider plugin")
+			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+				"-o", "jsonpath={.items[0].metadata.name}", "-n", userNamespace)
+			podName, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to get claw pod name")
+			cmd = exec.Command("kubectl", "logs", podName, "-c", controller.PluginsInitContainerName,
+				"-n", userNamespace)
+			pluginLogs, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to get init-plugins logs")
+			assert.Contains(t, pluginLogs, "anthropic-vertex-provider",
+				"init-plugins logs should mention the anthropic-vertex-provider plugin")
+		})
+
 		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {
 			const (
 				kubeWorkspace = "e2e-kube-workspace"
