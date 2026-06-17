@@ -1262,7 +1262,14 @@ spec:
 			cmd := exec.Command("kubectl", "delete", "secret", gcpSecretName,
 				"-n", userNamespace, "--ignore-not-found")
 			_, _ = utils.Run(t, cmd)
-			dummySA := `{"type":"service_account","project_id":"fake-project","private_key_id":"k","private_key":"-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n","client_email":"sa@fake.iam.gserviceaccount.com","client_id":"1","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token"}`
+			dummySA := `{"type":"service_account",` +
+				`"project_id":"fake-project",` +
+				`"private_key_id":"k",` +
+				`"private_key":"-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n",` +
+				`"client_email":"sa@fake.iam.gserviceaccount.com",` +
+				`"client_id":"1",` +
+				`"auth_uri":"https://accounts.google.com/o/oauth2/auth",` +
+				`"token_uri":"https://oauth2.googleapis.com/token"}`
 			createLabeledSecret(t, gcpSecretName,
 				"--from-literal=sa.json="+dummySA)
 
