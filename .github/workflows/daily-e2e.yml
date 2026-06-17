@@ -14,8 +14,12 @@ concurrency:
 
 jobs:
   test-e2e:
-    name: Daily E2E
+    name: E2E (${{ matrix.image }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [pinned, slim]
     steps:
       - name: Clone the code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -36,10 +40,13 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
-      - name: Capture dependency versions
+      - name: Resolve OpenClaw image
         id: versions
         run: |
           KUSTOMIZE=internal/assets/manifests/claw/kustomization.yaml
+          if [ "${{ matrix.image }}" = "slim" ]; then
+            yq -i '(.images[] | select(.name == "ghcr.io/openclaw/openclaw")).newTag = "slim"' "$KUSTOMIZE"
+          fi
           OPENCLAW_TAG=$(yq '.images[] | select(.name == "ghcr.io/openclaw/openclaw") | .newTag' "$KUSTOMIZE")
           OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:${OPENCLAW_TAG}"
           OPENCLAW_DIGEST=$(skopeo inspect --format '{{.Digest}}' \
@@ -51,6 +58,7 @@ jobs:
           KIND_VERSION=$(kind version | head -1)
           GO_VERSION=$(go version | awk '{print $3}')
 
+          echo "openclaw_image=${OPENCLAW_IMAGE}" >> "$GITHUB_OUTPUT"
           echo "openclaw_tag=${OPENCLAW_TAG}" >> "$GITHUB_OUTPUT"
           echo "openclaw_digest=${OPENCLAW_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "openclaw_created=${OPENCLAW_CREATED}" >> "$GITHUB_OUTPUT"
@@ -58,7 +66,7 @@ jobs:
           echo "go_version=${GO_VERSION}" >> "$GITHUB_OUTPUT"
 
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## Dependency Versions
+          ## E2E (${{ matrix.image }}) — Dependency Versions
           | Dependency | Version |
           |---|---|
           | OpenClaw image | \`${OPENCLAW_IMAGE}\` |
@@ -71,13 +79,83 @@ jobs:
       - name: Running Test e2e
         run: |
           go mod tidy
-          make test-e2e
+          make test-e2e GATEWAY_IMAGE=${{ steps.versions.outputs.openclaw_image }}
+
+      - name: Save result
+        if: always()
+        run: |
+          mkdir -p results
+          jq -n \
+            --arg status "${{ job.status }}" \
+            --arg image "${{ steps.versions.outputs.openclaw_image }}" \
+            --arg tag "${{ steps.versions.outputs.openclaw_tag }}" \
+            --arg digest "${{ steps.versions.outputs.openclaw_digest }}" \
+            --arg created "${{ steps.versions.outputs.openclaw_created }}" \
+            '{status: $status, image: $image, tag: $tag, digest: $digest, created: $created}' \
+            > results/${{ matrix.image }}.json
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: result-${{ matrix.image }}
+          path: results/
+
+  notify-slack:
+    name: Notify Slack
+    needs: [test-e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download result artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: result-*
+          merge-multiple: true
+
+      - name: Build Slack message
+        id: msg
+        run: |
+          format_result() {
+            local file="$1" label="$2"
+            if [ ! -f "$file" ]; then
+              echo "${label}: _no result_"
+              return
+            fi
+            local status image digest created icon
+            status=$(jq -r .status "$file")
+            image=$(jq -r .image "$file")
+            digest=$(jq -r .digest "$file")
+            created=$(jq -r .created "$file")
+            if [ "$status" = "success" ]; then icon=":white_check_mark:"; else icon=":x:"; fi
+            echo "${icon} ${label}: *${status}* | \`${image}\` (built ${created}) \`${digest}\`"
+          }
+
+          PINNED_LINE=$(format_result pinned.json "pinned")
+          SLIM_LINE=$(format_result slim.json "slim")
+
+          OVERALL="success"
+          for f in pinned.json slim.json; do
+            if [ -f "$f" ] && [ "$(jq -r .status "$f")" != "success" ]; then
+              OVERALL="failure"
+            fi
+          done
+          if [ "$OVERALL" = "success" ]; then ICON=":white_check_mark:"; else ICON=":x:"; fi
+
+          DELIM=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          {
+            echo "text<<${DELIM}"
+            echo "${ICON} *Daily E2E: ${OVERALL}*"
+            echo "${PINNED_LINE}"
+            echo "${SLIM_LINE}"
+            echo "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+            echo "${DELIM}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Notify Slack
-        if: always()
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
-            text: "${{ job.status == 'success' && ':white_check_mark:' || ':x:' }} Daily E2E: *${{ job.status }}* | openclaw:${{ steps.versions.outputs.openclaw_tag }} (built ${{ steps.versions.outputs.openclaw_created }}) `${{ steps.versions.outputs.openclaw_digest }}` | <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+            text: "${{ steps.msg.outputs.text }}"
