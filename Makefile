@@ -86,6 +86,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 KIND_CLUSTER ?= claw-operator-test-e2e
+GATEWAY_IMAGE ?= $(shell yq '.images[] | select(.name == "ghcr.io/openclaw/openclaw") | .newName + ":" + .newTag' internal/assets/manifests/claw/kustomization.yaml)
 
 .PHONY: setup-test-e2e
 setup-test-e2e: kind ## Set up a Kind cluster for e2e tests if it does not exist
@@ -111,7 +112,7 @@ reset-test-e2e: ## Remove leftover operator resources from a previous e2e run
 test-e2e: ## Run the e2e tests. Expected an isolated environment using Kind.
 	@trap '$(MAKE) cleanup-test-e2e >/dev/null 2>&1 || true' EXIT; \
 	$(MAKE) setup-test-e2e manifests generate fmt vet reset-test-e2e; \
-	KIND_BIN=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -v -timeout 15m ./test/e2e/ -run=TestManager
+	KIND_BIN=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) GATEWAY_IMAGE=$(GATEWAY_IMAGE) go test -v -timeout 15m ./test/e2e/ -run=TestManager
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests

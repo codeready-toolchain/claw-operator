@@ -39,15 +39,19 @@ jobs:
       - name: Capture dependency versions
         id: versions
         run: |
+          KUSTOMIZE=internal/assets/manifests/claw/kustomization.yaml
+          OPENCLAW_TAG=$(yq '.images[] | select(.name == "ghcr.io/openclaw/openclaw") | .newTag' "$KUSTOMIZE")
+          OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:${OPENCLAW_TAG}"
           OPENCLAW_DIGEST=$(skopeo inspect --format '{{.Digest}}' \
-            docker://ghcr.io/openclaw/openclaw:slim 2>/dev/null || echo "unknown")
+            "docker://${OPENCLAW_IMAGE}" 2>/dev/null || echo "unknown")
           OPENCLAW_CREATED=$(skopeo inspect --format '{{.Created}}' \
-            docker://ghcr.io/openclaw/openclaw:slim 2>/dev/null \
+            "docker://${OPENCLAW_IMAGE}" 2>/dev/null \
             | cut -d'T' -f1) || true
           OPENCLAW_CREATED=${OPENCLAW_CREATED:-unknown}
           KIND_VERSION=$(kind version | head -1)
           GO_VERSION=$(go version | awk '{print $3}')
 
+          echo "openclaw_tag=${OPENCLAW_TAG}" >> "$GITHUB_OUTPUT"
           echo "openclaw_digest=${OPENCLAW_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "openclaw_created=${OPENCLAW_CREATED}" >> "$GITHUB_OUTPUT"
           echo "kind_version=${KIND_VERSION}" >> "$GITHUB_OUTPUT"
@@ -57,8 +61,9 @@ jobs:
           ## Dependency Versions
           | Dependency | Version |
           |---|---|
-          | \`openclaw:slim\` digest | \`${OPENCLAW_DIGEST}\` |
-          | \`openclaw:slim\` built | ${OPENCLAW_CREATED} |
+          | OpenClaw image | \`${OPENCLAW_IMAGE}\` |
+          | OpenClaw digest | \`${OPENCLAW_DIGEST}\` |
+          | OpenClaw built | ${OPENCLAW_CREATED} |
           | Kind | ${KIND_VERSION} |
           | Go | ${GO_VERSION} |
           EOF
@@ -75,4 +80,4 @@ jobs:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
-            text: "${{ job.status == 'success' && ':white_check_mark:' || ':x:' }} Daily E2E: *${{ job.status }}* | openclaw:slim `${{ steps.versions.outputs.openclaw_digest }}` | <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+            text: "${{ job.status == 'success' && ':white_check_mark:' || ':x:' }} Daily E2E: *${{ job.status }}* | openclaw:${{ steps.versions.outputs.openclaw_tag }} (built ${{ steps.versions.outputs.openclaw_created }}) `${{ steps.versions.outputs.openclaw_digest }}` | <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
