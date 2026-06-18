@@ -164,7 +164,11 @@ jobs:
           ${SLIM_LINE}
           <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>" \
             '{text: $text}')
-          echo "payload=${PAYLOAD}" >> "$GITHUB_OUTPUT"
+          {
+            echo "payload<<SLACKEOF"
+            echo "$PAYLOAD"
+            echo "SLACKEOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Notify Slack
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
