@@ -53,13 +53,29 @@ jobs:
             "docker://${OPENCLAW_IMAGE}" 2>/dev/null || echo "unknown")
           OPENCLAW_CREATED=$(skopeo inspect --format '{{.Created}}' \
             "docker://${OPENCLAW_IMAGE}" 2>/dev/null \
-            | cut -d'T' -f1) || true
+            | awk '{print $1}') || true
           OPENCLAW_CREATED=${OPENCLAW_CREATED:-unknown}
+          OPENCLAW_VERSION="${OPENCLAW_TAG}"
+          if [ "$OPENCLAW_TAG" = "slim" ] && [ "$OPENCLAW_DIGEST" != "unknown" ]; then
+            VERSION_TAGS=$(skopeo list-tags docker://ghcr.io/openclaw/openclaw \
+              | jq -r '.Tags[]' \
+              | grep -E '^[0-9]{4}\.[0-9]+\.[0-9]+$' \
+              | sort -rV | head -10)
+            for tag in $VERSION_TAGS; do
+              TAG_DIGEST=$(skopeo inspect --format '{{.Digest}}' \
+                "docker://ghcr.io/openclaw/openclaw:$tag" 2>/dev/null) || continue
+              if [ "$TAG_DIGEST" = "$OPENCLAW_DIGEST" ]; then
+                OPENCLAW_VERSION="slim → ${tag}"
+                break
+              fi
+            done
+          fi
           KIND_VERSION=$(kind version | head -1)
           GO_VERSION=$(go version | awk '{print $3}')
 
           echo "openclaw_image=${OPENCLAW_IMAGE}" >> "$GITHUB_OUTPUT"
           echo "openclaw_tag=${OPENCLAW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "openclaw_version=${OPENCLAW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "openclaw_digest=${OPENCLAW_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "openclaw_created=${OPENCLAW_CREATED}" >> "$GITHUB_OUTPUT"
           echo "kind_version=${KIND_VERSION}" >> "$GITHUB_OUTPUT"
@@ -69,6 +85,7 @@ jobs:
           ## E2E (${{ matrix.image }}) — Dependency Versions
           | Dependency | Version |
           |---|---|
+          | OpenClaw version | ${OPENCLAW_VERSION} |
           | OpenClaw image | \`${OPENCLAW_IMAGE}\` |
           | OpenClaw digest | \`${OPENCLAW_DIGEST}\` |
           | OpenClaw built | ${OPENCLAW_CREATED} |
@@ -88,10 +105,10 @@ jobs:
           jq -n \
             --arg status "${{ job.status }}" \
             --arg image "${{ steps.versions.outputs.openclaw_image }}" \
-            --arg tag "${{ steps.versions.outputs.openclaw_tag }}" \
+            --arg version "${{ steps.versions.outputs.openclaw_version }}" \
             --arg digest "${{ steps.versions.outputs.openclaw_digest }}" \
             --arg created "${{ steps.versions.outputs.openclaw_created }}" \
-            '{status: $status, image: $image, tag: $tag, digest: $digest, created: $created}' \
+            '{status: $status, image: $image, version: $version, digest: $digest, created: $created}' \
             > results/${{ matrix.image }}.json
 
       - name: Upload result artifact
@@ -122,13 +139,13 @@ jobs:
               echo "${label}: _no result_"
               return
             fi
-            local status image digest created icon
+            local status version digest created icon
             status=$(jq -r .status "$file")
-            image=$(jq -r .image "$file")
+            version=$(jq -r .version "$file")
             digest=$(jq -r .digest "$file")
             created=$(jq -r .created "$file")
             if [ "$status" = "success" ]; then icon=":white_check_mark:"; else icon=":x:"; fi
-            echo "${icon} ${label}: *${status}* | \`${image}\` (built ${created}) \`${digest}\`"
+            echo "${icon} ${label}: *${status}* | ${version} (built ${created}) \`${digest}\`"
           }
 
           PINNED_LINE=$(format_result pinned.json "pinned")
@@ -142,20 +159,16 @@ jobs:
           done
           if [ "$OVERALL" = "success" ]; then ICON=":white_check_mark:"; else ICON=":x:"; fi
 
-          DELIM=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
-          {
-            echo "text<<${DELIM}"
-            echo "${ICON} *Daily E2E: ${OVERALL}*"
-            echo "${PINNED_LINE}"
-            echo "${SLIM_LINE}"
-            echo "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
-            echo "${DELIM}"
-          } >> "$GITHUB_OUTPUT"
+          PAYLOAD=$(jq -n --arg text "${ICON} *Daily E2E: ${OVERALL}*
+          ${PINNED_LINE}
+          ${SLIM_LINE}
+          <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>" \
+            '{text: $text}')
+          echo "payload=${PAYLOAD}" >> "$GITHUB_OUTPUT"
 
       - name: Notify Slack
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
-          payload: |
-            text: "${{ steps.msg.outputs.text }}"
+          payload: ${{ steps.msg.outputs.payload }}
