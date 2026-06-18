@@ -45,7 +45,8 @@ var (
 
 	// gatewayImage is the upstream OpenClaw image used by the claw deployment.
 	// Pre-loaded into Kind so e2e tests can verify init container patching.
-	gatewayImage = "ghcr.io/openclaw/openclaw:slim"
+	// Set via GATEWAY_IMAGE env var (derived from kustomization.yaml by the Makefile).
+	gatewayImage = envOrDefault("GATEWAY_IMAGE", "ghcr.io/openclaw/openclaw:slim")
 )
 
 // TestMain runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -163,6 +164,13 @@ func pullAndLoadImage(image, kindBin, kindCluster string) error {
 		return fmt.Errorf("load %s into Kind: %w", image, err)
 	}
 	return nil
+}
+
+func envOrDefault(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		return v
+	}
+	return fallback
 }
 
 // runStreaming executes a command with stdout/stderr streamed directly to the
