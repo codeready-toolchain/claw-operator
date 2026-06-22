@@ -102,7 +102,7 @@ var knownProviders = map[string]providerDefaults{
 		Header:       "x-api-key",
 		API:          "anthropic-messages",
 		VertexAPI:    "anthropic-messages",
-		VertexPlugin: "@openclaw/anthropic-vertex-provider@2026.6.8",
+		VertexPlugin: "@openclaw/anthropic-vertex-provider@2026.6.9",
 		Models: []modelEntry{
 			{Name: "claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
 			{Name: "claude-opus-4-8", Alias: "Claude Opus 4.8"},
