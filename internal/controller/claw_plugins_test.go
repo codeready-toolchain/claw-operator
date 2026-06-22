@@ -31,7 +31,7 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
-const testGatewayImage = "ghcr.io/openclaw/openclaw:2026.6.8"
+const testGatewayImage = "ghcr.io/openclaw/openclaw:2026.6.9"
 
 func makeTestDeploymentForPlugins() []*unstructured.Unstructured {
 	dep := &unstructured.Unstructured{}
@@ -421,7 +421,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 		}
 		plugins := requiredProviderPlugins(instance)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.8", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.9", plugins[0])
 	})
 
 	t.Run("returns empty for google GCP credential", func(t *testing.T) {
@@ -497,7 +497,7 @@ func TestEffectivePlugins(t *testing.T) {
 		}
 		plugins := effectivePlugins(instance)
 		assert.Contains(t, plugins, "@openclaw/matrix")
-		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider@2026.6.8")
+		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider@2026.6.9")
 		assert.Len(t, plugins, 2)
 	})
 
@@ -526,7 +526,7 @@ func TestEffectivePlugins(t *testing.T) {
 		}
 		plugins := effectivePlugins(instance)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.8", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.9", plugins[0])
 	})
 }
 
