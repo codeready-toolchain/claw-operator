@@ -23,7 +23,7 @@ import (
 )
 
 // CredentialType selects the credential injection mechanism used by the proxy.
-// +kubebuilder:validation:Enum=apiKey;bearer;gcp;pathToken;oauth2;none;kubernetes
+// +kubebuilder:validation:Enum=apiKey;bearer;gcp;pathToken;oauth2;none;kubernetes;codexOAuth
 type CredentialType string
 
 const (
@@ -34,6 +34,7 @@ const (
 	CredentialTypeOAuth2     CredentialType = "oauth2"
 	CredentialTypeNone       CredentialType = "none"
 	CredentialTypeKubernetes CredentialType = "kubernetes"
+	CredentialTypeCodexOAuth CredentialType = "codexOAuth"
 )
 
 // ConfigMode controls how operator.json is merged into the user's openclaw.json
@@ -152,7 +153,7 @@ type OAuth2Config struct {
 }
 
 // CredentialSpec defines a single credential entry for proxy injection.
-// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || (has(self.provider) && self.provider in ['google', 'anthropic', 'openai', 'xai', 'openrouter'])",message="type is required (inferred only for known providers: google, anthropic, openai, xai, openrouter)"
+// +kubebuilder:validation:XValidation:rule="has(self.type) || has(self.channel) || (has(self.provider) && self.provider in ['google', 'anthropic', 'openai', 'xai', 'openrouter', 'openai-oauth'])",message="type is required (inferred only for known providers: google, anthropic, openai, xai, openrouter, openai-oauth)"
 // +kubebuilder:validation:XValidation:rule="!has(self.provider) || !has(self.channel)",message="provider and channel are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="has(self.channel) || (has(self.type) && self.type == 'none') || has(self.secretRef)",message="secretRef is required unless type is none or channel is set"
 // +kubebuilder:validation:XValidation:rule="!has(self.type) || self.type != 'apiKey' || has(self.apiKey) || (has(self.provider) && self.provider in ['google', 'anthropic']) || has(self.channel)",message="apiKey config is required when type is apiKey without inferred defaults"

@@ -724,7 +724,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	skipDefaultPersonality(config)
 	injectRouteHost(config, routeHost)
 	injectAuthMode(config, instance)
-	if err := injectProviders(config, instance); err != nil {
+	if err := injectProviders(config, instance, resolvedCreds); err != nil {
 		return fmt.Errorf("failed to inject providers: %w", err)
 	}
 	injectModelCatalog(config, instance)
@@ -1154,7 +1154,7 @@ func injectRouteHost(config map[string]any, routeHost string) {
 // injectProviders dynamically builds the models.providers section from
 // credentials that have Provider set. Always-win: unconditionally overwrites
 // the providers map regardless of user config.
-func injectProviders(config map[string]any, instance *clawv1alpha1.Claw) error {
+func injectProviders(config map[string]any, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) error {
 	providers := map[string]any{}
 	for _, cred := range instance.Spec.Credentials {
 		if cred.Provider == "" || cred.Type == clawv1alpha1.CredentialTypePathToken {
@@ -1182,12 +1182,21 @@ func injectProviders(config map[string]any, instance *clawv1alpha1.Claw) error {
 			}
 			info := resolveProviderInfo(cred)
 			baseURL := info.Upstream + info.BasePath
-			providers[cred.Provider] = buildProviderEntry(cred.Provider, baseURL, "ah-ah-ah-you-didnt-say-the-magic-word")
+
+			apiKey := placeholderAPIKey
+			if cred.Type == clawv1alpha1.CredentialTypeCodexOAuth {
+				accountID := codexOAuthAccountID(resolvedCreds, cred.Name)
+				if accountID != "" {
+					apiKey = buildSyntheticJWT(accountID)
+				}
+			}
+
+			providers[cred.Provider] = buildProviderEntry(cred.Provider, baseURL, apiKey)
 			for _, companion := range knownProviders[cred.Provider].Companions {
 				if _, exists := providers[companion]; exists {
 					return fmt.Errorf("duplicate provider %q (companion of %q) in credentials", companion, cred.Provider)
 				}
-				providers[companion] = buildProviderEntry(companion, baseURL, "ah-ah-ah-you-didnt-say-the-magic-word")
+				providers[companion] = buildProviderEntry(companion, baseURL, apiKey)
 			}
 		}
 	}

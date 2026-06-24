@@ -125,6 +125,16 @@ var knownProviders = map[string]providerDefaults{
 	"openai-codex": {
 		API: "openai-chatgpt-responses",
 	},
+	"openai-oauth": {
+		CredType: clawv1alpha1.CredentialTypeCodexOAuth,
+		Domain:   "chatgpt.com",
+		API:      "openai-chatgpt-responses",
+		Models: []modelEntry{
+			{Name: "gpt-5.4-mini", Alias: "GPT-5.4 Mini"},
+			{Name: "gpt-5.5", Alias: "GPT-5.5"},
+			{Name: "gpt-5.4", Alias: "GPT-5.4"},
+		},
+	},
 	"xai": {
 		CredType: clawv1alpha1.CredentialTypeBearer,
 		Domain:   "api.x.ai",
@@ -213,6 +223,13 @@ func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
 	case clawv1alpha1.CredentialTypeGCP:
 		if cred.Domain == "" {
 			cred.Domain = ".googleapis.com"
+		}
+
+	case clawv1alpha1.CredentialTypeCodexOAuth:
+		if defaults, ok := knownProviders[cred.Provider]; ok && defaults.Domain != "" {
+			if cred.Domain == "" {
+				cred.Domain = defaults.Domain
+			}
 		}
 
 	case clawv1alpha1.CredentialTypeKubernetes:
