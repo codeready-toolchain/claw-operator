@@ -116,7 +116,7 @@ ls "$EXT" 2>/dev/null | sort > /tmp/before-plugins.txt
 `)
 	for _, pkg := range plugins {
 		escaped := "'" + strings.ReplaceAll(pkg, "'", "'\\''") + "'"
-		fmt.Fprintf(&b, "openclaw plugins install clawhub:%s\n", escaped)
+		fmt.Fprintf(&b, "openclaw plugins install %s\n", escaped)
 	}
 	b.WriteString(`ls "$EXT" | sort | comm -13 /tmp/before-plugins.txt - > "$MANIFEST"
 `)
