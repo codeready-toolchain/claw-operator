@@ -537,24 +537,24 @@ func TestResolveProviderDefaults(t *testing.T) {
 			wantHeader: "x-api-key",
 		},
 		{
-			name: "google gcp fills domain",
+			name: "google gcp leaves domain empty for scoping",
 			cred: clawv1alpha1.CredentialSpec{
 				Name:     "gemini",
 				Type:     clawv1alpha1.CredentialTypeGCP,
 				Provider: "google",
 				GCP:      &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
 			},
-			wantDomain: ".googleapis.com",
+			wantDomain: "",
 		},
 		{
-			name: "anthropic gcp fills domain",
+			name: "anthropic gcp leaves domain empty for scoping",
 			cred: clawv1alpha1.CredentialSpec{
 				Name:     "anthropic-vertex",
 				Type:     clawv1alpha1.CredentialTypeGCP,
 				Provider: "anthropic",
 				GCP:      &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"},
 			},
-			wantDomain: ".googleapis.com",
+			wantDomain: "",
 		},
 		{
 			name: "explicit domain preserved",

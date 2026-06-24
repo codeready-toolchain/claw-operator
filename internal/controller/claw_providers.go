@@ -211,15 +211,16 @@ func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
 		}
 
 	case clawv1alpha1.CredentialTypeGCP:
-		if cred.Domain == "" {
-			cred.Domain = ".googleapis.com"
-		}
+		// Domain intentionally left empty when not set by the user.
+		// credentialRoutes() expands GCP credentials with empty domain into
+		// scoped exact routes (aiplatform + oauth2) for least-privilege.
+		// Users can set domain explicitly to override (escape hatch).
 
 	case clawv1alpha1.CredentialTypeKubernetes:
 		return nil
 	}
 
-	if cred.Domain == "" {
+	if cred.Domain == "" && cred.Type != clawv1alpha1.CredentialTypeGCP {
 		return fmt.Errorf("credential %q: domain is required (no default for provider %q with type %q)",
 			cred.Name, cred.Provider, cred.Type)
 	}

@@ -111,6 +111,17 @@ var builtinPassthroughDomains = []builtinPassthrough{
 	{Domain: "registry.npmjs.org"},
 }
 
+// gcpScopedDomains returns the minimal set of exact domains required for a GCP
+// credential's configured location. Only the Vertex AI inference endpoint and
+// the OAuth2 token refresh endpoint are included.
+func gcpScopedDomains(gcp *clawv1alpha1.GCPConfig) []string {
+	host := "aiplatform.googleapis.com" // this is the correct host when region is "global"
+	if gcp != nil && gcp.Location != "" && gcp.Location != "global" {
+		host = gcp.Location + "-aiplatform.googleapis.com"
+	}
+	return []string{host, "oauth2.googleapis.com"}
+}
+
 // generateProxyConfig builds the proxy config JSON from resolved credentials.
 // HTTP MCP server URLs are auto-extracted as passthrough routes when not already
 // covered by a credential or builtin domain.
@@ -124,7 +135,13 @@ func generateProxyConfig(
 
 	coveredDomains := make(map[string]bool)
 	for _, rc := range credentials {
-		coveredDomains[strings.ToLower(rc.Domain)] = true
+		if rc.Type == clawv1alpha1.CredentialTypeGCP && rc.Domain == "" {
+			for _, d := range gcpScopedDomains(rc.GCP) {
+				coveredDomains[strings.ToLower(d)] = true
+			}
+		} else {
+			coveredDomains[strings.ToLower(rc.Domain)] = true
+		}
 	}
 
 	for _, bp := range builtinPassthroughDomains {
@@ -178,6 +195,7 @@ func generateProxyConfig(
 // credentialRoutes builds proxy routes from resolved credentials, returning
 // exact-match and suffix-match routes separately for deterministic ordering.
 func credentialRoutes(credentials []resolvedCredential) (exact, suffix []proxyRoute) {
+	gcpEmitted := make(map[string]bool)
 	for _, rc := range credentials {
 		cred := rc.CredentialSpec
 
@@ -201,7 +219,23 @@ func credentialRoutes(credentials []resolvedCredential) (exact, suffix []proxyRo
 			continue
 		}
 
-		if cred.Domain != "" {
+		if cred.Type == clawv1alpha1.CredentialTypeGCP && cred.Domain == "" {
+			for _, domain := range gcpScopedDomains(cred.GCP) {
+				if gcpEmitted[domain] {
+					continue
+				}
+				gcpEmitted[domain] = true
+				scopedCred := cred
+				scopedCred.Domain = domain
+				route := buildCredentialRoute(scopedCred)
+				if cred.Provider != "" && !usesVertexSDK(cred) {
+					info := resolveProviderInfo(cred)
+					route.PathPrefix = "/" + strings.ToLower(cred.Name)
+					route.Upstream = info.Upstream
+				}
+				exact = append(exact, route)
+			}
+		} else if cred.Domain != "" {
 			route := buildCredentialRoute(cred)
 
 			if cred.Provider != "" && cred.Type != clawv1alpha1.CredentialTypePathToken && !usesVertexSDK(cred) {
