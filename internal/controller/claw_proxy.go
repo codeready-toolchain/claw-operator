@@ -175,6 +175,25 @@ func generateProxyConfig(
 	return json.Marshal(cfg)
 }
 
+// multiSecretRoles returns the channel's SecretRoles when the credential belongs
+// to a multi-secret channel (multiple roles with EnvVarSuffix). Returns nil for
+// single-role channels and non-channel credentials.
+func multiSecretRoles(cred clawv1alpha1.CredentialSpec) []channelSecretRole {
+	if cred.Channel == "" {
+		return nil
+	}
+	defaults, ok := knownChannels[cred.Channel]
+	if !ok || len(defaults.SecretRoles) < 2 {
+		return nil
+	}
+	for _, role := range defaults.SecretRoles {
+		if role.EnvVarSuffix != "" {
+			return defaults.SecretRoles
+		}
+	}
+	return nil
+}
+
 // credentialRoutes builds proxy routes from resolved credentials, returning
 // exact-match and suffix-match routes separately for deterministic ordering.
 func credentialRoutes(credentials []resolvedCredential) (exact, suffix []proxyRoute) {
@@ -202,18 +221,31 @@ func credentialRoutes(credentials []resolvedCredential) (exact, suffix []proxyRo
 		}
 
 		if cred.Domain != "" {
-			route := buildCredentialRoute(cred)
-
-			if cred.Provider != "" && cred.Type != clawv1alpha1.CredentialTypePathToken && !usesVertexSDK(cred) {
-				info := resolveProviderInfo(cred)
-				route.PathPrefix = "/" + strings.ToLower(cred.Name)
-				route.Upstream = info.Upstream
-			}
-
-			if strings.HasPrefix(cred.Domain, ".") {
-				suffix = append(suffix, route)
+			if roles := multiSecretRoles(cred); len(roles) > 0 {
+				for _, role := range roles {
+					route := buildCredentialRoute(cred)
+					route.EnvVar = credEnvVarName(cred.Name) + "_" + role.EnvVarSuffix
+					route.AllowedPaths = role.AllowedPaths
+					if strings.HasPrefix(cred.Domain, ".") {
+						suffix = append(suffix, route)
+					} else {
+						exact = append(exact, route)
+					}
+				}
 			} else {
-				exact = append(exact, route)
+				route := buildCredentialRoute(cred)
+
+				if cred.Provider != "" && cred.Type != clawv1alpha1.CredentialTypePathToken && !usesVertexSDK(cred) {
+					info := resolveProviderInfo(cred)
+					route.PathPrefix = "/" + strings.ToLower(cred.Name)
+					route.Upstream = info.Upstream
+				}
+
+				if strings.HasPrefix(cred.Domain, ".") {
+					suffix = append(suffix, route)
+				} else {
+					exact = append(exact, route)
+				}
 			}
 		}
 
@@ -492,24 +524,43 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, instance
 
 		for _, rc := range credentials {
 			cred := rc.CredentialSpec
-			ref := proxySecretForCredential(cred)
 			switch cred.Type {
 			case clawv1alpha1.CredentialTypeAPIKey, clawv1alpha1.CredentialTypeBearer,
 				clawv1alpha1.CredentialTypePathToken, clawv1alpha1.CredentialTypeOAuth2:
-				if ref == nil {
-					continue
-				}
-				envVars = append(envVars, map[string]any{
-					"name": credEnvVarName(cred.Name),
-					"valueFrom": map[string]any{
-						"secretKeyRef": map[string]any{
-							"name": ref.Name,
-							"key":  ref.Key,
+				if roles := multiSecretRoles(cred); len(roles) > 0 {
+					for _, role := range roles {
+						ref := secretForRole(cred, role.Role)
+						if ref == nil {
+							continue
+						}
+						envVars = append(envVars, map[string]any{
+							"name": credEnvVarName(cred.Name) + "_" + role.EnvVarSuffix,
+							"valueFrom": map[string]any{
+								"secretKeyRef": map[string]any{
+									"name": ref.Name,
+									"key":  ref.Key,
+								},
+							},
+						})
+					}
+				} else {
+					ref := proxySecretForCredential(cred)
+					if ref == nil {
+						continue
+					}
+					envVars = append(envVars, map[string]any{
+						"name": credEnvVarName(cred.Name),
+						"valueFrom": map[string]any{
+							"secretKeyRef": map[string]any{
+								"name": ref.Name,
+								"key":  ref.Key,
+							},
 						},
-					},
-				})
+					})
+				}
 
 			case clawv1alpha1.CredentialTypeGCP:
+				ref := proxySecretForCredential(cred)
 				if ref == nil {
 					continue
 				}
@@ -533,6 +584,7 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, instance
 				})
 
 			case clawv1alpha1.CredentialTypeKubernetes:
+				ref := proxySecretForCredential(cred)
 				if ref == nil {
 					continue
 				}

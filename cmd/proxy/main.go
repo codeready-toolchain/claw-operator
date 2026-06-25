@@ -36,10 +36,18 @@ func main() {
 		cacertPath = flag.String("ca-cert", "/etc/proxy/ca/ca.crt", "path to CA certificate PEM")
 		cakeyPath  = flag.String("ca-key", "/etc/proxy/ca/ca.key", "path to CA private key PEM")
 		listenAddr = flag.String("listen", ":8080", "listen address")
+		verbose    = flag.Bool("verbose", false, "enable goproxy verbose request/response logging")
 	)
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	opts := &slog.HandlerOptions{}
+	if *verbose {
+		opts.Level = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	if *verbose {
+		logger.Debug("verbose logging enabled")
+	}
 
 	cfg, err := proxy.LoadConfig(*configPath)
 	if err != nil {
@@ -63,6 +71,10 @@ func main() {
 	if err != nil {
 		logger.Error("failed to create proxy server", "error", err)
 		os.Exit(1)
+	}
+
+	if *verbose {
+		proxySrv.SetVerbose(true)
 	}
 
 	httpSrv := &http.Server{

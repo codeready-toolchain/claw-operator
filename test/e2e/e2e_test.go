@@ -18,8 +18,10 @@ package e2e
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +31,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/codeready-toolchain/claw-operator/internal/controller"
@@ -37,7 +40,7 @@ import (
 
 const (
 	operatorNamespace = "claw-operator"
-	userNamespace     = "default"
+	userNamespace     = "test-e2e"
 
 	serviceAccountName     = "claw-operator-controller-manager"
 	metricsServiceName     = "claw-operator-controller-manager-metrics-service"
@@ -49,6 +52,7 @@ const (
 
 	podPhaseRunning   = "Running"
 	podPhaseSucceeded = "Succeeded"
+	podPhaseFailed    = "Failed"
 	conditionTrue     = "True"
 
 	clawInstanceName    = "instance"
@@ -106,6 +110,11 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to deploy the controller-manager")
 
+	t.Log("creating user namespace")
+	cmd = exec.Command("kubectl", "create", "ns", userNamespace)
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to create user namespace")
+
 	t.Cleanup(func() {
 		t.Log("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", operatorNamespace)
@@ -121,6 +130,10 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 		t.Log("removing manager namespace")
 		cmd = exec.Command("kubectl", "delete", "ns", operatorNamespace)
+		_, _ = utils.Run(t, cmd)
+
+		t.Log("removing user namespace")
+		cmd = exec.Command("kubectl", "delete", "ns", userNamespace, "--ignore-not-found")
 		_, _ = utils.Run(t, cmd)
 	})
 
@@ -139,13 +152,22 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Logf("Failed to get Controller logs: %s", err)
 		}
 
-		t.Log("Fetching Kubernetes events")
+		t.Log("Fetching Kubernetes events in operator namespace")
 		cmd = exec.Command("kubectl", "get", "events", "-n", operatorNamespace, "--sort-by=.lastTimestamp")
 		eventsOutput, err := utils.Run(t, cmd)
 		if err == nil {
-			t.Logf("Kubernetes events:\n%s", eventsOutput)
+			t.Logf("Kubernetes events in operator namespace:\n%s", eventsOutput)
 		} else {
-			t.Logf("Failed to get Kubernetes events: %s", err)
+			t.Logf("Failed to get Kubernetes events in operator namespace: %s", err)
+		}
+
+		t.Log("Fetching Kubernetes events in user namespace")
+		cmd = exec.Command("kubectl", "get", "events", "-n", userNamespace, "--sort-by=.lastTimestamp")
+		eventsOutput, err = utils.Run(t, cmd)
+		if err == nil {
+			t.Logf("Kubernetes events in user namespace:\n%s", eventsOutput)
+		} else {
+			t.Logf("Failed to get Kubernetes events in user namespace: %s", err)
 		}
 
 		// skipping curl-metrics logs for now as it is verbose and not so useful for debugging
@@ -195,6 +217,23 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 		if err == nil {
 			t.Logf("User namespace pods:\n%s", podsOutput)
 		}
+
+		t.Log("Fetching proxy pod logs")
+		cmd = exec.Command("kubectl", "get", "pods", "-l", "app=claw-proxy", "-n", userNamespace, "-o", "jsonpath={.items[0].metadata.name}")
+		proxyPodName, err := utils.Run(t, cmd)
+		if err == nil {
+			t.Logf("Proxy pod name: %s", proxyPodName)
+		} else {
+			t.Logf("Failed to get Proxy pod name: %s", err)
+		}
+		cmd = exec.Command("kubectl", "logs", proxyPodName, "-n", userNamespace)
+		proxyLogs, err := utils.Run(t, cmd)
+		if err == nil {
+			t.Logf("Proxy logs:\n %s", proxyLogs)
+		} else {
+			t.Logf("Failed to get Proxy logs: %s", err)
+		}
+
 	}
 
 	t.Log("waiting for the controller-manager pod to be running")
@@ -357,13 +396,13 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Log("verifying claw_instance_status metric for ready instance")
 			metricsOutput = fetchFreshMetrics(t, "curl-metrics-status")
 			t.Logf("metricsOutput: %s", metricsOutput)
-			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="ready"} 1`)
-			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="provisioning"} 0`)
-			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="failed"} 0`)
-			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="default",status="idled"} 0`)
+			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="test-e2e",status="ready"} 1`)
+			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="test-e2e",status="provisioning"} 0`)
+			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="test-e2e",status="failed"} 0`)
+			assert.Contains(t, metricsOutput, `claw_instance_status{name="instance",namespace="test-e2e",status="idled"} 0`)
 
 			t.Log("verifying claw_instance_info metric")
-			assert.Contains(t, metricsOutput, `claw_instance_info{auth_mode="token",idle="false",name="instance",namespace="default"} 1`)
+			assert.Contains(t, metricsOutput, `claw_instance_info{auth_mode="token",idle="false",name="instance",namespace="test-e2e"} 1`)
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
@@ -1102,10 +1141,10 @@ spec:
 
 			t.Log("verifying claw_instance_status metric for idled instance")
 			idleMetrics := fetchFreshMetrics(t, "curl-metrics-idle")
-			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="default",status="idled"} 1`)
-			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="default",status="ready"} 0`)
-			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="default",status="provisioning"} 0`)
-			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="default",status="failed"} 0`)
+			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="test-e2e",status="idled"} 1`)
+			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="test-e2e",status="ready"} 0`)
+			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="test-e2e",status="provisioning"} 0`)
+			assert.Contains(t, idleMetrics, `claw_instance_status{name="instance",namespace="test-e2e",status="failed"} 0`)
 
 			t.Log("unidling the instance")
 			cmd = exec.Command("kubectl", "patch", "claw", "instance",
@@ -1348,6 +1387,227 @@ spec:
 				"init-plugins logs should mention the anthropic-vertex-provider plugin")
 		})
 
+		t.Run("should wire Slack dual-token credential with separate env vars per role", func(t *testing.T) {
+			const (
+				slackSecretName = "e2e-slack-secret"
+				slackEchoPod    = "slack-echo"
+				curlSlackPod    = "curl-slack-proxy"
+			)
+
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", slackSecretName, "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				for _, suffix := range []string{"-app", "-bot", "-form", "-json"} {
+					cmd = exec.Command("kubectl", "delete", "pod", curlSlackPod+suffix, "-n", userNamespace, "--ignore-not-found")
+					_, _ = utils.Run(t, cmd)
+				}
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			// --- Deploy TLS echo server ---
+			certDir, echoPodIP := deployTLSEchoServer(t, "slack.com", slackEchoPod, "e2e-slack-tls")
+
+			ctx := context.Background()
+
+			// --- Create Claw CR and verify operator wiring ---
+
+			t.Log("creating the Slack credential Secret with app-token and bot-token keys")
+			cmd = exec.Command("kubectl", "delete", "secret", slackSecretName,
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, slackSecretName,
+				"--from-literal=app-token=xapp-test-e2e-app-token",
+				"--from-literal=bot-token=xoxb-test-e2e-bot-token")
+
+			t.Log("applying Claw CR with Slack channel credential")
+			crYAML := fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: slack
+      channel: slack
+      secretRef:
+        - name: %s
+          key: app-token
+          role: appToken
+        - name: %s
+          key: bot-token
+          role: botToken
+`, slackSecretName, slackSecretName)
+			crFile := filepath.Join("/tmp", "claw-e2e-slack.yaml")
+			err = os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR with Slack credential")
+
+			t.Log("waiting for Claw ProxyConfigured condition")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw ProxyConfigured did not become True")
+
+			t.Log("verifying CRED_SLACK_APP env var references the app-token key")
+			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+				".env[?(@.name=='CRED_SLACK_APP')].valueFrom.secretKeyRef}"
+			cmd = exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
+				"-o", jp, "-n", userNamespace)
+			output, err := utils.Run(t, cmd)
+			require.NoError(t, err, "CRED_SLACK_APP env var should exist")
+			assert.Contains(t, output, slackSecretName,
+				"CRED_SLACK_APP should reference the Slack Secret")
+			assert.Contains(t, output, "app-token",
+				"CRED_SLACK_APP should reference the app-token key")
+
+			t.Log("verifying CRED_SLACK_BOT env var references the bot-token key")
+			jp = "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')]" +
+				".env[?(@.name=='CRED_SLACK_BOT')].valueFrom.secretKeyRef}"
+			cmd = exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
+				"-o", jp, "-n", userNamespace)
+			output, err = utils.Run(t, cmd)
+			require.NoError(t, err, "CRED_SLACK_BOT env var should exist")
+			assert.Contains(t, output, slackSecretName,
+				"CRED_SLACK_BOT should reference the Slack Secret")
+			assert.Contains(t, output, "bot-token",
+				"CRED_SLACK_BOT should reference the bot-token key")
+
+			t.Log("verifying no single CRED_SLACK env var exists (should be split)")
+			allEnvJP := "jsonpath={.spec.template.spec.containers[?(@.name=='proxy')].env[*].name}"
+			cmd = exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
+				"-o", allEnvJP, "-n", userNamespace)
+			allEnvNames, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			for _, name := range strings.Fields(allEnvNames) {
+				assert.NotEqual(t, "CRED_SLACK", name,
+					"should not have a single CRED_SLACK env var — tokens must be split")
+			}
+
+			t.Log("verifying proxy-config.json has two routes for slack.com")
+			cmd = exec.Command("kubectl", "get", "configmap", proxyConfigMapName,
+				"-o", "jsonpath={.data.proxy-config\\.json}",
+				"-n", userNamespace)
+			configOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err, "proxy-config ConfigMap should exist")
+
+			var proxyCfg struct {
+				Routes []struct {
+					Domain       string   `json:"domain"`
+					Injector     string   `json:"injector"`
+					EnvVar       string   `json:"envVar"`
+					AllowedPaths []string `json:"allowedPaths"`
+				} `json:"routes"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(configOutput), &proxyCfg),
+				"proxy-config.json should be valid JSON")
+
+			var slackRoutes []struct {
+				EnvVar       string
+				AllowedPaths []string
+			}
+			for _, r := range proxyCfg.Routes {
+				if r.Domain == "slack.com" {
+					slackRoutes = append(slackRoutes, struct {
+						EnvVar       string
+						AllowedPaths []string
+					}{r.EnvVar, r.AllowedPaths})
+				}
+			}
+			require.Len(t, slackRoutes, 2,
+				"should have two routes for slack.com (app + bot)")
+
+			foundApp := false
+			foundBot := false
+			for _, sr := range slackRoutes {
+				switch sr.EnvVar {
+				case "CRED_SLACK_APP":
+					foundApp = true
+					assert.Equal(t, []string{"/api/apps.connections.open"}, sr.AllowedPaths,
+						"app-token route should restrict to Socket Mode handshake path")
+				case "CRED_SLACK_BOT":
+					foundBot = true
+					assert.Empty(t, sr.AllowedPaths,
+						"bot-token route should be a catch-all with no path restriction")
+				}
+			}
+			assert.True(t, foundApp, "should have a CRED_SLACK_APP route for slack.com")
+			assert.True(t, foundBot, "should have a CRED_SLACK_BOT route for slack.com")
+
+			t.Log("verifying companion .slack.com route exists with injector=none")
+			hasCompanion := false
+			for _, r := range proxyCfg.Routes {
+				if r.Domain == ".slack.com" && r.Injector == "none" {
+					hasCompanion = true
+					break
+				}
+			}
+			assert.True(t, hasCompanion,
+				"should have a .slack.com companion route with injector=none for WebSocket traffic")
+
+			// --- Patch proxy with echo server CA and hostAliases ---
+			patchProxyForEchoServer(t, certDir, "slack.com", echoPodIP)
+
+			// --- Send HTTPS requests through the proxy (CONNECT/MITM) ---
+
+			t.Log("extracting MITM CA cert for curl")
+			mitmCAB64 := extractMITMCA(t)
+
+			t.Log("verifying app token injection on /api/apps.connections.open")
+			appOutput := curlThroughProxy(t, curlSlackPod+"-app", mitmCAB64, curlThroughProxyRequest{
+				URL: "https://slack.com/api/apps.connections.open",
+			})
+			assert.Contains(t, appOutput, "Bearer xapp-test-e2e-app-token",
+				"/api/apps.connections.open should receive the app token")
+			assert.NotContains(t, appOutput, "xoxb-test-e2e-bot-token",
+				"/api/apps.connections.open should NOT receive the bot token")
+
+			t.Log("verifying bot token injection on /api/chat.postMessage")
+			botOutput := curlThroughProxy(t, curlSlackPod+"-bot", mitmCAB64, curlThroughProxyRequest{
+				URL: "https://slack.com/api/chat.postMessage",
+			})
+			assert.Contains(t, botOutput, "Bearer xoxb-test-e2e-bot-token",
+				"/api/chat.postMessage should receive the bot token")
+			assert.NotContains(t, botOutput, "xapp-test-e2e-app-token",
+				"/api/chat.postMessage should NOT receive the app token")
+
+			// --- Body token replacement tests ---
+
+			t.Log("verifying form-encoded body token replacement (only token field, not text)")
+			formOutput := curlThroughProxy(t, curlSlackPod+"-form", mitmCAB64, curlThroughProxyRequest{
+				Method:      "POST",
+				URL:         "https://slack.com/api/chat.postMessage",
+				Body:        "token=xoxb-placeholder&text=hello+xoxb-placeholder&channel=C1234",
+				ContentType: "application/x-www-form-urlencoded",
+			})
+			assert.Contains(t, formOutput, "xoxb-test-e2e-bot-token",
+				"token field should contain the real bot token")
+			assert.Contains(t, formOutput, "xoxb-placeholder",
+				"text field should still contain the placeholder (proves non-global replacement)")
+
+			t.Log("verifying JSON body token replacement on /api/chat.postMessage")
+			jsonOutput := curlThroughProxy(t, curlSlackPod+"-json", mitmCAB64, curlThroughProxyRequest{
+				Method:      "POST",
+				URL:         "https://slack.com/api/chat.postMessage",
+				Body:        `{"token":"xoxb-placeholder","channel":"C1234"}`,
+				ContentType: "application/json",
+			})
+			assert.Contains(t, jsonOutput, "xoxb-test-e2e-bot-token",
+				"token field should contain the real bot token")
+			assert.NotContains(t, jsonOutput, "xoxb-placeholder",
+				"placeholder should be fully replaced when no other field contains it")
+		})
+
 		t.Run("should proxy kubectl requests with kubernetes credential type", func(t *testing.T) {
 			const (
 				kubeWorkspace = "e2e-kube-workspace"
@@ -1560,7 +1820,7 @@ spec:
 						"-o", "jsonpath={.status.phase}",
 						"-n", userNamespace)
 					output, err := utils.Run(t, cmd)
-					return err == nil && (output == podPhaseSucceeded || output == "Failed"), nil
+					return err == nil && (output == podPhaseSucceeded || output == podPhaseFailed), nil
 				})
 			require.NoError(t, err, "curl pod did not complete")
 
@@ -1703,6 +1963,373 @@ func createLabeledSecret(t *testing.T, name string, extraArgs ...string) {
 		"-n", userNamespace, "--overwrite")
 	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to label Secret %s", name)
+}
+
+// deployTLSEchoServer deploys a TLS echo server (traefik/whoami) in the user
+// namespace with a certificate valid for the given domain. Returns the local
+// certDir (containing ca.crt for proxy config patching) and the echo pod IP.
+// Registers cleanup of the echo pod and TLS secret.
+func deployTLSEchoServer(t *testing.T, domain, echoPod, tlsSecret string) (string, string) {
+	t.Helper()
+
+	t.Log("generating TLS cert for echo server")
+	certDir := t.TempDir()
+	cmd := exec.Command("openssl", "req", "-x509", "-newkey", "ec",
+		"-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+		"-keyout", filepath.Join(certDir, "ca.key"),
+		"-out", filepath.Join(certDir, "ca.crt"),
+		"-days", "1", "-subj", "/CN=E2E Echo CA")
+	_, err := utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to generate echo CA")
+
+	extFile := filepath.Join(certDir, "ext.cnf")
+	require.NoError(t, os.WriteFile(extFile,
+		[]byte(fmt.Sprintf("subjectAltName=DNS:%s", domain)), 0o644))
+	cmd = exec.Command("openssl", "req", "-newkey", "ec",
+		"-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+		"-keyout", filepath.Join(certDir, "server.key"),
+		"-out", filepath.Join(certDir, "server.csr"),
+		"-subj", fmt.Sprintf("/CN=%s", domain))
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to generate echo server CSR")
+
+	cmd = exec.Command("openssl", "x509", "-req",
+		"-in", filepath.Join(certDir, "server.csr"),
+		"-CA", filepath.Join(certDir, "ca.crt"),
+		"-CAkey", filepath.Join(certDir, "ca.key"),
+		"-CAcreateserial",
+		"-out", filepath.Join(certDir, "server.crt"),
+		"-days", "1", "-extfile", extFile)
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to sign echo server cert")
+
+	cmd = exec.Command("kubectl", "delete", "secret", tlsSecret,
+		"-n", userNamespace, "--ignore-not-found")
+	_, _ = utils.Run(t, cmd)
+	cmd = exec.Command("kubectl", "create", "secret", "tls", tlsSecret,
+		"--cert="+filepath.Join(certDir, "server.crt"),
+		"--key="+filepath.Join(certDir, "server.key"),
+		"-n", userNamespace)
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to create echo TLS Secret")
+
+	t.Log("deploying echo server with TLS")
+	cmd = exec.Command("kubectl", "delete", "pod", echoPod,
+		"-n", userNamespace, "--ignore-not-found")
+	_, _ = utils.Run(t, cmd)
+
+	cmd = exec.Command("kubectl", "run", echoPod, "--restart=Never",
+		"--namespace", userNamespace,
+		"--image=traefik/whoami:latest",
+		"--overrides", fmt.Sprintf(`{
+			"spec": {
+				"containers": [{
+					"name": "echo",
+					"image": "traefik/whoami:latest",
+					"args": ["--port=443", "--cert=/tls/tls.crt", "--key=/tls/tls.key"],
+					"ports": [{"containerPort": 443}],
+					"volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}],
+					"securityContext": {
+						"allowPrivilegeEscalation": false,
+						"seccompProfile": {"type": "RuntimeDefault"}
+					}
+				}],
+				"volumes": [{"name": "tls", "secret": {"secretName": %q}}]
+			}
+		}`, tlsSecret))
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to create TLS echo server pod")
+
+	t.Cleanup(func() {
+		cmd := exec.Command("kubectl", "delete", "pod", echoPod, "-n", userNamespace, "--ignore-not-found")
+		_, _ = utils.Run(t, cmd)
+		cmd = exec.Command("kubectl", "delete", "secret", tlsSecret, "-n", userNamespace, "--ignore-not-found")
+		_, _ = utils.Run(t, cmd)
+	})
+
+	ctx := context.Background()
+	t.Log("waiting for echo server pod IP")
+	var echoPodIP string
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "pods", echoPod,
+				"-o", "jsonpath={.status.podIP}",
+				"-n", userNamespace)
+			output, err := utils.Run(t, cmd)
+			if err == nil && output != "" {
+				echoPodIP = strings.TrimSpace(output)
+				return true, nil
+			}
+			return false, nil
+		})
+	require.NoError(t, err, "echo server pod did not get an IP")
+	t.Logf("echo pod IP: %s", echoPodIP)
+
+	t.Log("verifying echo server accepts TLS connections")
+	diagPod := echoPod + "-diag"
+	cmd = exec.Command("kubectl", "delete", "pod", diagPod,
+		"-n", userNamespace, "--ignore-not-found")
+	_, _ = utils.Run(t, cmd)
+	diagScript := fmt.Sprintf(`curl -sk --max-time 10 https://%s:443/healthz`, echoPodIP)
+	cmd = exec.Command("kubectl", "run", diagPod, "--restart=Never",
+		"--namespace", userNamespace,
+		"--image=curlimages/curl:latest",
+		"--overrides", fmt.Sprintf(`{
+			"spec": {
+				"containers": [{
+					"name": "curl",
+					"image": "curlimages/curl:latest",
+					"command": ["/bin/sh", "-c"],
+					"args": [%q],
+					"securityContext": {
+						"allowPrivilegeEscalation": false,
+						"capabilities": {"drop": ["ALL"]},
+						"runAsNonRoot": true,
+						"runAsUser": 1000,
+						"seccompProfile": {"type": "RuntimeDefault"}
+					}
+				}]
+			}
+		}`, diagScript))
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to create diag pod")
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "pods", diagPod,
+				"-o", "jsonpath={.status.phase}",
+				"-n", userNamespace)
+			output, err := utils.Run(t, cmd)
+			return err == nil && (output == podPhaseSucceeded || output == podPhaseFailed), nil
+		})
+	require.NoError(t, err, "diag pod did not complete")
+	cmd = exec.Command("kubectl", "logs", diagPod, "-n", userNamespace)
+	diagOutput, err := utils.Run(t, cmd)
+	require.NoError(t, err)
+	t.Logf("echo server diag output:\n%s", diagOutput)
+	require.Contains(t, diagOutput, "/healthz",
+		"echo server should echo back the request path — TLS is not working")
+	cmd = exec.Command("kubectl", "delete", "pod", diagPod,
+		"-n", userNamespace, "--ignore-not-found")
+	_, _ = utils.Run(t, cmd)
+
+	return certDir, echoPodIP
+}
+
+// patchProxyForEchoServer patches the proxy deployment to trust the echo server's
+// CA cert and resolve the domain to the echo server's IP via hostAliases. It scales
+// the operator to 0 to prevent overwrites, patches the proxy-config ConfigMap,
+// adds a hostAliases entry, and waits for the proxy to be available. Registers
+// cleanup to scale the operator back to 1.
+func patchProxyForEchoServer(t *testing.T, certDir, domain, echoPodIP string) {
+	t.Helper()
+	ctx := context.Background()
+	t.Log("scaling operator to 0 to prevent config overwrite")
+	cmd := exec.Command("kubectl", "scale", "deployment",
+		"claw-operator-controller-manager",
+		"--replicas=0", "-n", operatorNamespace)
+	_, err := utils.Run(t, cmd)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cmd := exec.Command("kubectl", "scale", "deployment",
+			"claw-operator-controller-manager",
+			"--replicas=1", "-n", operatorNamespace)
+		_, _ = utils.Run(t, cmd)
+	})
+
+	// wait for the operator to be scaled to 0
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "deployment", "claw-operator-controller-manager",
+				"-o", "jsonpath={.status.availableReplicas}",
+				"-n", operatorNamespace)
+			output, err := utils.Run(t, cmd)
+			t.Logf("operator availableReplicas: '%s'", output)
+			return err == nil && (output == "0" || output == ""), nil
+		})
+	require.NoError(t, err, "operator not scaled to 0")
+
+	echoCACert, err := os.ReadFile(filepath.Join(certDir, "ca.crt"))
+	require.NoError(t, err)
+	echoCACertB64 := base64.StdEncoding.EncodeToString(echoCACert)
+
+	t.Logf("patching proxy-config to add echo server CA to %s routes", domain)
+	cmd = exec.Command("kubectl", "get", "configmap", proxyConfigMapName,
+		"-o", "jsonpath={.data.proxy-config\\.json}",
+		"-n", userNamespace)
+	rawProxyCfg, err := utils.Run(t, cmd)
+	require.NoError(t, err)
+
+	var cfgForPatch struct {
+		Routes []map[string]any `json:"routes"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(rawProxyCfg), &cfgForPatch))
+	for i, r := range cfgForPatch.Routes {
+		if d, _ := r["domain"].(string); d == domain {
+			cfgForPatch.Routes[i]["caCert"] = echoCACertB64
+		}
+	}
+	patchedCfgJSON, err := json.Marshal(cfgForPatch)
+	require.NoError(t, err)
+
+	cmd = exec.Command("kubectl", "create", "configmap", proxyConfigMapName,
+		"-n", userNamespace,
+		"--from-literal=proxy-config.json="+string(patchedCfgJSON),
+		"--dry-run=client", "-o", "yaml")
+	yamlOut, err := utils.Run(t, cmd)
+	require.NoError(t, err)
+	cmd = exec.Command("kubectl", "apply", "-f", "-", "-n", userNamespace)
+	cmd.Stdin = strings.NewReader(yamlOut)
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to patch proxy-config with echo CA")
+
+	t.Logf("adding hostAliases to proxy deployment: %s → %s", domain, echoPodIP)
+	hostAliasJSON := fmt.Sprintf(
+		`{"spec":{"template":{"spec":{"hostAliases":[{"ip":%q,"hostnames":[%q]}]}}}}`,
+		echoPodIP, domain)
+	cmd = exec.Command("kubectl", "patch", "deployment", proxyDeploymentName,
+		"-n", userNamespace, "--type=strategic", "-p", hostAliasJSON)
+	_, err = utils.Run(t, cmd)
+	require.NoError(t, err, "Failed to patch proxy deployment with hostAliases")
+
+	t.Log("waiting for new proxy pod with hostAliases to be available")
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw-proxy",
+				"-o", "json",
+				"-n", userNamespace)
+			output, err := utils.Run(t, cmd)
+			// t.Logf("proxy pods: '%s'", output)
+			if err == nil {
+				podList := corev1.PodList{}
+				err = json.Unmarshal([]byte(output), &podList)
+				if err == nil {
+					for _, pod := range podList.Items {
+						if pod.DeletionTimestamp != nil {
+							continue
+						}
+						if hasStatusCondition(&pod, corev1.PodReady, conditionTrue) {
+							hostAliases := pod.Spec.HostAliases
+							if len(hostAliases) == 1 {
+								if hostAliases[0].IP == echoPodIP && hostAliases[0].Hostnames[0] == domain {
+									return true, nil
+								}
+							}
+						}
+					}
+				}
+			}
+			return false, nil
+		})
+	require.NoError(t, err, "proxy deployment not available after patching")
+}
+
+func hasStatusCondition(pod *corev1.Pod, conditionType corev1.PodConditionType, conditionStatus corev1.ConditionStatus) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == conditionType {
+			return condition.Status == conditionStatus
+		}
+	}
+	return false
+}
+
+// extractMITMCA retrieves the base64-encoded proxy MITM CA certificate from the cluster.
+func extractMITMCA(t *testing.T) string {
+	t.Helper()
+	var mitmCAB64 string
+	ctx := context.Background()
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "secret", proxyCACertName,
+				"-o", "jsonpath={.data.ca\\.crt}",
+				"-n", userNamespace)
+			output, err := utils.Run(t, cmd)
+			if err == nil && output != "" {
+				mitmCAB64 = strings.TrimSpace(output)
+				return true, nil
+			}
+			return false, nil
+		})
+	require.NoError(t, err, "failed to get MITM CA cert")
+	require.NotEmpty(t, mitmCAB64)
+	return mitmCAB64
+}
+
+// curlThroughProxyRequest describes a single curl request to send through the proxy.
+type curlThroughProxyRequest struct {
+	Method      string
+	URL         string
+	Body        string
+	ContentType string
+}
+
+// curlThroughProxy runs a curl request through the MITM proxy in a temporary pod
+// and returns the response output. The mitmCAB64 is the base64-encoded proxy CA
+// certificate used to trust the proxy's MITM-generated TLS certs.
+func curlThroughProxy(t *testing.T, podName, mitmCAB64 string, req curlThroughProxyRequest) string {
+	t.Helper()
+
+	cmd := exec.Command("kubectl", "delete", "pod", podName,
+		"-n", userNamespace, "--ignore-not-found")
+	_, _ = utils.Run(t, cmd)
+
+	curlArgs := fmt.Sprintf(
+		`-s -v --max-time 30 --connect-timeout 10 `+
+			`--proxy http://%s.%s.svc.cluster.local:8080 `+
+			`--cacert /tmp/mitm-ca.crt`,
+		proxyServiceName, userNamespace)
+	if req.Method != "" && req.Method != http.MethodGet {
+		curlArgs += fmt.Sprintf(` -X %s`, req.Method)
+	}
+	if req.Body != "" {
+		curlArgs += fmt.Sprintf(` -d %q`, req.Body)
+	}
+	if req.ContentType != "" {
+		curlArgs += fmt.Sprintf(` -H "Content-Type: %s"`, req.ContentType)
+	}
+
+	script := fmt.Sprintf(
+		`echo '%s' | base64 -d > /tmp/mitm-ca.crt && curl %s %s`,
+		mitmCAB64, curlArgs, req.URL)
+
+	cmd = exec.Command("kubectl", "run", podName, "--restart=Never",
+		"--namespace", userNamespace,
+		"--image=curlimages/curl:latest",
+		"--overrides", fmt.Sprintf(`{
+			"spec": {
+				"containers": [{
+					"name": "curl",
+					"image": "curlimages/curl:latest",
+					"command": ["/bin/sh", "-c"],
+					"args": [%q],
+					"securityContext": {
+						"allowPrivilegeEscalation": false,
+						"capabilities": {"drop": ["ALL"]},
+						"runAsNonRoot": true,
+						"runAsUser": 1000,
+						"seccompProfile": {"type": "RuntimeDefault"}
+					}
+				}]
+			}
+		}`, script))
+	_, err := utils.Run(t, cmd)
+	require.NoError(t, err, "failed to create curl pod %s", podName)
+
+	ctx := context.Background()
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "pods", podName,
+				"-o", "jsonpath={.status.phase}",
+				"-n", userNamespace)
+			output, err := utils.Run(t, cmd)
+			return err == nil && (output == podPhaseSucceeded || output == podPhaseFailed), nil
+		})
+	require.NoError(t, err, "curl pod %s did not complete", podName)
+
+	cmd = exec.Command("kubectl", "logs", podName, "-n", userNamespace)
+	output, err := utils.Run(t, cmd)
+	require.NoError(t, err, "failed to get logs from curl pod %s", podName)
+	t.Logf("curl pod %s output:\n%s", podName, output)
+	return output
 }
 
 func waitForPVCDeletion(t *testing.T) error {

@@ -45,7 +45,8 @@ type Route struct {
 	CACert         string            `json:"caCert,omitempty"`
 	AllowedPaths   []string          `json:"allowedPaths,omitempty"`
 
-	injector Injector `json:"-"`
+	injector     Injector     `json:"-"`
+	bodyRewriter BodyRewriter `json:"-"`
 }
 
 // NeedsMITM reports whether the route requires TLS interception (MITM).

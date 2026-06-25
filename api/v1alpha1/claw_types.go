@@ -543,7 +543,7 @@ type ClawSpec struct {
 
 	// Plugins lists OpenClaw plugins to install via an init container before
 	// the gateway starts. Each entry is a package name (e.g. "@openclaw/matrix").
-	// The operator runs `openclaw plugins install clawhub:<pkg>` for each entry.
+	// The operator runs `openclaw plugins install <pkg>` for each entry.
 	// +optional
 	Plugins []string `json:"plugins,omitempty"`
 
