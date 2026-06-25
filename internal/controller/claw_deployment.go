@@ -125,11 +125,84 @@ func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, in
 	return nil
 }
 
-// configureClawDeploymentForVertex adds Vertex AI environment variables and the stub
+// isGoogleVertexCredential returns true when a credential uses Google's own Vertex AI
+// REST endpoint (provider=google, type=gcp). These credentials route through the
+// proxy for auth injection but the gateway's google-generative-ai SDK still needs
+// GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION to construct internal requests.
+func isGoogleVertexCredential(cred clawv1alpha1.CredentialSpec) bool {
+	return cred.Type == clawv1alpha1.CredentialTypeGCP && cred.Provider == "google" && cred.GCP != nil
+}
+
+// configureClawDeploymentForGCPVertex sets GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION
+// on the gateway container when a Google Vertex AI credential is present. The proxy
+// handles token injection, but the google-generative-ai SDK requires these env vars to
+// construct its internal Vertex AI requests.
+func configureClawDeploymentForGCPVertex(objects []*unstructured.Unstructured, credentials []resolvedCredential, instanceName string) error {
+	var googleCred *clawv1alpha1.CredentialSpec
+	for _, rc := range credentials {
+		if isGoogleVertexCredential(rc.CredentialSpec) {
+			googleCred = &rc.CredentialSpec
+			break
+		}
+	}
+	if googleCred == nil {
+		return nil
+	}
+
+	gatewayName := getClawDeploymentName(instanceName)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from claw deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in claw deployment")
+		}
+
+		containerIdx := -1
+		var container map[string]any
+		for i, c := range containers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name == ClawGatewayContainerName {
+				containerIdx = i
+				container = cm
+				break
+			}
+		}
+		if containerIdx < 0 {
+			return fmt.Errorf("container %q not found in claw deployment", ClawGatewayContainerName)
+		}
+
+		envVars, _, _ := unstructured.NestedSlice(container, "env")
+		envVars = append(envVars,
+			map[string]any{"name": "GOOGLE_CLOUD_PROJECT", "value": googleCred.GCP.Project},
+			map[string]any{"name": "GOOGLE_CLOUD_LOCATION", "value": googleCred.GCP.Location},
+		)
+
+		if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
+			return fmt.Errorf("failed to set env vars on claw deployment: %w", err)
+		}
+		containers[containerIdx] = container
+		if err := unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+			return fmt.Errorf("failed to set containers on claw deployment: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
+}
+
+// configureClawDeploymentForAnthropicVertexSDK adds Vertex AI environment variables and the stub
 // ADC volume mount to the claw (gateway) deployment when any credential uses the
 // native Vertex SDK (GCP + non-Google provider). The stub ADC allows google-auth-library
 // to bootstrap token refresh, which the MITM proxy intercepts with real credentials.
-func configureClawDeploymentForVertex(objects []*unstructured.Unstructured, credentials []resolvedCredential, instanceName string) error {
+func configureClawDeploymentForAnthropicVertexSDK(objects []*unstructured.Unstructured, credentials []resolvedCredential, instanceName string) error {
 	var vertexCreds []clawv1alpha1.CredentialSpec
 	for _, rc := range credentials {
 		if usesVertexSDK(rc.CredentialSpec) {

@@ -126,9 +126,9 @@ func TestConfigureImagePullPolicy(t *testing.T) {
 	})
 }
 
-// --- Vertex AI deployment configuration tests ---
+// --- Anthropic Vertex AI deployment configuration tests ---
 
-func TestConfigureClawDeploymentForVertex(t *testing.T) {
+func TestConfigureClawDeploymentForAnthropicVertex(t *testing.T) {
 	makeDeployment := func() []*unstructured.Unstructured {
 		dep := &unstructured.Unstructured{}
 		dep.SetKind(DeploymentKind)
@@ -167,7 +167,7 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForVertex(objects, toResolved(credentials), testInstanceName))
+		require.NoError(t, configureClawDeploymentForAnthropicVertexSDK(objects, toResolved(credentials), testInstanceName))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)
@@ -216,7 +216,146 @@ func TestConfigureClawDeploymentForVertex(t *testing.T) {
 			},
 		}
 
-		require.NoError(t, configureClawDeploymentForVertex(objects, toResolved(credentials), testInstanceName))
+		require.NoError(t, configureClawDeploymentForAnthropicVertexSDK(objects, toResolved(credentials), testInstanceName))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+		assert.Len(t, envVars, 1, "should only have original HOME env var")
+	})
+}
+
+// --- GCP Vertex deployment configuration tests ---
+
+func TestConfigureClawDeploymentForGCPVertex(t *testing.T) {
+	makeDeployment := func() []*unstructured.Unstructured {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name": ClawGatewayContainerName,
+							"env": []any{
+								map[string]any{"name": "HOME", "value": "/home/node"},
+							},
+						},
+					},
+				},
+			},
+		}
+		return []*unstructured.Unstructured{dep}
+	}
+
+	t.Run("should set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION", func(t *testing.T) {
+		objects := makeDeployment()
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "google",
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-gcp-project",
+					Location: "us-central1",
+				},
+			},
+		}
+
+		require.NoError(t, configureClawDeploymentForGCPVertex(objects, toResolved(credentials), testInstanceName))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		var projectEnv, locationEnv map[string]any
+		for _, e := range envVars {
+			env := e.(map[string]any)
+			switch env["name"] {
+			case "GOOGLE_CLOUD_PROJECT":
+				projectEnv = env
+			case "GOOGLE_CLOUD_LOCATION":
+				locationEnv = env
+			}
+		}
+
+		require.NotNil(t, projectEnv, "GOOGLE_CLOUD_PROJECT should be set")
+		assert.Equal(t, "my-gcp-project", projectEnv["value"])
+
+		require.NotNil(t, locationEnv, "GOOGLE_CLOUD_LOCATION should be set")
+		assert.Equal(t, "us-central1", locationEnv["value"])
+	})
+
+	t.Run("should use global location", func(t *testing.T) {
+		objects := makeDeployment()
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "google",
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "global",
+				},
+			},
+		}
+
+		require.NoError(t, configureClawDeploymentForGCPVertex(objects, toResolved(credentials), testInstanceName))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		var locationEnv map[string]any
+		for _, e := range envVars {
+			env := e.(map[string]any)
+			if env["name"] == "GOOGLE_CLOUD_LOCATION" {
+				locationEnv = env
+			}
+		}
+
+		require.NotNil(t, locationEnv)
+		assert.Equal(t, "global", locationEnv["value"])
+	})
+
+	t.Run("should be no-op for google apiKey credential", func(t *testing.T) {
+		objects := makeDeployment()
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "gemini",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "google",
+				Domain:   "generativelanguage.googleapis.com",
+			},
+		}
+
+		require.NoError(t, configureClawDeploymentForGCPVertex(objects, toResolved(credentials), testInstanceName))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+		assert.Len(t, envVars, 1, "should only have original HOME env var")
+	})
+
+	t.Run("should be no-op for non-google Vertex credential", func(t *testing.T) {
+		objects := makeDeployment()
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "anthropic-vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "anthropic",
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "us-east5",
+				},
+			},
+		}
+
+		require.NoError(t, configureClawDeploymentForGCPVertex(objects, toResolved(credentials), testInstanceName))
 
 		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
 		container := containers[0].(map[string]any)

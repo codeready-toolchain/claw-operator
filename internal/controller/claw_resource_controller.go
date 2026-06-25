@@ -819,8 +819,11 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if err := configureProxyForWebSearch(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure proxy for web search: %w", err)
 	}
-	if err := configureClawDeploymentForVertex(objects, resolvedCreds, instance.Name); err != nil {
-		return fmt.Errorf("failed to configure claw deployment for Vertex AI: %w", err)
+	if err := configureClawDeploymentForGCPVertex(objects, resolvedCreds, instance.Name); err != nil {
+		return fmt.Errorf("failed to configure claw deployment for Google Vertex: %w", err)
+	}
+	if err := configureClawDeploymentForAnthropicVertexSDK(objects, resolvedCreds, instance.Name); err != nil {
+		return fmt.Errorf("failed to configure claw deployment for Anthropic Vertex AI: %w", err)
 	}
 	kubectlImage := r.KubectlImage
 	if kubectlImage == "" {
