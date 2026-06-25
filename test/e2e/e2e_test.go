@@ -130,6 +130,10 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 		t.Log("removing manager namespace")
 		cmd = exec.Command("kubectl", "delete", "ns", operatorNamespace)
 		_, _ = utils.Run(t, cmd)
+
+		t.Log("removing user namespace")
+		cmd = exec.Command("kubectl", "delete", "ns", userNamespace, "--ignore-not-found")
+		_, _ = utils.Run(t, cmd)
 	})
 
 	collectDebugInfo := func(t *testing.T) {
