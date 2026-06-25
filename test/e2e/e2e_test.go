@@ -2142,7 +2142,8 @@ func patchProxyForEchoServer(t *testing.T, certDir, domain, echoPodIP string) {
 				"-o", "jsonpath={.status.availableReplicas}",
 				"-n", operatorNamespace)
 			output, err := utils.Run(t, cmd)
-			return err == nil && output == "0", nil
+			t.Logf("operator availableReplicas: '%s'", output)
+			return err == nil && (output == "0" || output == ""), nil
 		})
 	require.NoError(t, err, "operator not scaled to 0")
 
