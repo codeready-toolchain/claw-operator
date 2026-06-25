@@ -2121,7 +2121,7 @@ func deployTLSEchoServer(t *testing.T, domain, echoPod, tlsSecret string) (strin
 // cleanup to scale the operator back to 1.
 func patchProxyForEchoServer(t *testing.T, certDir, domain, echoPodIP string) {
 	t.Helper()
-
+	ctx := context.Background()
 	t.Log("scaling operator to 0 to prevent config overwrite")
 	cmd := exec.Command("kubectl", "scale", "deployment",
 		"claw-operator-controller-manager",
@@ -2134,6 +2134,17 @@ func patchProxyForEchoServer(t *testing.T, certDir, domain, echoPodIP string) {
 			"--replicas=1", "-n", operatorNamespace)
 		_, _ = utils.Run(t, cmd)
 	})
+
+	// wait for the operator to be scaled to 0
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			cmd := exec.Command("kubectl", "get", "deployment", "claw-operator-controller-manager",
+				"-o", "jsonpath={.status.availableReplicas}",
+				"-n", operatorNamespace)
+			output, err := utils.Run(t, cmd)
+			return err == nil && output == "0", nil
+		})
+	require.NoError(t, err, "operator not scaled to 0")
 
 	echoCACert, err := os.ReadFile(filepath.Join(certDir, "ca.crt"))
 	require.NoError(t, err)
@@ -2179,7 +2190,6 @@ func patchProxyForEchoServer(t *testing.T, certDir, domain, echoPodIP string) {
 	require.NoError(t, err, "Failed to patch proxy deployment with hostAliases")
 
 	t.Log("waiting for proxy deployment to be available")
-	ctx := context.Background()
 	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 		func(ctx context.Context) (bool, error) {
 			cmd := exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
