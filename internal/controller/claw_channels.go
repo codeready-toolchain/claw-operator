@@ -25,19 +25,20 @@ import (
 
 // channelSecretRole defines a secret role with its placeholder token for proxy injection.
 type channelSecretRole struct {
-	Role        string
-	Placeholder string
+	Role         string
+	Placeholder  string
+	EnvVarSuffix string
+	AllowedPaths []string
 }
 
 // channelDefault holds the inferred proxy and config defaults for a known messaging channel.
 type channelDefault struct {
-	Type         clawv1alpha1.CredentialType
-	Domain       string
-	APIKey       *clawv1alpha1.APIKeyConfig
-	PathToken    *clawv1alpha1.PathTokenConfig
-	Companions   []string // additional domains to allowlist (type: none)
-	SecretRoles  []channelSecretRole
-	AllowedPaths []string // for the primary route only (e.g., Slack app-token path)
+	Type        clawv1alpha1.CredentialType
+	Domain      string
+	APIKey      *clawv1alpha1.APIKeyConfig
+	PathToken   *clawv1alpha1.PathTokenConfig
+	Companions  []string // additional domains to allowlist (type: none)
+	SecretRoles []channelSecretRole
 
 	// ConfigBase is the base channel config block injected into operator.json.
 	// Keys like "enabled" and token placeholders are added by buildChannelConfig.
@@ -89,8 +90,8 @@ var knownChannels = map[string]channelDefault{
 			".slack.com",
 		},
 		SecretRoles: []channelSecretRole{
-			{Role: "botToken", Placeholder: "xoxb-placeholder"},
-			{Role: "appToken", Placeholder: "xapp-placeholder"},
+			{Role: "appToken", Placeholder: "xapp-placeholder", EnvVarSuffix: "APP", AllowedPaths: []string{"/api/apps.connections.open"}},
+			{Role: "botToken", Placeholder: "xoxb-placeholder", EnvVarSuffix: "BOT"},
 		},
 		ConfigBase: map[string]any{
 			"botToken": "xoxb-placeholder",

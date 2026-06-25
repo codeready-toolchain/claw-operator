@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/elazarl/goproxy"
@@ -56,10 +57,12 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 			return nil, fmt.Errorf("create injector for domain %s: %w", cfg.Routes[i].Domain, err)
 		}
 		cfg.Routes[i].injector = inj
+		if strings.EqualFold(cfg.Routes[i].Domain, "slack.com") && cfg.Routes[i].EnvVar != "" {
+			cfg.Routes[i].bodyRewriter = NewSlackBodyTokenReplacer(cfg.Routes[i].EnvVar)
+		}
 	}
 
 	proxy := goproxy.NewProxyHttpServer()
-
 	rootCAs := buildRootCAPool(cfg, logger)
 
 	// Override goproxy's default transport which uses InsecureSkipVerify: true.
@@ -149,6 +152,16 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 				)
 			}
 
+			if route.bodyRewriter != nil {
+				if err := route.bodyRewriter.Rewrite(req); err != nil {
+					logger.Error("body token replacement failed", "domain", route.Domain, "error", "[REDACTED]")
+					return req, goproxy.NewResponse(
+						req, goproxy.ContentTypeText, http.StatusBadGateway,
+						`{"error":"body token replacement failed"}`,
+					)
+				}
+			}
+
 			req.Header.Del("Via")
 			req.Header.Del("X-Forwarded-For")
 
@@ -185,8 +198,13 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 		logger.Info("registered gateway route", "pathPrefix", route.PathPrefix, "upstream", route.Upstream)
 	}
 
-	return &Server{proxy: proxy, cfg: cfg, gateways: gws, logger: logger}, nil
+	return &Server{
+		proxy: proxy, cfg: cfg, gateways: gws, logger: logger,
+	}, nil
 }
+
+// SetVerbose enables goproxy's built-in request/response logging.
+func (s *Server) SetVerbose(v bool) { s.proxy.Verbose = v }
 
 // Close is a no-op retained for API compatibility.
 func (s *Server) Close() {}
@@ -234,6 +252,14 @@ func (s *Server) serveGateway(w http.ResponseWriter, r *http.Request, route *Rou
 		s.logger.Error("credential injection failed", "domain", route.Domain, "error", "[REDACTED]")
 		http.Error(w, `{"error":"credential injection failed"}`, http.StatusBadGateway)
 		return
+	}
+
+	if route.bodyRewriter != nil {
+		if err := route.bodyRewriter.Rewrite(r); err != nil {
+			s.logger.Error("body token replacement failed", "domain", route.Domain, "error", "[REDACTED]")
+			http.Error(w, `{"error":"body token replacement failed"}`, http.StatusBadGateway)
+			return
+		}
 	}
 
 	for k, v := range route.DefaultHeaders {
