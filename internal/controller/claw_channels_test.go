@@ -590,7 +590,7 @@ func TestChannelSecretRefHelpers(t *testing.T) {
 		assert.False(t, referencesSecret(cred, "any-secret"))
 	})
 
-	t.Run("proxySecretForCredential picks botToken for slack channel", func(t *testing.T) {
+	t.Run("proxySecretForCredential picks first role (appToken) for slack channel", func(t *testing.T) {
 		cred := clawv1alpha1.CredentialSpec{
 			Name:    "slack",
 			Channel: "slack",
@@ -601,8 +601,8 @@ func TestChannelSecretRefHelpers(t *testing.T) {
 		}
 		ref := proxySecretForCredential(cred)
 		require.NotNil(t, ref)
-		assert.Equal(t, "bot-token", ref.Key)
-		assert.Equal(t, "botToken", ref.Role)
+		assert.Equal(t, "app-token", ref.Key)
+		assert.Equal(t, "appToken", ref.Role)
 	})
 
 	t.Run("proxySecretForCredential falls back to first entry for single-secret channel", func(t *testing.T) {
@@ -628,6 +628,28 @@ func TestChannelSecretRefHelpers(t *testing.T) {
 		ref := proxySecretForCredential(cred)
 		require.NotNil(t, ref)
 		assert.Equal(t, "api-key", ref.Key)
+	})
+}
+
+func TestSlackSecretRolesRegistry(t *testing.T) {
+	slack, ok := knownChannels["slack"]
+	require.True(t, ok, "slack should be registered in knownChannels")
+	require.Len(t, slack.SecretRoles, 2, "slack should have two SecretRoles")
+
+	t.Run("appToken role has AllowedPaths and EnvVarSuffix", func(t *testing.T) {
+		role := slack.SecretRoles[0]
+		assert.Equal(t, "appToken", role.Role)
+		assert.Equal(t, "APP", role.EnvVarSuffix)
+		assert.Equal(t, []string{"/api/apps.connections.open"}, role.AllowedPaths)
+		assert.Equal(t, "xapp-placeholder", role.Placeholder)
+	})
+
+	t.Run("botToken role is the catch-all", func(t *testing.T) {
+		role := slack.SecretRoles[1]
+		assert.Equal(t, "botToken", role.Role)
+		assert.Equal(t, "BOT", role.EnvVarSuffix)
+		assert.Empty(t, role.AllowedPaths)
+		assert.Equal(t, "xoxb-placeholder", role.Placeholder)
 	})
 }
 

@@ -18,6 +18,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -33,6 +34,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -567,6 +569,100 @@ func TestServerMITMMultiRouteInjection(t *testing.T) {
 	t.Run("bot-token route for general API path", func(t *testing.T) {
 		body := makeRequest(t, "/api/chat.postMessage")
 		assert.Contains(t, body, "Bearer xoxb-real-bot-token")
+	})
+}
+
+func TestServerMITMBodyTokenReplacement(t *testing.T) {
+	certPEM, keyPEM := generateTestCA(t)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		body, _ := io.ReadAll(r.Body)
+		_, _ = w.Write(body)
+	}))
+	defer upstream.Close()
+
+	t.Setenv("CRED_SLACK_BOT", "xoxb-real-bot-token")
+
+	_, port, err := net.SplitHostPort(upstream.Listener.Addr().String())
+	require.NoError(t, err)
+
+	cfg := &Config{
+		Routes: []Route{
+			{Domain: "127.0.0.1", Injector: "bearer", EnvVar: "CRED_SLACK_BOT"},
+		},
+	}
+	srv, err := NewServer(cfg, certPEM, keyPEM, slog.Default())
+	require.NoError(t, err)
+	cfg.Routes[0].bodyRewriter = NewSlackBodyTokenReplacer("CRED_SLACK_BOT")
+	srv.proxy.Tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // test only
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	makeRequest := func(t *testing.T, body, contentType string) string {
+		t.Helper()
+		conn, err := net.Dial("tcp", ts.Listener.Addr().String())
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
+
+		target := fmt.Sprintf("127.0.0.1:%s", port)
+		_, err = fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+		require.NoError(t, err)
+
+		br := bufio.NewReader(conn)
+		resp, err := http.ReadResponse(br, nil)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		certBlock, _ := pem.Decode(certPEM)
+		require.NotNil(t, certBlock)
+		caCert, err := x509.ParseCertificate(certBlock.Bytes)
+		require.NoError(t, err)
+		caPool := x509.NewCertPool()
+		caPool.AddCert(caCert)
+
+		tlsConn := tls.Client(conn, &tls.Config{
+			RootCAs:    caPool,
+			ServerName: "127.0.0.1",
+			MinVersion: tls.VersionTLS12,
+		})
+		require.NoError(t, tlsConn.Handshake())
+
+		req, err := http.NewRequest(http.MethodPost, "https://127.0.0.1/api/chat.postMessage",
+			bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", contentType)
+		require.NoError(t, req.Write(tlsConn))
+
+		resp, err = http.ReadResponse(bufio.NewReader(tlsConn), req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		respBody, _ := io.ReadAll(resp.Body)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		return string(respBody)
+	}
+
+	t.Run("JSON body token field is replaced but message field is not", func(t *testing.T) {
+		result := makeRequest(t,
+			`{"token":"xoxb-placeholder","text":"hello xoxb-placeholder","channel":"C1234"}`,
+			"application/json")
+		assert.JSONEq(t,
+			`{"token":"xoxb-real-bot-token","text":"hello xoxb-placeholder","channel":"C1234"}`,
+			result)
+	})
+
+	t.Run("form-encoded body token field is replaced but text field is not", func(t *testing.T) {
+		result := makeRequest(t,
+			"token=xoxb-placeholder&text=hello+xoxb-placeholder&channel=C1234",
+			"application/x-www-form-urlencoded")
+		values, err := url.ParseQuery(result)
+		require.NoError(t, err)
+		assert.Equal(t, "xoxb-real-bot-token", values.Get("token"))
+		assert.Equal(t, "hello xoxb-placeholder", values.Get("text"))
+		assert.Equal(t, "C1234", values.Get("channel"))
 	})
 }
 

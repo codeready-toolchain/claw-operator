@@ -41,3 +41,4 @@ bundle/
 catalog/
 
 .claude/settings.local.json
+proxy

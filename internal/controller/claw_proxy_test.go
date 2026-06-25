@@ -1154,6 +1154,186 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 	})
 }
 
+// --- Multi-secret channel route tests ---
+
+// findRoutesByDomain returns all routes matching the given domain.
+func findRoutesByDomain(routes []proxyRoute, domain string) []proxyRoute {
+	var result []proxyRoute
+	for _, r := range routes {
+		if r.Domain == domain {
+			result = append(result, r)
+		}
+	}
+	return result
+}
+
+func TestSlackDualTokenRoutes(t *testing.T) {
+	slackCred := clawv1alpha1.CredentialSpec{
+		Name:    "slack",
+		Channel: "slack",
+		Type:    clawv1alpha1.CredentialTypeBearer,
+		Domain:  "slack.com",
+		SecretRef: []clawv1alpha1.SecretRefEntry{
+			{Name: "slack-secret", Key: "app-token", Role: "appToken"},
+			{Name: "slack-secret", Key: "bot-token", Role: "botToken"},
+		},
+	}
+
+	t.Run("should generate two routes for slack credential", func(t *testing.T) {
+		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{slackCred}), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		slackRoutes := findRoutesByDomain(cfg.Routes, "slack.com")
+		require.Len(t, slackRoutes, 2, "should have two routes for slack.com")
+
+		appRoute := slackRoutes[0]
+		assert.Equal(t, "bearer", appRoute.Injector)
+		assert.Equal(t, "CRED_SLACK_APP", appRoute.EnvVar)
+		assert.Equal(t, []string{"/api/apps.connections.open"}, appRoute.AllowedPaths)
+
+		botRoute := slackRoutes[1]
+		assert.Equal(t, "bearer", botRoute.Injector)
+		assert.Equal(t, "CRED_SLACK_BOT", botRoute.EnvVar)
+		assert.Empty(t, botRoute.AllowedPaths)
+	})
+
+	t.Run("should generate companion route for slack", func(t *testing.T) {
+		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{slackCred}), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		companionRoute := findRouteByDomain(t, cfg.Routes, ".slack.com")
+		assert.Equal(t, "none", companionRoute.Injector)
+	})
+
+	t.Run("AllowedPaths route sorts before catch-all", func(t *testing.T) {
+		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{slackCred}), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		slackRoutes := findRoutesByDomain(cfg.Routes, "slack.com")
+		require.Len(t, slackRoutes, 2)
+		assert.NotEmpty(t, slackRoutes[0].AllowedPaths, "first route should have AllowedPaths")
+		assert.Empty(t, slackRoutes[1].AllowedPaths, "second route should be catch-all")
+	})
+}
+
+func TestSlackDualTokenEnvVars(t *testing.T) {
+	buildObjects := func(t *testing.T) (*clawv1alpha1.Claw, []*unstructured.Unstructured) {
+		t.Helper()
+		reconciler := createClawReconciler()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		objects, err := reconciler.buildKustomizedObjects(instance)
+		require.NoError(t, err)
+		return instance, objects
+	}
+
+	t.Run("should inject two env vars for slack dual-token credential", func(t *testing.T) {
+		instance, objects := buildObjects(t)
+		creds := []clawv1alpha1.CredentialSpec{
+			{
+				Name:    "slack",
+				Channel: "slack",
+				Type:    clawv1alpha1.CredentialTypeBearer,
+				Domain:  "slack.com",
+				SecretRef: []clawv1alpha1.SecretRefEntry{
+					{Name: "slack-secret", Key: "app-token", Role: "appToken"},
+					{Name: "slack-secret", Key: "bot-token", Role: "botToken"},
+				},
+			},
+		}
+		require.NoError(t, configureProxyForCredentials(objects, instance, toResolved(creds)))
+
+		for _, obj := range objects {
+			if obj.GetKind() != DeploymentKind || obj.GetName() != getProxyDeploymentName(testInstanceName) {
+				continue
+			}
+			containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+			container := containers[0].(map[string]any)
+			envVars, _, _ := unstructured.NestedSlice(container, "env")
+
+			envMap := make(map[string]map[string]any)
+			for _, e := range envVars {
+				env := e.(map[string]any)
+				envMap[env["name"].(string)] = env
+			}
+
+			require.Contains(t, envMap, "CRED_SLACK_APP", "should have CRED_SLACK_APP env var")
+			appValueFrom := envMap["CRED_SLACK_APP"]["valueFrom"].(map[string]any)
+			appSecretRef := appValueFrom["secretKeyRef"].(map[string]any)
+			assert.Equal(t, "slack-secret", appSecretRef["name"])
+			assert.Equal(t, "app-token", appSecretRef["key"])
+
+			require.Contains(t, envMap, "CRED_SLACK_BOT", "should have CRED_SLACK_BOT env var")
+			botValueFrom := envMap["CRED_SLACK_BOT"]["valueFrom"].(map[string]any)
+			botSecretRef := botValueFrom["secretKeyRef"].(map[string]any)
+			assert.Equal(t, "slack-secret", botSecretRef["name"])
+			assert.Equal(t, "bot-token", botSecretRef["key"])
+
+			assert.NotContains(t, envMap, "CRED_SL", "should not have single CRED_SL env var")
+			return
+		}
+		t.Fatal("proxy deployment not found")
+	})
+}
+
+func TestSingleRoleChannelUnchanged(t *testing.T) {
+	t.Run("telegram produces one route with CRED_<NAME> (no suffix)", func(t *testing.T) {
+		cred := clawv1alpha1.CredentialSpec{
+			Name:      "tg",
+			Channel:   "telegram",
+			Type:      clawv1alpha1.CredentialTypePathToken,
+			Domain:    "api.telegram.org",
+			PathToken: &clawv1alpha1.PathTokenConfig{Prefix: "/bot"},
+			SecretRef: []clawv1alpha1.SecretRefEntry{
+				{Name: "tg-secret", Key: "token"},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{cred}), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		route := findRouteByDomain(t, cfg.Routes, "api.telegram.org")
+		assert.Equal(t, "path_token", route.Injector)
+		assert.Equal(t, "CRED_TG", route.EnvVar)
+	})
+
+	t.Run("discord produces one route with CRED_<NAME> (no suffix)", func(t *testing.T) {
+		cred := clawv1alpha1.CredentialSpec{
+			Name:    "dc",
+			Channel: "discord",
+			Type:    clawv1alpha1.CredentialTypeAPIKey,
+			Domain:  "discord.com",
+			APIKey:  &clawv1alpha1.APIKeyConfig{Header: "Authorization", ValuePrefix: "Bot "},
+			SecretRef: []clawv1alpha1.SecretRefEntry{
+				{Name: "dc-secret", Key: "token"},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved([]clawv1alpha1.CredentialSpec{cred}), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		route := findRouteByDomain(t, cfg.Routes, "discord.com")
+		assert.Equal(t, "api_key", route.Injector)
+		assert.Equal(t, "CRED_DC", route.EnvVar)
+	})
+}
+
 // --- Secret version annotation tests ---
 
 func TestStampSecretVersionAnnotation(t *testing.T) {
