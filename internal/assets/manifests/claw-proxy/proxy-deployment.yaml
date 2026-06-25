@@ -28,10 +28,6 @@ spec:
             - --ca-cert=/etc/proxy/ca/ca.crt
             - --ca-key=/etc/proxy/ca/ca.key
             - --listen=:8080
-            - --verbose
-            # DEBUG ONLY: uncomment to log full request/response traffic for specific domains.
-            # Logs include headers and bodies (including credentials), so remove after debugging.
-            # - --dump-domains=slack.com,api.example.com
           ports:
             - name: http
               containerPort: 8080
