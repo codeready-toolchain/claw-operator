@@ -227,7 +227,7 @@ func TestConfigureClawDeploymentForAnthropicVertex(t *testing.T) {
 
 // --- GCP Vertex deployment configuration tests ---
 
-func TestconfigureClawDeploymentForGCPVertex(t *testing.T) {
+func TestConfigureClawDeploymentForGCPVertex(t *testing.T) {
 	makeDeployment := func() []*unstructured.Unstructured {
 		dep := &unstructured.Unstructured{}
 		dep.SetKind(DeploymentKind)
