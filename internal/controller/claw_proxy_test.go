@@ -1279,7 +1279,7 @@ func TestSlackDualTokenEnvVars(t *testing.T) {
 			assert.Equal(t, "slack-secret", botSecretRef["name"])
 			assert.Equal(t, "bot-token", botSecretRef["key"])
 
-			assert.NotContains(t, envMap, "CRED_SL", "should not have single CRED_SL env var")
+			assert.NotContains(t, envMap, "CRED_SLACK", "should not have single CRED_SLACK env var")
 			return
 		}
 		t.Fatal("proxy deployment not found")
