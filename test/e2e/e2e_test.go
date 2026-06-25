@@ -31,6 +31,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/codeready-toolchain/claw-operator/internal/controller"
@@ -2190,16 +2191,45 @@ func patchProxyForEchoServer(t *testing.T, certDir, domain, echoPodIP string) {
 	_, err = utils.Run(t, cmd)
 	require.NoError(t, err, "Failed to patch proxy deployment with hostAliases")
 
-	t.Log("waiting for proxy deployment to be available")
+	t.Log("waiting for new proxy pod with hostAliases to be available")
 	err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
 		func(ctx context.Context) (bool, error) {
-			cmd := exec.Command("kubectl", "get", "deployment", proxyDeploymentName,
-				"-o", "jsonpath={.status.availableReplicas}",
+			cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw-proxy",
+				"-o", "json",
 				"-n", userNamespace)
 			output, err := utils.Run(t, cmd)
-			return err == nil && output == "1", nil
+			// t.Logf("proxy pods: '%s'", output)
+			if err == nil {
+				podList := corev1.PodList{}
+				err = json.Unmarshal([]byte(output), &podList)
+				if err == nil {
+					for _, pod := range podList.Items {
+						if pod.DeletionTimestamp != nil {
+							continue
+						}
+						if hasStatusCondition(&pod, corev1.PodReady, conditionTrue) {
+							hostAliases := pod.Spec.HostAliases
+							if len(hostAliases) == 1 {
+								if hostAliases[0].IP == echoPodIP && hostAliases[0].Hostnames[0] == domain {
+									return true, nil
+								}
+							}
+						}
+					}
+				}
+			}
+			return false, nil
 		})
 	require.NoError(t, err, "proxy deployment not available after patching")
+}
+
+func hasStatusCondition(pod *corev1.Pod, conditionType corev1.PodConditionType, conditionStatus corev1.ConditionStatus) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == conditionType {
+			return condition.Status == conditionStatus
+		}
+	}
+	return false
 }
 
 // extractMITMCA retrieves the base64-encoded proxy MITM CA certificate from the cluster.
@@ -2243,7 +2273,7 @@ func curlThroughProxy(t *testing.T, podName, mitmCAB64 string, req curlThroughPr
 	_, _ = utils.Run(t, cmd)
 
 	curlArgs := fmt.Sprintf(
-		`-s --max-time 30 --connect-timeout 10 `+
+		`-s -v --max-time 30 --connect-timeout 10 `+
 			`--proxy http://%s.%s.svc.cluster.local:8080 `+
 			`--cacert /tmp/mitm-ca.crt`,
 		proxyServiceName, userNamespace)
