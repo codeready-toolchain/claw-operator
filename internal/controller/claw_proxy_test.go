@@ -252,7 +252,7 @@ func TestGenerateProxyConfig(t *testing.T) {
 					Name: "gcp-secret",
 					Key:  "sa.json",
 				}},
-				Domain: ".googleapis.com",
+				Domain: "us-central1-aiplatform.googleapis.com",
 				GCP: &clawv1alpha1.GCPConfig{
 					Project:  "my-project",
 					Location: "us-central1",
@@ -265,12 +265,15 @@ func TestGenerateProxyConfig(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
+		route := findRouteByDomain(t, cfg.Routes, "us-central1-aiplatform.googleapis.com")
 		assert.Equal(t, "gcp", route.Injector)
 		assert.Equal(t, "/etc/proxy/credentials/vertex/sa-key.json", route.SAFilePath)
 		assert.Equal(t, "my-project", route.GCPProject)
 		assert.Equal(t, "/vertex", route.PathPrefix)
 		assert.Equal(t, "https://us-central1-aiplatform.googleapis.com", route.Upstream)
+
+		oauth2Route := findRouteByDomain(t, cfg.Routes, "oauth2.googleapis.com")
+		assert.Equal(t, "gcp", oauth2Route.Injector)
 	})
 
 	t.Run("should order exact matches before suffix matches", func(t *testing.T) {
@@ -909,7 +912,7 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 					Name: "vertex-sa",
 					Key:  "sa.json",
 				}},
-				Domain: ".googleapis.com",
+				Domain: "us-east5-aiplatform.googleapis.com",
 				GCP: &clawv1alpha1.GCPConfig{
 					Project:  "my-project",
 					Location: "us-east5",
@@ -922,10 +925,13 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 
 		var cfg proxyConfig
 		require.NoError(t, json.Unmarshal(data, &cfg))
-		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
+		route := findRouteByDomain(t, cfg.Routes, "us-east5-aiplatform.googleapis.com")
 		assert.Equal(t, "gcp", route.Injector)
 		assert.Empty(t, route.PathPrefix, "Vertex SDK provider should not have gateway path prefix")
 		assert.Empty(t, route.Upstream, "Vertex SDK provider should not have gateway upstream")
+
+		oauth2Route := findRouteByDomain(t, cfg.Routes, "oauth2.googleapis.com")
+		assert.Equal(t, "gcp", oauth2Route.Injector)
 	})
 
 	t.Run("should create gateway route for GCP google but not GCP anthropic", func(t *testing.T) {
@@ -938,7 +944,7 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 					Name: "gcp-secret",
 					Key:  "sa.json",
 				}},
-				Domain: ".googleapis.com",
+				Domain: "us-central1-aiplatform.googleapis.com",
 				GCP: &clawv1alpha1.GCPConfig{
 					Project:  "my-project",
 					Location: "us-central1",
@@ -952,7 +958,7 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 					Name: "vertex-sa",
 					Key:  "sa.json",
 				}},
-				Domain: ".googleapis.com",
+				Domain: "us-east5-aiplatform.googleapis.com",
 				GCP: &clawv1alpha1.GCPConfig{
 					Project:  "my-project",
 					Location: "us-east5",
@@ -982,6 +988,128 @@ func TestGenerateProxyConfigVertexSDK(t *testing.T) {
 		require.NotNil(t, anthropicRoute, "anthropic GCP route should exist")
 		assert.Empty(t, anthropicRoute.PathPrefix, "anthropic GCP should not have gateway prefix")
 		assert.Empty(t, anthropicRoute.Upstream, "anthropic GCP should not have gateway upstream")
+
+		oauth2Route := findRouteByDomain(t, cfg.Routes, "oauth2.googleapis.com")
+		assert.Equal(t, "gcp", oauth2Route.Injector, "should have exactly one oauth2 route")
+	})
+}
+
+// --- GCP domain restriction tests ---
+
+func TestGCPDomainRestriction(t *testing.T) {
+	t.Run("should emit only one oauth2 route for multiple GCP credentials", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "vertex-google",
+				Type:      clawv1alpha1.CredentialTypeGCP,
+				Provider:  "google",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "sa1", Key: "sa.json"}},
+				Domain:    "us-central1-aiplatform.googleapis.com",
+				GCP:       &clawv1alpha1.GCPConfig{Project: "p1", Location: "us-central1"},
+			},
+			{
+				Name:      "vertex-anthropic",
+				Type:      clawv1alpha1.CredentialTypeGCP,
+				Provider:  "anthropic",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "sa2", Key: "sa.json"}},
+				Domain:    "us-east5-aiplatform.googleapis.com",
+				GCP:       &clawv1alpha1.GCPConfig{Project: "p2", Location: "us-east5"},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		oauth2Count := 0
+		for _, r := range cfg.Routes {
+			if r.Domain == "oauth2.googleapis.com" {
+				oauth2Count++
+				assert.Equal(t, "gcp", r.Injector)
+			}
+		}
+		assert.Equal(t, 1, oauth2Count, "should have exactly one oauth2.googleapis.com route")
+	})
+
+	t.Run("should emit separate aiplatform routes per region", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "vertex-google",
+				Type:      clawv1alpha1.CredentialTypeGCP,
+				Provider:  "google",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "sa1", Key: "sa.json"}},
+				Domain:    "us-central1-aiplatform.googleapis.com",
+				GCP:       &clawv1alpha1.GCPConfig{Project: "p1", Location: "us-central1"},
+			},
+			{
+				Name:      "vertex-anthropic",
+				Type:      clawv1alpha1.CredentialTypeGCP,
+				Provider:  "anthropic",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "sa2", Key: "sa.json"}},
+				Domain:    "us-east5-aiplatform.googleapis.com",
+				GCP:       &clawv1alpha1.GCPConfig{Project: "p2", Location: "us-east5"},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		googleRoute := findRouteByDomain(t, cfg.Routes, "us-central1-aiplatform.googleapis.com")
+		assert.Equal(t, "gcp", googleRoute.Injector)
+		assert.Equal(t, "/etc/proxy/credentials/vertex-google/sa-key.json", googleRoute.SAFilePath)
+
+		anthropicRoute := findRouteByDomain(t, cfg.Routes, "us-east5-aiplatform.googleapis.com")
+		assert.Equal(t, "gcp", anthropicRoute.Injector)
+		assert.Equal(t, "/etc/proxy/credentials/vertex-anthropic/sa-key.json", anthropicRoute.SAFilePath)
+	})
+
+	t.Run("should allow explicit domain override for GCP", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "vertex-broad",
+				Type:      clawv1alpha1.CredentialTypeGCP,
+				Provider:  "google",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "sa", Key: "sa.json"}},
+				Domain:    ".googleapis.com",
+				GCP:       &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		route := findRouteByDomain(t, cfg.Routes, ".googleapis.com")
+		assert.Equal(t, "gcp", route.Injector, "explicit suffix domain should be respected")
+	})
+
+	t.Run("should not emit oauth2 route for non-GCP credentials", func(t *testing.T) {
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:      "gemini",
+				Type:      clawv1alpha1.CredentialTypeAPIKey,
+				Provider:  "google",
+				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "s", Key: "k"}},
+				Domain:    "generativelanguage.googleapis.com",
+				APIKey:    &clawv1alpha1.APIKeyConfig{Header: "x-goog-api-key"},
+			},
+		}
+
+		data, err := generateProxyConfig(toResolved(credentials), nil, nil)
+		require.NoError(t, err)
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal(data, &cfg))
+
+		assert.Nil(t, findRoute(cfg.Routes, "oauth2.googleapis.com"),
+			"oauth2 route should not be emitted for apiKey credentials")
 	})
 }
 
@@ -1032,7 +1160,7 @@ func TestConfigureProxyForCredentials(t *testing.T) {
 				Name:      "vertex",
 				Type:      clawv1alpha1.CredentialTypeGCP,
 				SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "gcp-sa", Key: "sa.json"}},
-				Domain:    ".googleapis.com",
+				Domain:    "us-central1-aiplatform.googleapis.com",
 				GCP:       &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
 			},
 		}
