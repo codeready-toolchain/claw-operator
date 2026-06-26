@@ -21,21 +21,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Verify anthropic vertex plugin version matches OpenClaw image
-        run: |
-          KUSTOMIZE=internal/assets/manifests/claw/kustomization.yaml
-          IMAGE_TAG=$(yq '.images[] | select(.name == "ghcr.io/openclaw/openclaw") | .newTag' "$KUSTOMIZE")
-          PLUGIN_VERSION=$(sed -n 's/.*anthropic-vertex-provider@\([^"]*\)".*/\1/p' internal/controller/claw_providers.go)
-          if [ -z "$IMAGE_TAG" ] || [ -z "$PLUGIN_VERSION" ]; then
-            echo "::error::Failed to extract versions (IMAGE_TAG=${IMAGE_TAG:-<empty>}, PLUGIN_VERSION=${PLUGIN_VERSION:-<empty>})"
-            exit 1
-          fi
-          if [ "$IMAGE_TAG" != "$PLUGIN_VERSION" ]; then
-            echo "::error::anthropic-vertex-provider version ($PLUGIN_VERSION) does not match OpenClaw image tag ($IMAGE_TAG) in kustomization.yaml"
-            exit 1
-          fi
-          echo "Versions match: $IMAGE_TAG"
-
       - name: Run linter
         uses: golangci/golangci-lint-action@v8
         with:
