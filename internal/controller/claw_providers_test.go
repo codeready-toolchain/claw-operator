@@ -225,6 +225,30 @@ func TestVertexAIBaseURL(t *testing.T) {
 	}
 }
 
+func TestGCPAIPlatformDomain(t *testing.T) {
+	tests := []struct {
+		name     string
+		location string
+		want     string
+	}{
+		{
+			name:     "global uses plain hostname",
+			location: "global",
+			want:     "aiplatform.googleapis.com",
+		},
+		{
+			name:     "regional location uses prefix",
+			location: "us-east5",
+			want:     "us-east5-aiplatform.googleapis.com",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, gcpAIPlatformDomain(tt.location))
+		})
+	}
+}
+
 // --- Vertex SDK helper tests ---
 
 func TestUsesVertexSDK(t *testing.T) {
@@ -537,24 +561,53 @@ func TestResolveProviderDefaults(t *testing.T) {
 			wantHeader: "x-api-key",
 		},
 		{
-			name: "google gcp fills domain",
+			name: "google gcp fills domain with region-specific aiplatform host",
 			cred: clawv1alpha1.CredentialSpec{
 				Name:     "gemini",
 				Type:     clawv1alpha1.CredentialTypeGCP,
 				Provider: "google",
 				GCP:      &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
 			},
-			wantDomain: ".googleapis.com",
+			wantDomain: "us-central1-aiplatform.googleapis.com",
 		},
 		{
-			name: "anthropic gcp fills domain",
+			name: "anthropic gcp fills domain with region-specific aiplatform host",
 			cred: clawv1alpha1.CredentialSpec{
 				Name:     "anthropic-vertex",
 				Type:     clawv1alpha1.CredentialTypeGCP,
 				Provider: "anthropic",
 				GCP:      &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"},
 			},
+			wantDomain: "us-east5-aiplatform.googleapis.com",
+		},
+		{
+			name: "gcp global location uses plain aiplatform hostname",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "gemini-global",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "google",
+				GCP:      &clawv1alpha1.GCPConfig{Project: "p", Location: "global"},
+			},
+			wantDomain: "aiplatform.googleapis.com",
+		},
+		{
+			name: "gcp explicit domain preserved",
+			cred: clawv1alpha1.CredentialSpec{
+				Name:     "vertex-broad",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "google",
+				Domain:   ".googleapis.com",
+				GCP:      &clawv1alpha1.GCPConfig{Project: "p", Location: "us-central1"},
+			},
 			wantDomain: ".googleapis.com",
+		},
+		{
+			name: "gcp without gcp config leaves domain empty",
+			cred: clawv1alpha1.CredentialSpec{
+				Name: "no-gcp-config",
+				Type: clawv1alpha1.CredentialTypeGCP,
+			},
+			wantErr: "domain is required",
 		},
 		{
 			name: "explicit domain preserved",
