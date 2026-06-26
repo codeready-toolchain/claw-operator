@@ -2019,4 +2019,41 @@ func TestOpenClawImage(t *testing.T) {
 		}
 	})
 
+	t.Run("should set status.image to custom image", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		customImage := "ghcr.io/openclaw/openclaw:2026.6.10"
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Image = customImage
+		instance.Spec.Credentials = testCredentials()
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, instance))
+		assert.Equal(t, customImage, instance.Status.Image)
+	})
+
+	t.Run("should set status.image to default when spec.image is omitted", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		createClawInstance(t, ctx, testInstanceName, namespace)
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		instance := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, instance))
+		assert.Equal(t, DefaultOpenClawImage, instance.Status.Image)
+	})
 }

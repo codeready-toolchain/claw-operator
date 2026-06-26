@@ -924,6 +924,11 @@ spec:
                 description: GatewayURL is the HTTPS URL for accessing the Claw gateway,
                   including the auth token fragment when applicable
                 type: string
+              image:
+                description: |-
+                  Image is the resolved OpenClaw container image for this instance.
+                  Matches spec.image when set; otherwise reflects the operator default.
+                type: string
               url:
                 description: |-
                   Deprecated: Use GatewayURL instead. Will be removed in a future version.

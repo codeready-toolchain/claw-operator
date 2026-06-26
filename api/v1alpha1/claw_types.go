@@ -574,6 +574,11 @@ type ClawSpec struct {
 
 // ClawStatus defines the observed state of Claw
 type ClawStatus struct {
+	// Image is the resolved OpenClaw container image for this instance.
+	// Matches spec.image when set; otherwise reflects the operator default.
+	// +optional
+	Image string `json:"image,omitempty"`
+
 	// GatewayTokenSecretRef is the name of the Secret containing the gateway authentication token
 	// +optional
 	GatewayTokenSecretRef string `json:"gatewayTokenSecretRef,omitempty"`

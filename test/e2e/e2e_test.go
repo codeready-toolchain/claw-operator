@@ -1893,6 +1893,15 @@ spec:
 				})
 			require.NoError(t, err, "Claw Ready did not become True within %v", extendedTimeout)
 
+			t.Log("verifying status.image matches the resolved image")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.image}",
+				"-n", userNamespace)
+			statusImage, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, gatewayImage, statusImage,
+				"status.image should reflect the resolved image")
+
 			t.Log("verifying gateway container uses the custom image")
 			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='gateway')].image}"
 			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
