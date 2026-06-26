@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/name"
+
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
@@ -156,23 +158,25 @@ var knownProviders = map[string]providerDefaults{
 //	"ghcr.io/openclaw/openclaw"                       → ""  (latest)
 //	"ghcr.io/openclaw/openclaw@sha256:abc"            → ""  (latest)
 func imagePluginVersion(image string) string {
-	if strings.Contains(image, "@") {
+	if image == "" {
 		return ""
 	}
-	tag := ""
-	if i := strings.LastIndex(image, ":"); i >= 0 {
-		candidate := image[i+1:]
-		if !strings.Contains(candidate, "/") {
-			tag = candidate
-		}
-	}
-	if tag == "" || tag == "slim" || tag == "latest" {
+	ref, err := name.ParseReference(image, name.WeakValidation)
+	if err != nil {
 		return ""
 	}
-	if version, _, ok := strings.Cut(tag, "-slim"); ok {
+	tag, ok := ref.(name.Tag)
+	if !ok {
+		return ""
+	}
+	t := tag.TagStr()
+	if t == "latest" || t == "slim" {
+		return ""
+	}
+	if version, _, ok := strings.Cut(t, "-slim"); ok {
 		return version
 	}
-	return tag
+	return t
 }
 
 // usesVertexSDK returns true when a credential should use the native Vertex AI SDK
