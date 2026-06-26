@@ -31,7 +31,7 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
-const testGatewayImage = "ghcr.io/openclaw/openclaw:2026.6.10"
+const testGatewayImage = "ghcr.io/openclaw/openclaw:slim"
 
 func makeTestDeploymentForPlugins() []*unstructured.Unstructured {
 	dep := &unstructured.Unstructured{}
@@ -68,6 +68,7 @@ func testClawWithPlugins(plugins []string) *clawv1alpha1.Claw {
 	return &clawv1alpha1.Claw{
 		ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
 		Spec: clawv1alpha1.ClawSpec{
+			Image:   testGatewayImage,
 			Plugins: plugins,
 		},
 	}
@@ -409,6 +410,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 	t.Run("returns vertex plugin for anthropic GCP credential", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
+				Image: testGatewayImage,
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{
 						Name:     "anthropic-vertex",
@@ -421,12 +423,13 @@ func TestRequiredProviderPlugins(t *testing.T) {
 		}
 		plugins := requiredProviderPlugins(instance)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider", plugins[0])
 	})
 
 	t.Run("returns empty for google GCP credential", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
+				Image: testGatewayImage,
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{
 						Name:     "vertex",
@@ -443,6 +446,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 	t.Run("returns empty for anthropic apiKey credential", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
+				Image: testGatewayImage,
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{
 						Name:     "claude",
@@ -459,6 +463,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 	t.Run("deduplicates when multiple anthropic vertex credentials exist", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
+				Image: testGatewayImage,
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{Name: "a1", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
 						GCP: &clawv1alpha1.GCPConfig{Project: "p1", Location: "us-east5"}},
@@ -470,12 +475,43 @@ func TestRequiredProviderPlugins(t *testing.T) {
 		plugins := requiredProviderPlugins(instance)
 		assert.Len(t, plugins, 1)
 	})
+
+	t.Run("uses pinned image tag for vertex plugin version", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			Spec: clawv1alpha1.ClawSpec{
+				Image: "ghcr.io/openclaw/openclaw:2026.6.10",
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{Name: "vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
+						GCP: &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"}},
+				},
+			},
+		}
+		plugins := requiredProviderPlugins(instance)
+		require.Len(t, plugins, 1)
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
+	})
+
+	t.Run("extracts version from slim-variant tag for vertex plugin", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			Spec: clawv1alpha1.ClawSpec{
+				Image: "ghcr.io/openclaw/openclaw:2026.6.10-slim-arm64",
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{Name: "vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
+						GCP: &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"}},
+				},
+			},
+		}
+		plugins := requiredProviderPlugins(instance)
+		require.Len(t, plugins, 1)
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
+	})
 }
 
 func TestEffectivePlugins(t *testing.T) {
 	t.Run("returns only spec plugins when no implicit plugins needed", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
+				Image:   testGatewayImage,
 				Plugins: []string{"@openclaw/matrix"},
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{Name: "g", Type: clawv1alpha1.CredentialTypeAPIKey, Provider: "google"},
@@ -488,6 +524,7 @@ func TestEffectivePlugins(t *testing.T) {
 	t.Run("merges implicit vertex plugin with spec plugins", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
+				Image:   testGatewayImage,
 				Plugins: []string{"@openclaw/matrix"},
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{Name: "vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
@@ -497,13 +534,14 @@ func TestEffectivePlugins(t *testing.T) {
 		}
 		plugins := effectivePlugins(instance)
 		assert.Contains(t, plugins, "@openclaw/matrix")
-		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider@2026.6.10")
+		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider")
 		assert.Len(t, plugins, 2)
 	})
 
 	t.Run("does not duplicate if spec already declares the plugin", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
+				Image:   testGatewayImage,
 				Plugins: []string{"@openclaw/anthropic-vertex-provider"},
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{Name: "vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
@@ -518,6 +556,7 @@ func TestEffectivePlugins(t *testing.T) {
 	t.Run("returns implicit plugins when spec.plugins is empty", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
+				Image: testGatewayImage,
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{Name: "vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
 						GCP: &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"}},
@@ -526,7 +565,7 @@ func TestEffectivePlugins(t *testing.T) {
 		}
 		plugins := effectivePlugins(instance)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider", plugins[0])
 	})
 }
 

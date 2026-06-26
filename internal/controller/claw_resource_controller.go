@@ -64,6 +64,7 @@ const (
 	ClawInitConfigContainerName = "init-config"
 	ClawConfigModeEnvVar        = "CLAW_CONFIG_MODE"
 	DefaultKubectlImage         = "quay.io/openshift/origin-cli:4.21"
+	DefaultOpenClawImage        = "ghcr.io/openclaw/openclaw:slim"
 
 	// OpenClaw JSON config keys shared across enrichment functions
 	configKeyGateway   = "gateway"
@@ -956,6 +957,11 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 
 	for path, content := range allManifests {
 		replaced := bytes.ReplaceAll(content, []byte("CLAW_INSTANCE_NAME"), []byte(instance.Name))
+		openclawImage := instance.Spec.Image
+		if openclawImage == "" {
+			openclawImage = DefaultOpenClawImage
+		}
+		replaced = bytes.ReplaceAll(replaced, []byte("OPENCLAW_IMAGE"), []byte(openclawImage))
 		if err := fs.WriteFile(path, replaced); err != nil {
 			return nil, fmt.Errorf("failed to write manifest to in-memory filesystem: %w", err)
 		}

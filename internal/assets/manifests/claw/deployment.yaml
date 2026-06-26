@@ -48,7 +48,7 @@ spec:
         # accessible to all subsequent containers without world-writable bits.
         #
         - name: init-volume
-          image: ghcr.io/openclaw/openclaw:slim
+          image: OPENCLAW_IMAGE
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -71,7 +71,7 @@ spec:
             - name: claw-home
               mountPath: /mnt/pvc
         - name: init-config
-          image: ghcr.io/openclaw/openclaw:slim
+          image: OPENCLAW_IMAGE
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -134,7 +134,7 @@ spec:
               cpu: 50m
       containers:
         - name: gateway
-          image: ghcr.io/openclaw/openclaw:slim
+          image: OPENCLAW_IMAGE
           imagePullPolicy: IfNotPresent
           command:
             - tini

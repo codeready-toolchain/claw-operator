@@ -1962,3 +1962,61 @@ func TestEnableServiceLinks(t *testing.T) {
 		}
 	})
 }
+
+// --- Image field tests ---
+
+func TestOpenClawImage(t *testing.T) {
+	t.Run("should default image to ghcr.io/openclaw/openclaw:slim when omitted", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		createClawInstance(t, ctx, testInstanceName, namespace)
+
+		instance := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, instance))
+		assert.Equal(t, "ghcr.io/openclaw/openclaw:slim", instance.Spec.Image)
+	})
+
+	t.Run("should propagate custom image to all gateway containers", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		customImage := "ghcr.io/openclaw/openclaw:2026.6.10"
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Namespace = namespace
+		instance.Spec.Image = customImage
+		instance.Spec.Credentials = testCredentials()
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+
+		gatewayContainerNames := []string{"init-volume", ClawInitConfigContainerName, ClawGatewayContainerName}
+		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
+			for _, name := range gatewayContainerNames {
+				if ic.Name == name {
+					assert.Equal(t, customImage, ic.Image,
+						"init container %s should use custom image", name)
+				}
+			}
+		}
+		for _, c := range deployment.Spec.Template.Spec.Containers {
+			if c.Name == ClawGatewayContainerName {
+				assert.Equal(t, customImage, c.Image, "gateway container should use custom image")
+			}
+		}
+	})
+
+}

@@ -102,7 +102,7 @@ var knownProviders = map[string]providerDefaults{
 		Header:       "x-api-key",
 		API:          "anthropic-messages",
 		VertexAPI:    "anthropic-messages",
-		VertexPlugin: "@openclaw/anthropic-vertex-provider@2026.6.10",
+		VertexPlugin: "@openclaw/anthropic-vertex-provider",
 		Models: []modelEntry{
 			{Name: "claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
 			{Name: "claude-opus-4-8", Alias: "Claude Opus 4.8"},
@@ -145,6 +145,34 @@ var knownProviders = map[string]providerDefaults{
 			{Name: "google/gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
 		},
 	},
+}
+
+// imagePluginVersion extracts the OpenClaw release version from a container
+// image tag for use as an npm package version suffix.
+//
+//	"ghcr.io/openclaw/openclaw:2026.6.10"            → "2026.6.10"
+//	"ghcr.io/openclaw/openclaw:2026.6.10-slim-arm64" → "2026.6.10"
+//	"ghcr.io/openclaw/openclaw:slim"                  → ""  (latest)
+//	"ghcr.io/openclaw/openclaw"                       → ""  (latest)
+//	"ghcr.io/openclaw/openclaw@sha256:abc"            → ""  (latest)
+func imagePluginVersion(image string) string {
+	if strings.Contains(image, "@") {
+		return ""
+	}
+	tag := ""
+	if i := strings.LastIndex(image, ":"); i >= 0 {
+		candidate := image[i+1:]
+		if !strings.Contains(candidate, "/") {
+			tag = candidate
+		}
+	}
+	if tag == "" || tag == "slim" || tag == "latest" {
+		return ""
+	}
+	if version, _, ok := strings.Cut(tag, "-slim"); ok {
+		return version
+	}
+	return tag
 }
 
 // usesVertexSDK returns true when a credential should use the native Vertex AI SDK

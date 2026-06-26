@@ -71,7 +71,10 @@ func effectivePlugins(instance *clawv1alpha1.Claw) []string {
 
 // requiredProviderPlugins inspects credentials and returns plugin package specs
 // that must be installed for the configured providers to work.
+// The version is derived from the image tag via imagePluginVersion; when empty
+// the plugin is installed without a version pin (npm "latest").
 func requiredProviderPlugins(instance *clawv1alpha1.Claw) []string {
+	version := imagePluginVersion(instance.Spec.Image)
 	var plugins []string
 	seen := make(map[string]bool)
 	for _, cred := range instance.Spec.Credentials {
@@ -82,9 +85,13 @@ func requiredProviderPlugins(instance *clawv1alpha1.Claw) []string {
 		if !ok || defaults.VertexPlugin == "" {
 			continue
 		}
-		if !seen[defaults.VertexPlugin] {
-			plugins = append(plugins, defaults.VertexPlugin)
-			seen[defaults.VertexPlugin] = true
+		resolved := defaults.VertexPlugin
+		if version != "" {
+			resolved += "@" + version
+		}
+		if !seen[resolved] {
+			plugins = append(plugins, resolved)
+			seen[resolved] = true
 		}
 	}
 	return plugins
