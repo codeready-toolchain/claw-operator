@@ -56,6 +56,10 @@ const (
 	injectorKubernetes = "kubernetes"
 )
 
+// gcpOAuth2Domain is the GCP OAuth2 token endpoint domain. GCP credentials
+// need this for the proxy's token vending mechanism (isTokenVendingRequest).
+const gcpOAuth2Domain = "oauth2.googleapis.com"
+
 // proxyRoute is a single route entry in the proxy config JSON.
 type proxyRoute struct {
 	Domain         string            `json:"domain"`
@@ -150,7 +154,7 @@ func generateProxyConfig(
 
 	exact = append(exact, mcpPassthroughRoutes(mcpServers, coveredDomains)...)
 
-	credExact, credSuffix := credentialRoutes(credentials)
+	credExact, credSuffix := credentialRoutes(credentials, coveredDomains)
 	exact = append(exact, credExact...)
 	suffix := make([]proxyRoute, 0, len(credSuffix))
 	suffix = append(suffix, credSuffix...)
@@ -196,9 +200,23 @@ func multiSecretRoles(cred clawv1alpha1.CredentialSpec) []channelSecretRole {
 
 // credentialRoutes builds proxy routes from resolved credentials, returning
 // exact-match and suffix-match routes separately for deterministic ordering.
-func credentialRoutes(credentials []resolvedCredential) (exact, suffix []proxyRoute) {
+// coveredDomains is used to deduplicate companion routes (e.g. oauth2.googleapis.com
+// for GCP credentials) and is updated in-place.
+func credentialRoutes(credentials []resolvedCredential, coveredDomains map[string]bool) (exact, suffix []proxyRoute) {
 	for _, rc := range credentials {
 		cred := rc.CredentialSpec
+
+		// GCP credentials need oauth2.googleapis.com for the proxy's token
+		// vending mechanism (isTokenVendingRequest intercepts POST /token).
+		// The GCP injector type is needed to trigger MITM.
+		if cred.Type == clawv1alpha1.CredentialTypeGCP && !coveredDomains[gcpOAuth2Domain] {
+			coveredDomains[gcpOAuth2Domain] = true
+			exact = append(exact, proxyRoute{
+				Domain:     gcpOAuth2Domain,
+				Injector:   injectorGCP,
+				SAFilePath: "/etc/proxy/credentials/" + cred.Name + "/sa-key.json",
+			})
+		}
 
 		if cred.Type == clawv1alpha1.CredentialTypeKubernetes {
 			if rc.KubeConfig == nil {

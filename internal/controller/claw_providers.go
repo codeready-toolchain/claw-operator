@@ -196,6 +196,13 @@ func vertexAIBaseURL(location string) string {
 	return "https://" + location + "-aiplatform.googleapis.com"
 }
 
+// gcpAIPlatformDomain returns the bare hostname for the Vertex AI API
+// in the given location, derived from vertexAIBaseURL as the single
+// source of truth.
+func gcpAIPlatformDomain(location string) string {
+	return strings.TrimPrefix(vertexAIBaseURL(location), "https://")
+}
+
 // buildProviderEntry constructs an OpenClaw provider config entry with the
 // correct wire format API baked in. This avoids the "build map then mutate"
 // pattern that led to the missing api field bug.
@@ -243,8 +250,8 @@ func resolveProviderDefaults(cred *clawv1alpha1.CredentialSpec) error {
 		}
 
 	case clawv1alpha1.CredentialTypeGCP:
-		if cred.Domain == "" {
-			cred.Domain = ".googleapis.com"
+		if cred.Domain == "" && cred.GCP != nil {
+			cred.Domain = gcpAIPlatformDomain(cred.GCP.Location)
 		}
 
 	case clawv1alpha1.CredentialTypeKubernetes:
