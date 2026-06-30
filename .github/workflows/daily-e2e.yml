@@ -66,7 +66,7 @@ jobs:
           if [ "${{ matrix.image }}" = "slim" ]; then
             OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:slim"
           else
-            OPENCLAW_IMAGE=$({{ steps.default-image.outputs.image }})
+            OPENCLAW_IMAGE=${{ steps.default-image.outputs.image }}
           fi
           OPENCLAW_DIGEST=$(skopeo inspect --format '{{.Digest}}' \
             "docker://${OPENCLAW_IMAGE}" 2>/dev/null || echo "unknown")
