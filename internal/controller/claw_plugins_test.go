@@ -31,7 +31,7 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
-const testGatewayImage = "ghcr.io/openclaw/openclaw:slim"
+const testGatewayImage = "ghcr.io/openclaw/openclaw:2026.6.10"
 
 func makeTestDeploymentForPlugins() []*unstructured.Unstructured {
 	dep := &unstructured.Unstructured{}
@@ -423,7 +423,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 		}
 		plugins := requiredProviderPlugins(instance)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})
 
 	t.Run("returns empty for google GCP credential", func(t *testing.T) {
@@ -518,7 +518,7 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		assert.Equal(t, []string{"@openclaw/matrix"}, effectivePlugins(instance))
+		assert.Equal(t, []string{"@openclaw/matrix@2026.6.10"}, effectivePlugins(instance))
 	})
 
 	t.Run("merges implicit vertex plugin with spec plugins", func(t *testing.T) {
@@ -533,12 +533,27 @@ func TestEffectivePlugins(t *testing.T) {
 			},
 		}
 		plugins := effectivePlugins(instance)
-		assert.Contains(t, plugins, "@openclaw/matrix")
-		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider")
+		assert.Contains(t, plugins, "@openclaw/matrix@2026.6.10") // same version as the image is set for this plugin
+		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider@2026.6.10")
 		assert.Len(t, plugins, 2)
 	})
 
-	t.Run("does not duplicate if spec already declares the plugin", func(t *testing.T) {
+	t.Run("does not duplicate if spec already declares the exact same plugin", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			Spec: clawv1alpha1.ClawSpec{
+				Image:   testGatewayImage,
+				Plugins: []string{"@openclaw/anthropic-vertex-provider@2026.6.10"},
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{Name: "vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
+						GCP: &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"}},
+				},
+			},
+		}
+		plugins := effectivePlugins(instance)
+		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.10"}, plugins)
+	})
+
+	t.Run("includes version if spec already declares the plugin with missing version", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
 				Image:   testGatewayImage,
@@ -550,7 +565,7 @@ func TestEffectivePlugins(t *testing.T) {
 			},
 		}
 		plugins := effectivePlugins(instance)
-		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider"}, plugins)
+		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.10"}, plugins)
 	})
 
 	t.Run("returns implicit plugins when spec.plugins is empty", func(t *testing.T) {
@@ -565,7 +580,7 @@ func TestEffectivePlugins(t *testing.T) {
 		}
 		plugins := effectivePlugins(instance)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})
 }
 
@@ -664,7 +679,7 @@ func TestPluginsIntegration(t *testing.T) {
 		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
 			if ic.Name == PluginsInitContainerName {
 				found = true
-				assert.Contains(t, ic.Command[2], "openclaw plugins install '@openclaw/matrix'")
+				assert.Contains(t, ic.Command[2], "openclaw plugins install '@openclaw/matrix@2026.6.10'")
 
 				envMap := make(map[string]string)
 				for _, e := range ic.Env {
@@ -735,8 +750,8 @@ func TestPluginsIntegration(t *testing.T) {
 		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
 			if ic.Name == PluginsInitContainerName {
 				script := ic.Command[2]
-				assert.Contains(t, script, "openclaw plugins install '@openclaw/matrix'")
-				assert.Contains(t, script, "openclaw plugins install '@openclaw/diagnostics-otel'")
+				assert.Contains(t, script, "openclaw plugins install '@openclaw/matrix@2026.6.10'")
+				assert.Contains(t, script, "openclaw plugins install '@openclaw/diagnostics-otel@2026.6.10'")
 				return
 			}
 		}

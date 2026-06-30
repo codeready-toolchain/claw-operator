@@ -497,7 +497,7 @@ type ClawSpec struct {
 	// (e.g. "ghcr.io/openclaw/openclaw:2026.6.10"). Used for init-volume,
 	// init-config, and gateway containers.
 	// +optional
-	// +kubebuilder:default="ghcr.io/openclaw/openclaw:slim"
+	// +kubebuilder:default="ghcr.io/openclaw/openclaw:2026.6.10"
 	Image string `json:"image,omitempty"`
 
 	// Config provides user-supplied OpenClaw configuration and merge behavior.

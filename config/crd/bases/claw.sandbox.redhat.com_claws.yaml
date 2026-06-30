@@ -409,7 +409,7 @@ spec:
                   Deployments to zero replicas. Set to false (or omit) to run normally.
                 type: boolean
               image:
-                default: ghcr.io/openclaw/openclaw:slim
+                default: ghcr.io/openclaw/openclaw:2026.6.10
                 description: |-
                   Image is the full container image reference for the OpenClaw gateway
                   (e.g. "ghcr.io/openclaw/openclaw:2026.6.10"). Used for init-volume,

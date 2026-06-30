@@ -157,9 +157,9 @@ var knownProviders = map[string]providerDefaults{
 //	"ghcr.io/openclaw/openclaw:slim"                  → ""  (latest)
 //	"ghcr.io/openclaw/openclaw"                       → ""  (latest)
 //	"ghcr.io/openclaw/openclaw@sha256:abc"            → ""  (latest)
-func imagePluginVersion(image string) string {
+func imagePluginVersion(image, defaultImage string) string {
 	if image == "" {
-		return ""
+		image = defaultImage
 	}
 	ref, err := name.ParseReference(image, name.WeakValidation)
 	if err != nil {

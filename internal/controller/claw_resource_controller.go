@@ -64,7 +64,7 @@ const (
 	ClawInitConfigContainerName = "init-config"
 	ClawConfigModeEnvVar        = "CLAW_CONFIG_MODE"
 	DefaultKubectlImage         = "quay.io/openshift/origin-cli:4.21"
-	DefaultOpenClawImage        = "ghcr.io/openclaw/openclaw:slim"
+	DefaultOpenClawImage        = "ghcr.io/openclaw/openclaw:2026.6.10"
 
 	// OpenClaw JSON config keys shared across enrichment functions
 	configKeyGateway   = "gateway"

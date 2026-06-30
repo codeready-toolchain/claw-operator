@@ -432,7 +432,7 @@ func TestNormalizeDeployment_NoSpuriousDiff(t *testing.T) {
 			deploy.Spec.Template.Spec.InitContainers = []corev1.Container{
 				{
 					Name:            "init-config",
-					Image:           "ghcr.io/openclaw/openclaw:slim",
+					Image:           "ghcr.io/openclaw/openclaw:2026.6.10",
 					ImagePullPolicy: corev1.PullIfNotPresent,
 					Command:         []string{"node", "/config/merge.js"},
 					SecurityContext: &corev1.SecurityContext{
@@ -459,7 +459,7 @@ func TestNormalizeDeployment_NoSpuriousDiff(t *testing.T) {
 			deploy.Spec.Template.Spec.Containers = []corev1.Container{
 				{
 					Name:            "gateway",
-					Image:           "ghcr.io/openclaw/openclaw:slim",
+					Image:           "ghcr.io/openclaw/openclaw:2026.6.10",
 					ImagePullPolicy: corev1.PullIfNotPresent,
 					Ports:           []corev1.ContainerPort{{Name: "gateway", ContainerPort: 18789, Protocol: corev1.ProtocolTCP}},
 					StartupProbe: &corev1.Probe{
