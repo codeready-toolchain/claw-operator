@@ -70,7 +70,7 @@ func init() {
 
 // nolint:gocyclo
 func main() {
-	var showVersion bool
+	var showImage bool
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
@@ -79,7 +79,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
-	flag.BoolVar(&showVersion, "version", false, "Print the default OpenClaw image and exit.")
+	flag.BoolVar(&showImage, "image", false, "Print the default OpenClaw image and exit.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -103,7 +103,7 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	if showVersion {
+	if showImage {
 		fmt.Println(defaultOpenClawImage)
 		os.Exit(0)
 	}

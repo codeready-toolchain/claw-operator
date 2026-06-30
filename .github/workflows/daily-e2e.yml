@@ -42,7 +42,7 @@ jobs:
 
       - name: Get default OpenClaw image
         id: default-image
-        run: echo "image=$(go run ./cmd --version)" >> "$GITHUB_OUTPUT"
+        run: echo "image=$(go run ./cmd --image)" >> "$GITHUB_OUTPUT"
 
       - name: Resolve OpenClaw image
         id: versions
