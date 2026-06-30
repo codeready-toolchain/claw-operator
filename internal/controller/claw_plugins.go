@@ -63,8 +63,8 @@ func pluginPackageVersion(p string) string {
 // over implicit ones, allowing users to override the pinned version).
 // Also, if the plugin is already declared in the spec with a different version,
 // the version is updated to the image version.
-func effectivePlugins(instance *clawv1alpha1.Claw) []string {
-	imageVersion := imagePluginVersion(instance.Spec.Image, DefaultOpenClawImage)
+func effectivePlugins(instance *clawv1alpha1.Claw, defaultImage string) []string {
+	imageVersion := imagePluginVersion(instance.Spec.Image, defaultImage)
 	fmt.Println("imageVersion", imageVersion)
 	seen := make(map[string]bool, len(instance.Spec.Plugins))
 	merged := append([]string{}, instance.Spec.Plugins...)
@@ -78,7 +78,7 @@ func effectivePlugins(instance *clawv1alpha1.Claw) []string {
 		fmt.Println("merged explicit", merged[i])
 		seen[pkgName] = true
 	}
-	implicit := requiredProviderPlugins(instance)
+	implicit := requiredProviderPlugins(instance, defaultImage)
 	for _, p := range implicit {
 		if !seen[pluginPackageName(p)] {
 			pkgName := pluginPackageName(p)
@@ -96,8 +96,8 @@ func effectivePlugins(instance *clawv1alpha1.Claw) []string {
 // that must be installed for the configured providers to work.
 // The version is derived from the image tag via imagePluginVersion; when empty
 // the plugin is installed without a version pin (npm "latest").
-func requiredProviderPlugins(instance *clawv1alpha1.Claw) []string {
-	version := imagePluginVersion(instance.Spec.Image, DefaultOpenClawImage)
+func requiredProviderPlugins(instance *clawv1alpha1.Claw, defaultImage string) []string {
+	version := imagePluginVersion(instance.Spec.Image, defaultImage)
 	var plugins []string
 	seen := make(map[string]bool)
 	for _, cred := range instance.Spec.Credentials {

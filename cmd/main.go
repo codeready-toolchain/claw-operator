@@ -57,6 +57,8 @@ var (
 	// version and buildTime are set via LDFLAGS during build
 	version   = "dev"
 	buildTime = "unknown"
+
+	defaultOpenClawImage = "ghcr.io/openclaw/openclaw:2026.6.10"
 )
 
 func init() {
@@ -68,6 +70,7 @@ func init() {
 
 // nolint:gocyclo
 func main() {
+	var showVersion bool
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
@@ -76,6 +79,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	flag.BoolVar(&showVersion, "version", false, "Print the default OpenClaw image and exit.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -98,6 +102,11 @@ func main() {
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println(defaultOpenClawImage)
+		os.Exit(0)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -256,14 +265,15 @@ func main() {
 	}
 
 	clawReconciler := &controller.ClawResourceReconciler{
-		Client:             mgr.GetClient(),
-		Scheme:             mgr.GetScheme(),
-		UserSecretReader:   controller.NewLoggingUserSecretReader(mgr.GetAPIReader()),
-		ProxyImage:         os.Getenv("PROXY_IMAGE"),
-		KubectlImage:       os.Getenv("KUBECTL_IMAGE"),
-		OTelCollectorImage: os.Getenv("OTEL_COLLECTOR_IMAGE"),
-		ImagePullPolicy:    imagePullPolicy,
-		MetricsRefreshed:   make(chan struct{}),
+		Client:               mgr.GetClient(),
+		Scheme:               mgr.GetScheme(),
+		UserSecretReader:     controller.NewLoggingUserSecretReader(mgr.GetAPIReader()),
+		DefaultOpenClawImage: defaultOpenClawImage,
+		ProxyImage:           os.Getenv("PROXY_IMAGE"),
+		KubectlImage:         os.Getenv("KUBECTL_IMAGE"),
+		OTelCollectorImage:   os.Getenv("OTEL_COLLECTOR_IMAGE"),
+		ImagePullPolicy:      imagePullPolicy,
+		MetricsRefreshed:     make(chan struct{}),
 	}
 	if err = clawReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Claw")

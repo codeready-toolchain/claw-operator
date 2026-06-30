@@ -43,22 +43,9 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
-      - name: Get DefaultOpenClawImage
+      - name: Get default OpenClaw image
         id: default-image
-        run: |
-          cat > /tmp/main.go <<'EOF'
-          package main
-    
-          import (
-            "fmt"
-            "github.com/codeready-toolchain/claw-operator/internal/controller"
-          )
-    
-          func main() {
-            fmt.Print(controller.DefaultOpenClawImage)
-          }
-          EOF
-          echo "image=$(go run /tmp/main.go)" >> "$GITHUB_OUTPUT"
+        run: echo "image=$(go run ./cmd --version)" >> "$GITHUB_OUTPUT"
 
       - name: Resolve OpenClaw image
         id: versions

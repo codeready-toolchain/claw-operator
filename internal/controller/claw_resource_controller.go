@@ -64,8 +64,6 @@ const (
 	ClawInitConfigContainerName = "init-config"
 	ClawConfigModeEnvVar        = "CLAW_CONFIG_MODE"
 	DefaultKubectlImage         = "quay.io/openshift/origin-cli:4.21"
-	DefaultOpenClawImage        = "ghcr.io/openclaw/openclaw:2026.6.10"
-
 	// OpenClaw JSON config keys shared across enrichment functions
 	configKeyGateway   = "gateway"
 	configKeyControlUI = "controlUi"
@@ -389,11 +387,12 @@ type ClawResourceReconciler struct {
 	// UserSecretReader reads user-owned Secrets directly from the API server,
 	// bypassing the informer cache (where Transform has stripped .Data).
 	// Operator-owned Secrets keep full .Data in cache and use r.Get().
-	UserSecretReader   client.Reader
-	ProxyImage         string
-	KubectlImage       string
-	OTelCollectorImage string
-	ImagePullPolicy    string
+	UserSecretReader     client.Reader
+	DefaultOpenClawImage string
+	ProxyImage           string
+	KubectlImage         string
+	OTelCollectorImage   string
+	ImagePullPolicy      string
 	// MetricsRefreshed is closed by Start() after the initial metrics refresh.
 	// Reconcile() waits on it so no reconciliation runs before metrics are populated.
 	MetricsRefreshed chan struct{}
@@ -789,7 +788,7 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	if err := injectAdditionalEgress(objects, instance); err != nil {
 		return fmt.Errorf("failed to inject additional egress rules: %w", err)
 	}
-	if err := stampGatewayConfigHash(objects, instance.Name, effectivePlugins(instance)); err != nil {
+	if err := stampGatewayConfigHash(objects, instance.Name, effectivePlugins(instance, r.DefaultOpenClawImage)); err != nil {
 		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
 	}
 	return nil
@@ -847,7 +846,7 @@ func (r *ClawResourceReconciler) configureDeployments(
 			return fmt.Errorf("failed to configure metrics sidecar: %w", err)
 		}
 	}
-	plugins := effectivePlugins(instance)
+	plugins := effectivePlugins(instance, r.DefaultOpenClawImage)
 	if len(plugins) > 0 {
 		if err := configurePluginsInitContainer(objects, instance, plugins); err != nil {
 			return fmt.Errorf("failed to configure plugins init container: %w", err)
@@ -959,7 +958,7 @@ func (r *ClawResourceReconciler) buildKustomizedObjects(instance *clawv1alpha1.C
 		replaced := bytes.ReplaceAll(content, []byte("CLAW_INSTANCE_NAME"), []byte(instance.Name))
 		openclawImage := instance.Spec.Image
 		if openclawImage == "" {
-			openclawImage = DefaultOpenClawImage
+			openclawImage = r.DefaultOpenClawImage
 		}
 		replaced = bytes.ReplaceAll(replaced, []byte("OPENCLAW_IMAGE"), []byte(openclawImage))
 		if err := fs.WriteFile(path, replaced); err != nil {

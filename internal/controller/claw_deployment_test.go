@@ -1398,7 +1398,7 @@ func TestApplyDeployment(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		reconciler := createClawReconciler()
-		desired := makeUnstructuredDeployment("cou-create", namespace, "ghcr.io/openclaw/openclaw:2026.6.10")
+		desired := makeUnstructuredDeployment("cou-create", namespace, testDefaultImage)
 
 		changed, err := reconciler.applyDeployment(ctx, desired)
 		require.NoError(t, err)
@@ -1406,14 +1406,14 @@ func TestApplyDeployment(t *testing.T) {
 
 		deployment := &appsv1.Deployment{}
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: "cou-create", Namespace: namespace}, deployment))
-		assert.Equal(t, "ghcr.io/openclaw/openclaw:2026.6.10", deployment.Spec.Template.Spec.Containers[0].Image)
+		assert.Equal(t, testDefaultImage, deployment.Spec.Template.Spec.Containers[0].Image)
 	})
 
 	t.Run("should not update on identical second apply", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		reconciler := createClawReconciler()
-		desired1 := makeUnstructuredDeployment("cou-idempotent", namespace, "ghcr.io/openclaw/openclaw:2026.6.10")
+		desired1 := makeUnstructuredDeployment("cou-idempotent", namespace, testDefaultImage)
 
 		changed, err := reconciler.applyDeployment(ctx, desired1)
 		require.NoError(t, err)
@@ -1423,7 +1423,7 @@ func TestApplyDeployment(t *testing.T) {
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: "cou-idempotent", Namespace: namespace}, deployment))
 		gen1 := deployment.Generation
 
-		desired2 := makeUnstructuredDeployment("cou-idempotent", namespace, "ghcr.io/openclaw/openclaw:2026.6.10")
+		desired2 := makeUnstructuredDeployment("cou-idempotent", namespace, testDefaultImage)
 		changed, err = reconciler.applyDeployment(ctx, desired2)
 		require.NoError(t, err)
 		assert.False(t, changed, "identical second apply should report unchanged")
@@ -1455,12 +1455,12 @@ func TestApplyDeployment(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		reconciler := createClawReconciler()
-		desired1 := makeUnstructuredDeployment("cou-replicas", namespace, "ghcr.io/openclaw/openclaw:2026.6.10")
+		desired1 := makeUnstructuredDeployment("cou-replicas", namespace, testDefaultImage)
 
 		_, err := reconciler.applyDeployment(ctx, desired1)
 		require.NoError(t, err)
 
-		desired2 := makeUnstructuredDeployment("cou-replicas", namespace, "ghcr.io/openclaw/openclaw:2026.6.10")
+		desired2 := makeUnstructuredDeployment("cou-replicas", namespace, testDefaultImage)
 		require.NoError(t, unstructured.SetNestedField(desired2.Object, int64(0), "spec", "replicas"))
 
 		changed, err := reconciler.applyDeployment(ctx, desired2)
@@ -1472,7 +1472,7 @@ func TestApplyDeployment(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		reconciler := createClawReconciler()
-		desired1 := makeUnstructuredDeployment("cou-annot", namespace, "ghcr.io/openclaw/openclaw:2026.6.10")
+		desired1 := makeUnstructuredDeployment("cou-annot", namespace, testDefaultImage)
 
 		_, err := reconciler.applyDeployment(ctx, desired1)
 		require.NoError(t, err)
@@ -1485,7 +1485,7 @@ func TestApplyDeployment(t *testing.T) {
 		deployment.Annotations["kubectl.kubernetes.io/last-applied-configuration"] = "{}"
 		require.NoError(t, k8sClient.Update(ctx, deployment))
 
-		desired2 := makeUnstructuredDeployment("cou-annot", namespace, "ghcr.io/openclaw/openclaw:2026.6.10")
+		desired2 := makeUnstructuredDeployment("cou-annot", namespace, testDefaultImage)
 		_, err = reconciler.applyDeployment(ctx, desired2)
 		require.NoError(t, err)
 
@@ -1499,7 +1499,7 @@ func TestApplyDeployment(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		reconciler := createClawReconciler()
-		desired1 := makeUnstructuredDeployment("cou-labels", namespace, "ghcr.io/openclaw/openclaw:2026.6.10")
+		desired1 := makeUnstructuredDeployment("cou-labels", namespace, testDefaultImage)
 
 		_, err := reconciler.applyDeployment(ctx, desired1)
 		require.NoError(t, err)
@@ -1514,7 +1514,7 @@ func TestApplyDeployment(t *testing.T) {
 		require.NoError(t, k8sClient.Update(ctx, deployment))
 
 		// Re-apply — operator's labels should merge, not clobber
-		desired2 := makeUnstructuredDeployment("cou-labels", namespace, "ghcr.io/openclaw/openclaw:2026.6.10")
+		desired2 := makeUnstructuredDeployment("cou-labels", namespace, testDefaultImage)
 		desired2.SetLabels(map[string]string{"app": "claw"})
 		_, err = reconciler.applyDeployment(ctx, desired2)
 		require.NoError(t, err)
@@ -1966,7 +1966,7 @@ func TestEnableServiceLinks(t *testing.T) {
 // --- Image field tests ---
 
 func TestOpenClawImage(t *testing.T) {
-	t.Run("should default image to ghcr.io/openclaw/openclaw:2026.6.10 when omitted", func(t *testing.T) {
+	t.Run("should default image when omitted", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
 		createClawInstance(t, ctx, testInstanceName, namespace)
@@ -1975,7 +1975,7 @@ func TestOpenClawImage(t *testing.T) {
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
 			Name: testInstanceName, Namespace: namespace,
 		}, instance))
-		assert.Equal(t, "ghcr.io/openclaw/openclaw:2026.6.10", instance.Spec.Image)
+		assert.Equal(t, testDefaultImage, instance.Spec.Image)
 	})
 
 	t.Run("should propagate custom image to all gateway containers", func(t *testing.T) {
@@ -1984,11 +1984,10 @@ func TestOpenClawImage(t *testing.T) {
 		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
-		customImage := "ghcr.io/openclaw/openclaw:2026.6.10"
 		instance := &clawv1alpha1.Claw{}
 		instance.Name = testInstanceName
 		instance.Namespace = namespace
-		instance.Spec.Image = customImage
+		instance.Spec.Image = testDefaultImage
 		instance.Spec.Credentials = testCredentials()
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
@@ -2007,14 +2006,14 @@ func TestOpenClawImage(t *testing.T) {
 		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
 			for _, name := range gatewayContainerNames {
 				if ic.Name == name {
-					assert.Equal(t, customImage, ic.Image,
+					assert.Equal(t, testDefaultImage, ic.Image,
 						"init container %s should use custom image", name)
 				}
 			}
 		}
 		for _, c := range deployment.Spec.Template.Spec.Containers {
 			if c.Name == ClawGatewayContainerName {
-				assert.Equal(t, customImage, c.Image, "gateway container should use custom image")
+				assert.Equal(t, testDefaultImage, c.Image, "gateway container should use custom image")
 			}
 		}
 	})
@@ -2025,11 +2024,10 @@ func TestOpenClawImage(t *testing.T) {
 		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
 		require.NoError(t, k8sClient.Create(ctx, secret))
 
-		customImage := "ghcr.io/openclaw/openclaw:2026.6.10"
 		instance := &clawv1alpha1.Claw{}
 		instance.Name = testInstanceName
 		instance.Namespace = namespace
-		instance.Spec.Image = customImage
+		instance.Spec.Image = testDefaultImage
 		instance.Spec.Credentials = testCredentials()
 		require.NoError(t, k8sClient.Create(ctx, instance))
 
@@ -2039,7 +2037,7 @@ func TestOpenClawImage(t *testing.T) {
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
 			Name: testInstanceName, Namespace: namespace,
 		}, instance))
-		assert.Equal(t, customImage, instance.Status.Image)
+		assert.Equal(t, testDefaultImage, instance.Status.Image)
 	})
 
 	t.Run("should set status.image to default when spec.image is omitted", func(t *testing.T) {
@@ -2054,6 +2052,6 @@ func TestOpenClawImage(t *testing.T) {
 		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
 			Name: testInstanceName, Namespace: namespace,
 		}, instance))
-		assert.Equal(t, DefaultOpenClawImage, instance.Status.Image)
+		assert.Equal(t, testDefaultImage, instance.Status.Image)
 	})
 }

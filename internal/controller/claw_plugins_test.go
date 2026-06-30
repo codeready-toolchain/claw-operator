@@ -31,7 +31,7 @@ import (
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
-const testGatewayImage = "ghcr.io/openclaw/openclaw:2026.6.10"
+const testGatewayImage = testDefaultImage
 
 func makeTestDeploymentForPlugins() []*unstructured.Unstructured {
 	dep := &unstructured.Unstructured{}
@@ -421,7 +421,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := requiredProviderPlugins(instance)
+		plugins := requiredProviderPlugins(instance, testGatewayImage)
 		require.Len(t, plugins, 1)
 		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})
@@ -440,7 +440,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		assert.Empty(t, requiredProviderPlugins(instance))
+		assert.Empty(t, requiredProviderPlugins(instance, testGatewayImage))
 	})
 
 	t.Run("returns empty for anthropic apiKey credential", func(t *testing.T) {
@@ -457,7 +457,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		assert.Empty(t, requiredProviderPlugins(instance))
+		assert.Empty(t, requiredProviderPlugins(instance, testGatewayImage))
 	})
 
 	t.Run("deduplicates when multiple anthropic vertex credentials exist", func(t *testing.T) {
@@ -472,21 +472,21 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := requiredProviderPlugins(instance)
+		plugins := requiredProviderPlugins(instance, testGatewayImage)
 		assert.Len(t, plugins, 1)
 	})
 
 	t.Run("uses pinned image tag for vertex plugin version", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
-				Image: "ghcr.io/openclaw/openclaw:2026.6.10",
+				Image: testGatewayImage,
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{Name: "vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
 						GCP: &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"}},
 				},
 			},
 		}
-		plugins := requiredProviderPlugins(instance)
+		plugins := requiredProviderPlugins(instance, testGatewayImage)
 		require.Len(t, plugins, 1)
 		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})
@@ -494,14 +494,14 @@ func TestRequiredProviderPlugins(t *testing.T) {
 	t.Run("extracts version from slim-variant tag for vertex plugin", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
-				Image: "ghcr.io/openclaw/openclaw:2026.6.10-slim-arm64",
+				Image: testGatewayImage + "-slim-arm64",
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{Name: "vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
 						GCP: &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"}},
 				},
 			},
 		}
-		plugins := requiredProviderPlugins(instance)
+		plugins := requiredProviderPlugins(instance, testGatewayImage)
 		require.Len(t, plugins, 1)
 		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})
@@ -518,7 +518,7 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		assert.Equal(t, []string{"@openclaw/matrix@2026.6.10"}, effectivePlugins(instance))
+		assert.Equal(t, []string{"@openclaw/matrix@2026.6.10"}, effectivePlugins(instance, testGatewayImage))
 	})
 
 	t.Run("merges implicit vertex plugin with spec plugins", func(t *testing.T) {
@@ -532,7 +532,7 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := effectivePlugins(instance)
+		plugins := effectivePlugins(instance, testGatewayImage)
 		assert.Contains(t, plugins, "@openclaw/matrix@2026.6.10") // same version as the image is set for this plugin
 		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider@2026.6.10")
 		assert.Len(t, plugins, 2)
@@ -549,7 +549,7 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := effectivePlugins(instance)
+		plugins := effectivePlugins(instance, testGatewayImage)
 		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.10"}, plugins)
 	})
 
@@ -564,7 +564,7 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := effectivePlugins(instance)
+		plugins := effectivePlugins(instance, testGatewayImage)
 		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.10"}, plugins)
 	})
 
@@ -578,7 +578,7 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := effectivePlugins(instance)
+		plugins := effectivePlugins(instance, testGatewayImage)
 		require.Len(t, plugins, 1)
 		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})

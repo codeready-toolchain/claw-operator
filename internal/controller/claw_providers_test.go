@@ -791,10 +791,10 @@ func TestImagePluginVersion(t *testing.T) {
 		image string
 		want  string
 	}{
-		{"tagged image", "ghcr.io/openclaw/openclaw:2026.6.10", "2026.6.10"},
+		{"tagged image", testDefaultImage, "2026.6.10"},
 		{"slim tag", "ghcr.io/openclaw/openclaw:slim", ""},
-		{"slim variant with version", "ghcr.io/openclaw/openclaw:2026.6.10-slim-arm64", "2026.6.10"},
-		{"slim variant without arch", "ghcr.io/openclaw/openclaw:2026.6.10-slim", "2026.6.10"},
+		{"slim variant with version", testDefaultImage + "-slim-arm64", "2026.6.10"},
+		{"slim variant without arch", testDefaultImage + "-slim", "2026.6.10"},
 		{"custom registry", "my-registry.io/custom:v1.2.3", "v1.2.3"},
 		{"no tag", "ghcr.io/openclaw/openclaw", ""},
 		{"latest tag", "ghcr.io/openclaw/openclaw:latest", ""},
@@ -805,7 +805,7 @@ func TestImagePluginVersion(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, imagePluginVersion(tt.image, "ghcr.io/openclaw/openclaw:2026.6.10"))
+			assert.Equal(t, tt.want, imagePluginVersion(tt.image, testDefaultImage))
 		})
 	}
 }

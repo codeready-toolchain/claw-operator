@@ -59,6 +59,7 @@ const (
 	timeout          = time.Second * 10
 	interval         = time.Millisecond * 250
 	testInstanceName = "test-claw" // Default instance name for tests
+	testDefaultImage = "ghcr.io/openclaw/openclaw:2026.6.10"
 )
 
 // waitFor polls a condition function until it returns true or timeout is exceeded.
@@ -338,9 +339,10 @@ func toResolved(specs []clawv1alpha1.CredentialSpec) []resolvedCredential {
 // UserSecretReader, so all Secret reads work without informer cache distinctions.
 func createClawReconciler() *ClawResourceReconciler {
 	return &ClawResourceReconciler{
-		Client:           k8sClient,
-		Scheme:           scheme.Scheme,
-		UserSecretReader: k8sClient,
+		Client:               k8sClient,
+		Scheme:               scheme.Scheme,
+		UserSecretReader:     k8sClient,
+		DefaultOpenClawImage: testDefaultImage,
 	}
 }
 
