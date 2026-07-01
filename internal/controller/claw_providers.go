@@ -107,9 +107,25 @@ var knownProviders = map[string]providerDefaults{
 		VertexPlugin: "@openclaw/anthropic-vertex-provider",
 		Models: []modelEntry{
 			{Name: "claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
+			// claude-sonnet-5 is a real, currently-shipping Anthropic model, but
+			// OpenClaw's Anthropic thinking-profile resolver doesn't recognize it
+			// yet: supportsClaudeAdaptiveThinking() in
+			// refs/openclaw/packages/llm-core/src/model-contracts/anthropic.ts only
+			// allowlists claude-{fable-5,mythos-preview,opus-4-(6|7|8),sonnet-4-6}
+			// for adaptive-only thinking. Anthropic's Sonnet 5 API requires adaptive
+			// thinking and rejects manual thinking config with a 400 error, so
+			// without a matching entry OpenClaw would fall back to sending a manual
+			// thinking level (e.g. "medium") and every request would fail. Re-enable
+			// once a future OpenClaw release adds sonnet-5 to that allowlist (or
+			// otherwise ships native support) -- check refs/openclaw CHANGELOG.md /
+			// the anthropic plugin manifest for "sonnet-5" during the next
+			// check-openclaw-release pass.
+			// {Name: "claude-sonnet-5", Alias: "Claude Sonnet 5"},
 			{Name: "claude-opus-4-8", Alias: "Claude Opus 4.8"},
 			{Name: "claude-opus-4-7", Alias: "Claude Opus 4.7"},
 			{Name: "claude-opus-4-6", Alias: "Claude Opus 4.6"},
+			{Name: "claude-fable-5", Alias: "Claude Fable 5"},
+			{Name: "claude-haiku-4-5", Alias: "Claude Haiku 4.5"},
 		},
 	},
 	"openai": {
