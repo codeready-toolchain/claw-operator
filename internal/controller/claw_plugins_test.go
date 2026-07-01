@@ -422,7 +422,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 		plugins, err := requiredProviderPlugins(instance)
 		require.NoError(t, err)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.11", plugins[0])
 	})
 
 	t.Run("returns empty for google GCP credential", func(t *testing.T) {
@@ -493,7 +493,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 		plugins, err := requiredProviderPlugins(instance)
 		require.NoError(t, err)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.11", plugins[0])
 	})
 
 	t.Run("extracts version from slim-variant tag for vertex plugin", func(t *testing.T) {
@@ -509,7 +509,7 @@ func TestRequiredProviderPlugins(t *testing.T) {
 		plugins, err := requiredProviderPlugins(instance)
 		require.NoError(t, err)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.11", plugins[0])
 	})
 }
 
@@ -526,7 +526,7 @@ func TestEffectivePlugins(t *testing.T) {
 		}
 		plugins, err := effectivePlugins(instance)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"@openclaw/matrix@2026.6.10"}, plugins)
+		assert.Equal(t, []string{"@openclaw/matrix@2026.6.11"}, plugins)
 	})
 
 	t.Run("merges implicit vertex plugin with spec plugins", func(t *testing.T) {
@@ -542,8 +542,8 @@ func TestEffectivePlugins(t *testing.T) {
 		}
 		plugins, err := effectivePlugins(instance)
 		require.NoError(t, err)
-		assert.Contains(t, plugins, "@openclaw/matrix@2026.6.10") // same version as the image is set for this plugin
-		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider@2026.6.10")
+		assert.Contains(t, plugins, "@openclaw/matrix@2026.6.11") // same version as the image is set for this plugin
+		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider@2026.6.11")
 		assert.Len(t, plugins, 2)
 	})
 
@@ -551,7 +551,7 @@ func TestEffectivePlugins(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
 			Spec: clawv1alpha1.ClawSpec{
 				Image:   DefaultOpenClawImage,
-				Plugins: []string{"@openclaw/anthropic-vertex-provider@2026.6.10"},
+				Plugins: []string{"@openclaw/anthropic-vertex-provider@2026.6.11"},
 				Credentials: []clawv1alpha1.CredentialSpec{
 					{Name: "vertex", Type: clawv1alpha1.CredentialTypeGCP, Provider: "anthropic",
 						GCP: &clawv1alpha1.GCPConfig{Project: "p", Location: "us-east5"}},
@@ -560,7 +560,7 @@ func TestEffectivePlugins(t *testing.T) {
 		}
 		plugins, err := effectivePlugins(instance)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.10"}, plugins)
+		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.11"}, plugins)
 	})
 
 	t.Run("includes version if spec already declares the plugin with missing version", func(t *testing.T) {
@@ -576,7 +576,7 @@ func TestEffectivePlugins(t *testing.T) {
 		}
 		plugins, err := effectivePlugins(instance)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.10"}, plugins)
+		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.11"}, plugins)
 	})
 
 	t.Run("returns implicit plugins when spec.plugins is empty", func(t *testing.T) {
@@ -592,7 +592,7 @@ func TestEffectivePlugins(t *testing.T) {
 		plugins, err := effectivePlugins(instance)
 		require.NoError(t, err)
 		require.Len(t, plugins, 1)
-		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
+		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.11", plugins[0])
 	})
 }
 
@@ -691,7 +691,7 @@ func TestPluginsIntegration(t *testing.T) {
 		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
 			if ic.Name == PluginsInitContainerName {
 				found = true
-				assert.Contains(t, ic.Command[2], "openclaw plugins install '@openclaw/matrix@2026.6.10'")
+				assert.Contains(t, ic.Command[2], "openclaw plugins install '@openclaw/matrix@2026.6.11'")
 
 				envMap := make(map[string]string)
 				for _, e := range ic.Env {
@@ -762,8 +762,8 @@ func TestPluginsIntegration(t *testing.T) {
 		for _, ic := range deployment.Spec.Template.Spec.InitContainers {
 			if ic.Name == PluginsInitContainerName {
 				script := ic.Command[2]
-				assert.Contains(t, script, "openclaw plugins install '@openclaw/matrix@2026.6.10'")
-				assert.Contains(t, script, "openclaw plugins install '@openclaw/diagnostics-otel@2026.6.10'")
+				assert.Contains(t, script, "openclaw plugins install '@openclaw/matrix@2026.6.11'")
+				assert.Contains(t, script, "openclaw plugins install '@openclaw/diagnostics-otel@2026.6.11'")
 				return
 			}
 		}

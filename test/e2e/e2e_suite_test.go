@@ -45,8 +45,9 @@ var (
 
 	// gatewayImage is the upstream OpenClaw image used by the claw deployment.
 	// Pre-loaded into Kind so e2e tests can verify init container patching.
-	// Set via GATEWAY_IMAGE env var (derived from kustomization.yaml by the Makefile).
-	gatewayImage = envOrDefault("GATEWAY_IMAGE", "ghcr.io/openclaw/openclaw:2026.6.10")
+	// Set via GATEWAY_IMAGE env var (defaults to the Makefile's GATEWAY_IMAGE, which
+	// should track DefaultOpenClawImage in internal/controller/claw_resource_controller.go).
+	gatewayImage = envOrDefault("GATEWAY_IMAGE", "ghcr.io/openclaw/openclaw:2026.6.11")
 )
 
 // TestMain runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,

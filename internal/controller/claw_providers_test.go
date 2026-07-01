@@ -793,15 +793,15 @@ func TestImagePluginVersion(t *testing.T) {
 		expectedErr bool
 	}{
 		{"untagged image", "ghcr.io/openclaw/openclaw", "", false},
-		{"tagged image", "ghcr.io/openclaw/openclaw:2026.6.10", "2026.6.10", false},
+		{"tagged image", "ghcr.io/openclaw/openclaw:2026.6.11", "2026.6.11", false},
 		{"slim tag", "ghcr.io/openclaw/openclaw:slim", "", false},
 		{"latest tag", "ghcr.io/openclaw/openclaw:latest", "", false},
-		{"slim variant with arch", "openclaw:2026.6.10-slim-arm64", "2026.6.10", false},
-		{"slim variant without arch", "openclaw:2026.6.10-slim", "2026.6.10", false},
+		{"slim variant with arch", "openclaw:2026.6.11-slim-arm64", "2026.6.11", false},
+		{"slim variant without arch", "openclaw:2026.6.11-slim", "2026.6.11", false},
 		{"custom registry", "my-registry.io/custom/openclaw:v1.2.3", "v1.2.3", false},
 		{"valid digest", "ghcr.io/openclaw/openclaw@sha256:94a00394bc5a8ef503fb59db0a7d0ae9e1110866e8aee8ba40cd864cea69ea1a", "sha256:94a00394bc5a8ef503fb59db0a7d0ae9e1110866e8aee8ba40cd864cea69ea1a", false},
 		{"invalid digest", "ghcr.io/openclaw/openclaw@sha256:invalid", "", true},
-		{"empty string", "", "2026.6.10", false}, // default image version
+		{"empty string", "", "2026.6.11", false}, // default image version
 		{"port in registry no tag", "localhost:5000/openclaw", "", false},
 		{"port in registry with tag", "localhost:5000/openclaw:v1", "v1", false},
 	}
