@@ -57,8 +57,6 @@ var (
 	// version and buildTime are set via LDFLAGS during build
 	version   = "dev"
 	buildTime = "unknown"
-
-	defaultOpenClawImage = "ghcr.io/openclaw/openclaw:2026.6.10"
 )
 
 func init() {
@@ -104,7 +102,7 @@ func main() {
 	flag.Parse()
 
 	if printOpenClawImageVersion {
-		fmt.Println(defaultOpenClawImage)
+		fmt.Println(controller.DefaultOpenClawImage)
 		os.Exit(0)
 	}
 
@@ -265,15 +263,14 @@ func main() {
 	}
 
 	clawReconciler := &controller.ClawResourceReconciler{
-		Client:               mgr.GetClient(),
-		Scheme:               mgr.GetScheme(),
-		UserSecretReader:     controller.NewLoggingUserSecretReader(mgr.GetAPIReader()),
-		DefaultOpenClawImage: defaultOpenClawImage,
-		ProxyImage:           os.Getenv("PROXY_IMAGE"),
-		KubectlImage:         os.Getenv("KUBECTL_IMAGE"),
-		OTelCollectorImage:   os.Getenv("OTEL_COLLECTOR_IMAGE"),
-		ImagePullPolicy:      imagePullPolicy,
-		MetricsRefreshed:     make(chan struct{}),
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		UserSecretReader:   controller.NewLoggingUserSecretReader(mgr.GetAPIReader()),
+		ProxyImage:         os.Getenv("PROXY_IMAGE"),
+		KubectlImage:       os.Getenv("KUBECTL_IMAGE"),
+		OTelCollectorImage: os.Getenv("OTEL_COLLECTOR_IMAGE"),
+		ImagePullPolicy:    imagePullPolicy,
+		MetricsRefreshed:   make(chan struct{}),
 	}
 	if err = clawReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Claw")

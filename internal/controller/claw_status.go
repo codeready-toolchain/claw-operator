@@ -230,7 +230,7 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 	// Expose resolved image and gateway secret name in status
 	resolvedImage := instance.Spec.Image
 	if resolvedImage == "" {
-		resolvedImage = r.DefaultOpenClawImage
+		resolvedImage = DefaultOpenClawImage
 	}
 	instance.Status.Image = resolvedImage
 	instance.Status.GatewayTokenSecretRef = getGatewaySecretName(instance.Name)

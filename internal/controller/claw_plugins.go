@@ -63,8 +63,8 @@ func pluginPackageVersion(p string) string {
 // over implicit ones, allowing users to override the pinned version).
 // Also, if the plugin is already declared in the spec with a different version,
 // the version is updated to the image version.
-func effectivePlugins(instance *clawv1alpha1.Claw, defaultImage string) ([]string, error) {
-	imageVersion, err := imagePluginVersion(instance.Spec.Image, defaultImage)
+func effectivePlugins(instance *clawv1alpha1.Claw) ([]string, error) {
+	imageVersion, err := imagePluginVersion(instance.Spec.Image)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func effectivePlugins(instance *clawv1alpha1.Claw, defaultImage string) ([]strin
 		}
 		seen[pkgName] = true
 	}
-	implicit, err := requiredProviderPlugins(instance, defaultImage)
+	implicit, err := requiredProviderPlugins(instance)
 	if err != nil {
 		return nil, err
 	}
@@ -98,8 +98,8 @@ func effectivePlugins(instance *clawv1alpha1.Claw, defaultImage string) ([]strin
 // that must be installed for the configured providers to work.
 // The version is derived from the image tag via imagePluginVersion; when empty
 // the plugin is installed without a version pin (npm "latest").
-func requiredProviderPlugins(instance *clawv1alpha1.Claw, defaultImage string) ([]string, error) {
-	version, err := imagePluginVersion(instance.Spec.Image, defaultImage)
+func requiredProviderPlugins(instance *clawv1alpha1.Claw) ([]string, error) {
+	version, err := imagePluginVersion(instance.Spec.Image)
 	if err != nil {
 		return nil, err
 	}

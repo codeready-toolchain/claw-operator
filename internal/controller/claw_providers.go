@@ -159,9 +159,9 @@ var knownProviders = map[string]providerDefaults{
 //	"ghcr.io/openclaw/openclaw"                       → "2026.6.10"  (or whatever is derived from default image)
 //	"ghcr.io/openclaw/openclaw@sha256:abc"            → "sha256:abc" (must be a valid digest)
 //	"ghcr.io/openclaw/openclaw@sha256:invalid"        → error
-func imagePluginVersion(image, defaultImage string) (string, error) {
+func imagePluginVersion(image string) (string, error) {
 	if image == "" {
-		image = defaultImage
+		image = DefaultOpenClawImage
 	}
 	ref, err := name.ParseReference(image, name.WeakValidation)
 	if err != nil {

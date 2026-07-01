@@ -807,7 +807,7 @@ func TestImagePluginVersion(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			version, err := imagePluginVersion(tt.image, testDefaultImage)
+			version, err := imagePluginVersion(tt.image)
 			if tt.expectedErr {
 				require.Error(t, err)
 				return
