@@ -494,10 +494,10 @@ type CustomProviderSpec struct {
 // ClawSpec defines the desired state of Claw
 type ClawSpec struct {
 	// Image is the full container image reference for the OpenClaw gateway
-	// (e.g. "ghcr.io/openclaw/openclaw:2026.6.10"). Used for init-volume,
+	// (e.g. "ghcr.io/openclaw/openclaw:2026.6.11"). Used for init-volume,
 	// init-config, and gateway containers.
 	// +optional
-	// +kubebuilder:default="ghcr.io/openclaw/openclaw:2026.6.10"
+	// +kubebuilder:default="ghcr.io/openclaw/openclaw:2026.6.11"
 	Image string `json:"image,omitempty"`
 
 	// Config provides user-supplied OpenClaw configuration and merge behavior.
