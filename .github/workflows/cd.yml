@@ -31,13 +31,16 @@ jobs:
           make container-build-proxy PROXY_IMG=quay.io/codeready-toolchain/claw-proxy:${SHA}
 
       - name: Login to Quay.io
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
         run: |
           set -euo pipefail
           REGISTRY_AUTH_FILE="${RUNNER_TEMP}/containers-auth.json"
           export REGISTRY_AUTH_FILE
           echo "REGISTRY_AUTH_FILE=${REGISTRY_AUTH_FILE}" >> "${GITHUB_ENV}"
-          printf '%s' '{"auths":{"quay.io":{"auth":"${{ secrets.QUAY_TOKEN }}"}}}' > "${REGISTRY_AUTH_FILE}"
-          podman login --authfile "${REGISTRY_AUTH_FILE}" --get-login quay.io
+          podman login --authfile "${REGISTRY_AUTH_FILE}" \
+            -u "${QUAY_USERNAME}" --password-stdin quay.io <<< "${QUAY_TOKEN}"
 
       - name: Push operator image
         run: |
