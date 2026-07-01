@@ -63,41 +63,46 @@ func pluginPackageVersion(p string) string {
 // over implicit ones, allowing users to override the pinned version).
 // Also, if the plugin is already declared in the spec with a different version,
 // the version is updated to the image version.
-func effectivePlugins(instance *clawv1alpha1.Claw, defaultImage string) []string {
-	imageVersion := imagePluginVersion(instance.Spec.Image, defaultImage)
-	fmt.Println("imageVersion", imageVersion)
+func effectivePlugins(instance *clawv1alpha1.Claw, defaultImage string) ([]string, error) {
+	imageVersion, err := imagePluginVersion(instance.Spec.Image, defaultImage)
+	if err != nil {
+		return nil, err
+	}
 	seen := make(map[string]bool, len(instance.Spec.Plugins))
 	merged := append([]string{}, instance.Spec.Plugins...)
 	for i, p := range merged {
 		pkgName := pluginPackageName(p)
 		pkgVersion := pluginPackageVersion(p)
-		fmt.Println("pkgName/version", pkgName, pkgVersion)
 		if imageVersion != "" && pkgVersion == "" {
 			merged[i] = pkgName + "@" + imageVersion
 		}
-		fmt.Println("merged explicit", merged[i])
 		seen[pkgName] = true
 	}
-	implicit := requiredProviderPlugins(instance, defaultImage)
+	implicit, err := requiredProviderPlugins(instance, defaultImage)
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range implicit {
 		if !seen[pluginPackageName(p)] {
 			pkgName := pluginPackageName(p)
 			if imageVersion != "" && pluginPackageVersion(p) == "" {
 				p = pkgName + "@" + imageVersion
 			}
-			fmt.Println("merged implicit", p)
 			merged = append(merged, p)
 		}
 	}
-	return merged
+	return merged, nil
 }
 
 // requiredProviderPlugins inspects credentials and returns plugin package specs
 // that must be installed for the configured providers to work.
 // The version is derived from the image tag via imagePluginVersion; when empty
 // the plugin is installed without a version pin (npm "latest").
-func requiredProviderPlugins(instance *clawv1alpha1.Claw, defaultImage string) []string {
-	version := imagePluginVersion(instance.Spec.Image, defaultImage)
+func requiredProviderPlugins(instance *clawv1alpha1.Claw, defaultImage string) ([]string, error) {
+	version, err := imagePluginVersion(instance.Spec.Image, defaultImage)
+	if err != nil {
+		return nil, err
+	}
 	var plugins []string
 	seen := make(map[string]bool)
 	for _, cred := range instance.Spec.Credentials {
@@ -117,7 +122,7 @@ func requiredProviderPlugins(instance *clawv1alpha1.Claw, defaultImage string) [
 			seen[resolved] = true
 		}
 	}
-	return plugins
+	return plugins, nil
 }
 
 func generatePluginInstallScript(plugins []string) string {

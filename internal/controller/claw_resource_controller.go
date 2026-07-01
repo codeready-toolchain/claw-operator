@@ -788,7 +788,11 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 	if err := injectAdditionalEgress(objects, instance); err != nil {
 		return fmt.Errorf("failed to inject additional egress rules: %w", err)
 	}
-	if err := stampGatewayConfigHash(objects, instance.Name, effectivePlugins(instance, r.DefaultOpenClawImage)); err != nil {
+	plugins, err := effectivePlugins(instance, r.DefaultOpenClawImage)
+	if err != nil {
+		return fmt.Errorf("failed to get effective plugins: %w", err)
+	}
+	if err := stampGatewayConfigHash(objects, instance.Name, plugins); err != nil {
 		return fmt.Errorf("failed to stamp gateway config hash: %w", err)
 	}
 	return nil
@@ -846,7 +850,10 @@ func (r *ClawResourceReconciler) configureDeployments(
 			return fmt.Errorf("failed to configure metrics sidecar: %w", err)
 		}
 	}
-	plugins := effectivePlugins(instance, r.DefaultOpenClawImage)
+	plugins, err := effectivePlugins(instance, r.DefaultOpenClawImage)
+	if err != nil {
+		return fmt.Errorf("failed to get effective plugins: %w", err)
+	}
 	if len(plugins) > 0 {
 		if err := configurePluginsInitContainer(objects, instance, plugins); err != nil {
 			return fmt.Errorf("failed to configure plugins init container: %w", err)

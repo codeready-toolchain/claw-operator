@@ -421,7 +421,8 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := requiredProviderPlugins(instance, testGatewayImage)
+		plugins, err := requiredProviderPlugins(instance, testGatewayImage)
+		require.NoError(t, err)
 		require.Len(t, plugins, 1)
 		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})
@@ -440,7 +441,9 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		assert.Empty(t, requiredProviderPlugins(instance, testGatewayImage))
+		plugins, err := requiredProviderPlugins(instance, testGatewayImage)
+		require.NoError(t, err)
+		assert.Empty(t, plugins)
 	})
 
 	t.Run("returns empty for anthropic apiKey credential", func(t *testing.T) {
@@ -457,7 +460,9 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		assert.Empty(t, requiredProviderPlugins(instance, testGatewayImage))
+		plugins, err := requiredProviderPlugins(instance, testGatewayImage)
+		require.NoError(t, err)
+		assert.Empty(t, plugins)
 	})
 
 	t.Run("deduplicates when multiple anthropic vertex credentials exist", func(t *testing.T) {
@@ -472,7 +477,8 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := requiredProviderPlugins(instance, testGatewayImage)
+		plugins, err := requiredProviderPlugins(instance, testGatewayImage)
+		require.NoError(t, err)
 		assert.Len(t, plugins, 1)
 	})
 
@@ -486,7 +492,8 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := requiredProviderPlugins(instance, testGatewayImage)
+		plugins, err := requiredProviderPlugins(instance, testGatewayImage)
+		require.NoError(t, err)
 		require.Len(t, plugins, 1)
 		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})
@@ -501,7 +508,8 @@ func TestRequiredProviderPlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := requiredProviderPlugins(instance, testGatewayImage)
+		plugins, err := requiredProviderPlugins(instance, testGatewayImage)
+		require.NoError(t, err)
 		require.Len(t, plugins, 1)
 		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})
@@ -518,7 +526,9 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		assert.Equal(t, []string{"@openclaw/matrix@2026.6.10"}, effectivePlugins(instance, testGatewayImage))
+		plugins, err := effectivePlugins(instance, testGatewayImage)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"@openclaw/matrix@2026.6.10"}, plugins)
 	})
 
 	t.Run("merges implicit vertex plugin with spec plugins", func(t *testing.T) {
@@ -532,7 +542,8 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := effectivePlugins(instance, testGatewayImage)
+		plugins, err := effectivePlugins(instance, testGatewayImage)
+		require.NoError(t, err)
 		assert.Contains(t, plugins, "@openclaw/matrix@2026.6.10") // same version as the image is set for this plugin
 		assert.Contains(t, plugins, "@openclaw/anthropic-vertex-provider@2026.6.10")
 		assert.Len(t, plugins, 2)
@@ -549,7 +560,8 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := effectivePlugins(instance, testGatewayImage)
+		plugins, err := effectivePlugins(instance, testGatewayImage)
+		require.NoError(t, err)
 		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.10"}, plugins)
 	})
 
@@ -564,7 +576,8 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := effectivePlugins(instance, testGatewayImage)
+		plugins, err := effectivePlugins(instance, testGatewayImage)
+		require.NoError(t, err)
 		assert.Equal(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.10"}, plugins)
 	})
 
@@ -578,7 +591,8 @@ func TestEffectivePlugins(t *testing.T) {
 				},
 			},
 		}
-		plugins := effectivePlugins(instance, testGatewayImage)
+		plugins, err := effectivePlugins(instance, testGatewayImage)
+		require.NoError(t, err)
 		require.Len(t, plugins, 1)
 		assert.Equal(t, "@openclaw/anthropic-vertex-provider@2026.6.10", plugins[0])
 	})

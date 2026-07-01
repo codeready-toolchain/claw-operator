@@ -152,31 +152,29 @@ var knownProviders = map[string]providerDefaults{
 // imagePluginVersion extracts the OpenClaw release version from a container
 // image tag for use as an npm package version suffix.
 //
-//	"ghcr.io/openclaw/openclaw:2026.6.10"            → "2026.6.10"
-//	"ghcr.io/openclaw/openclaw:2026.6.10-slim-arm64" → "2026.6.10"
+//	"ghcr.io/openclaw/openclaw:2026.6.10"             → "2026.6.10"
+//	"ghcr.io/openclaw/openclaw:2026.6.10-slim-arm64"  → "2026.6.10"
 //	"ghcr.io/openclaw/openclaw:slim"                  → ""  (latest)
-//	"ghcr.io/openclaw/openclaw"                       → ""  (latest)
-//	"ghcr.io/openclaw/openclaw@sha256:abc"            → ""  (latest)
-func imagePluginVersion(image, defaultImage string) string {
+//	"ghcr.io/openclaw/openclaw:latest"                → ""  (latest)
+//	"ghcr.io/openclaw/openclaw"                       → "2026.6.10"  (or whatever is derived from default image)
+//	"ghcr.io/openclaw/openclaw@sha256:abc"            → "sha256:abc" (must be a valid digest)
+//	"ghcr.io/openclaw/openclaw@sha256:invalid"        → error
+func imagePluginVersion(image, defaultImage string) (string, error) {
 	if image == "" {
 		image = defaultImage
 	}
 	ref, err := name.ParseReference(image, name.WeakValidation)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	tag, ok := ref.(name.Tag)
-	if !ok {
-		return ""
+	identifier := ref.Identifier()
+	if identifier == "latest" || identifier == "slim" {
+		return "", nil
 	}
-	t := tag.TagStr()
-	if t == "latest" || t == "slim" {
-		return ""
+	if version, _, ok := strings.Cut(identifier, "-slim"); ok {
+		return version, nil
 	}
-	if version, _, ok := strings.Cut(t, "-slim"); ok {
-		return version
-	}
-	return t
+	return identifier, nil
 }
 
 // usesVertexSDK returns true when a credential should use the native Vertex AI SDK
