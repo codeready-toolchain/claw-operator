@@ -13,7 +13,3 @@ resources:
   - route.yaml
   - network-policy.yaml
 
-images:
-  - name: ghcr.io/openclaw/openclaw
-    newName: ghcr.io/openclaw/openclaw
-    newTag: 2026.6.10

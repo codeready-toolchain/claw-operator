@@ -784,3 +784,36 @@ func TestResolveProviderDefaults(t *testing.T) {
 		})
 	}
 }
+
+func TestImagePluginVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		image       string
+		expected    string
+		expectedErr bool
+	}{
+		{"untagged image", "ghcr.io/openclaw/openclaw", "", false},
+		{"tagged image", "ghcr.io/openclaw/openclaw:2026.6.10", "2026.6.10", false},
+		{"slim tag", "ghcr.io/openclaw/openclaw:slim", "", false},
+		{"latest tag", "ghcr.io/openclaw/openclaw:latest", "", false},
+		{"slim variant with arch", "openclaw:2026.6.10-slim-arm64", "2026.6.10", false},
+		{"slim variant without arch", "openclaw:2026.6.10-slim", "2026.6.10", false},
+		{"custom registry", "my-registry.io/custom/openclaw:v1.2.3", "v1.2.3", false},
+		{"valid digest", "ghcr.io/openclaw/openclaw@sha256:94a00394bc5a8ef503fb59db0a7d0ae9e1110866e8aee8ba40cd864cea69ea1a", "sha256:94a00394bc5a8ef503fb59db0a7d0ae9e1110866e8aee8ba40cd864cea69ea1a", false},
+		{"invalid digest", "ghcr.io/openclaw/openclaw@sha256:invalid", "", true},
+		{"empty string", "", "2026.6.10", false}, // default image version
+		{"port in registry no tag", "localhost:5000/openclaw", "", false},
+		{"port in registry with tag", "localhost:5000/openclaw:v1", "v1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			version, err := imagePluginVersion(tt.image)
+			if tt.expectedErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, version)
+		})
+	}
+}

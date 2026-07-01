@@ -493,6 +493,13 @@ type CustomProviderSpec struct {
 
 // ClawSpec defines the desired state of Claw
 type ClawSpec struct {
+	// Image is the full container image reference for the OpenClaw gateway
+	// (e.g. "ghcr.io/openclaw/openclaw:2026.6.10"). Used for init-volume,
+	// init-config, and gateway containers.
+	// +optional
+	// +kubebuilder:default="ghcr.io/openclaw/openclaw:2026.6.10"
+	Image string `json:"image,omitempty"`
+
 	// Config provides user-supplied OpenClaw configuration and merge behavior.
 	// +optional
 	Config *ConfigSpec `json:"config,omitempty"`
@@ -567,6 +574,11 @@ type ClawSpec struct {
 
 // ClawStatus defines the observed state of Claw
 type ClawStatus struct {
+	// Image is the resolved OpenClaw container image for this instance.
+	// Matches spec.image when set; otherwise reflects the operator default.
+	// +optional
+	Image string `json:"image,omitempty"`
+
 	// GatewayTokenSecretRef is the name of the Secret containing the gateway authentication token
 	// +optional
 	GatewayTokenSecretRef string `json:"gatewayTokenSecretRef,omitempty"`
@@ -590,6 +602,7 @@ type ClawStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=claws,scope=Namespaced
+// +kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].status"
 // +kubebuilder:printcolumn:name="Reason",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].reason"
 

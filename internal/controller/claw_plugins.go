@@ -35,14 +35,25 @@ func pluginsEnabled(instance *clawv1alpha1.Claw) bool {
 
 // pluginPackageName strips a trailing @version suffix from a plugin spec,
 // returning just the package name for deduplication purposes.
-func pluginPackageName(spec string) string {
+func pluginPackageName(p string) string {
 	// Scoped packages start with @, so find the LAST @ for the version separator.
 	// "@openclaw/foo@1.2.3" → "@openclaw/foo"
 	// "@openclaw/foo" → "@openclaw/foo"
-	if idx := strings.LastIndex(spec, "@"); idx > 0 {
-		return spec[:idx]
+	if idx := strings.LastIndex(p, "@"); idx > 0 {
+		return p[:idx]
 	}
-	return spec
+	return p
+}
+
+// pluginPackageVersion returns the version part of a plugin spec, or an empty string if no version is present.
+func pluginPackageVersion(p string) string {
+	// Scoped packages start with @, so find the LAST @ for the version separator.
+	// "@openclaw/foo@1.2.3" → "1.2.3"
+	// "@openclaw/foo" → ""
+	if idx := strings.LastIndex(p, "@"); idx > 0 {
+		return p[idx+1:]
+	}
+	return ""
 }
 
 // effectivePlugins returns the complete list of plugins to install: explicit
@@ -50,28 +61,48 @@ func pluginPackageName(spec string) string {
 // (e.g., Vertex AI SDK providers that need an external plugin).
 // Duplicates are removed by package name (spec declarations take precedence
 // over implicit ones, allowing users to override the pinned version).
-func effectivePlugins(instance *clawv1alpha1.Claw) []string {
-	implicit := requiredProviderPlugins(instance)
-	if len(implicit) == 0 {
-		return instance.Spec.Plugins
+// Also, if the plugin is already declared in the spec with a different version,
+// the version is updated to the image version.
+func effectivePlugins(instance *clawv1alpha1.Claw) ([]string, error) {
+	imageVersion, err := imagePluginVersion(instance.Spec.Image)
+	if err != nil {
+		return nil, err
 	}
 	seen := make(map[string]bool, len(instance.Spec.Plugins))
-	for _, p := range instance.Spec.Plugins {
-		seen[pluginPackageName(p)] = true
-	}
 	merged := append([]string{}, instance.Spec.Plugins...)
+	for i, p := range merged {
+		pkgName := pluginPackageName(p)
+		pkgVersion := pluginPackageVersion(p)
+		if imageVersion != "" && pkgVersion == "" {
+			merged[i] = pkgName + "@" + imageVersion
+		}
+		seen[pkgName] = true
+	}
+	implicit, err := requiredProviderPlugins(instance)
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range implicit {
 		if !seen[pluginPackageName(p)] {
+			pkgName := pluginPackageName(p)
+			if imageVersion != "" && pluginPackageVersion(p) == "" {
+				p = pkgName + "@" + imageVersion
+			}
 			merged = append(merged, p)
-			seen[pluginPackageName(p)] = true
 		}
 	}
-	return merged
+	return merged, nil
 }
 
 // requiredProviderPlugins inspects credentials and returns plugin package specs
 // that must be installed for the configured providers to work.
-func requiredProviderPlugins(instance *clawv1alpha1.Claw) []string {
+// The version is derived from the image tag via imagePluginVersion; when empty
+// the plugin is installed without a version pin (npm "latest").
+func requiredProviderPlugins(instance *clawv1alpha1.Claw) ([]string, error) {
+	version, err := imagePluginVersion(instance.Spec.Image)
+	if err != nil {
+		return nil, err
+	}
 	var plugins []string
 	seen := make(map[string]bool)
 	for _, cred := range instance.Spec.Credentials {
@@ -82,12 +113,16 @@ func requiredProviderPlugins(instance *clawv1alpha1.Claw) []string {
 		if !ok || defaults.VertexPlugin == "" {
 			continue
 		}
-		if !seen[defaults.VertexPlugin] {
-			plugins = append(plugins, defaults.VertexPlugin)
-			seen[defaults.VertexPlugin] = true
+		resolved := defaults.VertexPlugin
+		if version != "" {
+			resolved += "@" + version
+		}
+		if !seen[resolved] {
+			plugins = append(plugins, resolved)
+			seen[resolved] = true
 		}
 	}
-	return plugins
+	return plugins, nil
 }
 
 func generatePluginInstallScript(plugins []string) string {

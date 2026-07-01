@@ -85,6 +85,26 @@ spec:
 `, secretName, secretKey)
 }
 
+// clawYAMLWithImage returns a Claw CR YAML with an explicit spec.image and apiKey credential.
+func clawYAMLWithImage(image, secretName, secretKey string) string {
+	return fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  image: %s
+  credentials:
+    - name: gemini
+      type: apiKey
+      secretRef:
+        - name: %s
+          key: %s
+      domain: ".googleapis.com"
+      apiKey:
+        header: x-goog-api-key
+`, image, secretName, secretKey)
+}
+
 func TestManager(t *testing.T) { //nolint:gocyclo
 	var controllerPodName string
 
@@ -1834,6 +1854,83 @@ spec:
 				"curl through proxy to Kubernetes API should return 200")
 			assert.Contains(t, curlOutput, "ConfigMapList",
 				"response should contain ConfigMapList kind")
+		})
+
+		t.Run("should deploy with custom image and report it in status", func(t *testing.T) {
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value")
+
+			t.Log("applying the Claw CR with explicit image")
+			crYAML := clawYAMLWithImage(gatewayImage, "gemini-api-key", "api-key")
+			crFile := filepath.Join(t.TempDir(), "claw.yaml")
+			require.NoError(t, os.WriteFile(crFile, []byte(crYAML), 0o644))
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for Claw Ready condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw Ready did not become True within %v", extendedTimeout)
+
+			t.Log("verifying status.image matches the resolved image")
+			cmd = exec.Command("kubectl", "get", "claw", "instance",
+				"-o", "jsonpath={.status.image}",
+				"-n", userNamespace)
+			statusImage, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, gatewayImage, statusImage,
+				"status.image should reflect the resolved image")
+
+			t.Log("verifying gateway container uses the custom image")
+			jp := "jsonpath={.spec.template.spec.containers[?(@.name=='gateway')].image}"
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", jp, "-n", userNamespace)
+			deployImage, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, gatewayImage, deployImage,
+				"gateway container should use the custom image")
+
+			t.Log("verifying init-config container uses the custom image")
+			jp = "jsonpath={.spec.template.spec.initContainers[?(@.name=='init-config')].image}"
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", jp, "-n", userNamespace)
+			initImage, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, gatewayImage, initImage,
+				"init-config container should use the custom image")
+
+			t.Log("verifying gateway pod is Running")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=claw",
+						"-o", "jsonpath={.items[0].status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == podPhaseRunning, nil
+				})
+			require.NoError(t, err, "Gateway pod did not reach Running state")
 		})
 	})
 }

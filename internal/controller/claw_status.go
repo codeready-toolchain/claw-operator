@@ -227,7 +227,12 @@ func (r *ClawResourceReconciler) updateStatus(ctx context.Context, instance *cla
 	// Set Ready condition
 	setReadyCondition(instance, ready, pending)
 
-	// Expose gateway secret name in status
+	// Expose resolved image and gateway secret name in status
+	resolvedImage := instance.Spec.Image
+	if resolvedImage == "" {
+		resolvedImage = DefaultOpenClawImage
+	}
+	instance.Status.Image = resolvedImage
 	instance.Status.GatewayTokenSecretRef = getGatewaySecretName(instance.Name)
 
 	// Populate URL fields only when all deployments are ready

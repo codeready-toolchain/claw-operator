@@ -15,6 +15,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.image
+      name: Image
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
@@ -405,6 +408,13 @@ spec:
                   Idle, when set to true, instructs the operator to scale all managed
                   Deployments to zero replicas. Set to false (or omit) to run normally.
                 type: boolean
+              image:
+                default: ghcr.io/openclaw/openclaw:2026.6.10
+                description: |-
+                  Image is the full container image reference for the OpenClaw gateway
+                  (e.g. "ghcr.io/openclaw/openclaw:2026.6.10"). Used for init-volume,
+                  init-config, and gateway containers.
+                type: string
               mcpServers:
                 additionalProperties:
                   description: McpServerSpec defines an MCP server the operator injects
@@ -913,6 +923,11 @@ spec:
               gatewayURL:
                 description: GatewayURL is the HTTPS URL for accessing the Claw gateway,
                   including the auth token fragment when applicable
+                type: string
+              image:
+                description: |-
+                  Image is the resolved OpenClaw container image for this instance.
+                  Matches spec.image when set; otherwise reflects the operator default.
                 type: string
               url:
                 description: |-

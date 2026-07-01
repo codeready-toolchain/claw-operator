@@ -40,15 +40,18 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      - name: Get default OpenClaw image
+        id: default-image
+        run: echo "image=$(go run ./cmd --image)" >> "$GITHUB_OUTPUT"
+
       - name: Resolve OpenClaw image
         id: versions
         run: |
-          KUSTOMIZE=internal/assets/manifests/claw/kustomization.yaml
           if [ "${{ matrix.image }}" = "slim" ]; then
-            yq -i '(.images[] | select(.name == "ghcr.io/openclaw/openclaw")).newTag = "slim"' "$KUSTOMIZE"
+            OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:slim"
+          else
+            OPENCLAW_IMAGE=${{ steps.default-image.outputs.image }}
           fi
-          OPENCLAW_TAG=$(yq '.images[] | select(.name == "ghcr.io/openclaw/openclaw") | .newTag' "$KUSTOMIZE")
-          OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:${OPENCLAW_TAG}"
           OPENCLAW_DIGEST=$(skopeo inspect --format '{{.Digest}}' \
             "docker://${OPENCLAW_IMAGE}" 2>/dev/null || echo "unknown")
           OPENCLAW_CREATED=$(skopeo inspect --format '{{.Created}}' \

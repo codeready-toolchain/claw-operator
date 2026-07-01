@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/name"
+
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 )
 
@@ -102,7 +104,7 @@ var knownProviders = map[string]providerDefaults{
 		Header:       "x-api-key",
 		API:          "anthropic-messages",
 		VertexAPI:    "anthropic-messages",
-		VertexPlugin: "@openclaw/anthropic-vertex-provider@2026.6.10",
+		VertexPlugin: "@openclaw/anthropic-vertex-provider",
 		Models: []modelEntry{
 			{Name: "claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
 			{Name: "claude-opus-4-8", Alias: "Claude Opus 4.8"},
@@ -145,6 +147,34 @@ var knownProviders = map[string]providerDefaults{
 			{Name: "google/gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
 		},
 	},
+}
+
+// imagePluginVersion extracts the OpenClaw release version from a container
+// image tag for use as an npm package version suffix.
+//
+//	"ghcr.io/openclaw/openclaw:2026.6.10"             → "2026.6.10"
+//	"ghcr.io/openclaw/openclaw:2026.6.10-slim-arm64"  → "2026.6.10"
+//	"ghcr.io/openclaw/openclaw:slim"                  → ""  (latest)
+//	"ghcr.io/openclaw/openclaw:latest"                → ""  (latest)
+//	"ghcr.io/openclaw/openclaw"                       → "2026.6.10"  (or whatever is derived from default image)
+//	"ghcr.io/openclaw/openclaw@sha256:abc"            → "sha256:abc" (must be a valid digest)
+//	"ghcr.io/openclaw/openclaw@sha256:invalid"        → error
+func imagePluginVersion(image string) (string, error) {
+	if image == "" {
+		image = DefaultOpenClawImage
+	}
+	ref, err := name.ParseReference(image, name.WeakValidation)
+	if err != nil {
+		return "", err
+	}
+	identifier := ref.Identifier()
+	if identifier == "latest" || identifier == "slim" {
+		return "", nil
+	}
+	if version, _, ok := strings.Cut(identifier, "-slim"); ok {
+		return version, nil
+	}
+	return identifier, nil
 }
 
 // usesVertexSDK returns true when a credential should use the native Vertex AI SDK
