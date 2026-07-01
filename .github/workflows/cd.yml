@@ -36,6 +36,8 @@ jobs:
           QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
         run: |
           set -euo pipefail
+          : "${QUAY_USERNAME:?QUAY_USERNAME secret is required}"
+          : "${QUAY_TOKEN:?QUAY_TOKEN secret is required}"
           REGISTRY_AUTH_FILE="${RUNNER_TEMP}/containers-auth.json"
           export REGISTRY_AUTH_FILE
           echo "REGISTRY_AUTH_FILE=${REGISTRY_AUTH_FILE}" >> "${GITHUB_ENV}"
