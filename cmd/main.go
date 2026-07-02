@@ -268,6 +268,7 @@ func main() {
 		UserSecretReader:   controller.NewLoggingUserSecretReader(mgr.GetAPIReader()),
 		ProxyImage:         os.Getenv("PROXY_IMAGE"),
 		KubectlImage:       os.Getenv("KUBECTL_IMAGE"),
+		GitSyncImage:       os.Getenv("GIT_SYNC_IMAGE"),
 		OTelCollectorImage: os.Getenv("OTEL_COLLECTOR_IMAGE"),
 		ImagePullPolicy:    imagePullPolicy,
 		MetricsRefreshed:   make(chan struct{}),

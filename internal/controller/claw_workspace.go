@@ -17,20 +17,35 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ConfigMap key prefixes for workspace files and skills.
 const (
-	workspaceKeyPrefix = "_ws_"
-	skillKeyPrefix     = "_skill_"
-	pathSeparatorCode  = "--"
+	workspaceKeyPrefix     = "_ws_"
+	skillKeyPrefix         = "_skill_"
+	pathSeparatorCode      = "--"
+	seedManifestKey        = "_seed_manifest.json"
+	configMapSourceMountFn = "/configmap-sources/"
+	gitSourceMountFn       = "/git-sources/"
+	configMountPath        = "/config/"
 )
+
+// seedManifestEntry describes a single file to seed into the workspace.
+type seedManifestEntry struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Mode   string `json:"mode"`
+}
 
 // builtinSkillNames lists operator-managed skill directory names that cannot
 // be used as user skill names.
@@ -95,14 +110,176 @@ func validateSkillNames(skills map[string]string) error {
 	return nil
 }
 
+// normalizeWorkspaceFiles converts deprecated spec.workspace.files entries
+// into InlineSources with mode seedIfMissing, preserving original behavior.
+// It is a no-op when InlineSources is already populated.
+// Returns true if migration was performed (for deprecation logging).
+func normalizeWorkspaceFiles(instance *clawv1alpha1.Claw) bool {
+	if instance.Spec.Workspace == nil {
+		return false
+	}
+	if len(instance.Spec.Workspace.Files) == 0 { //nolint:staticcheck // reading deprecated field for migration
+		return false
+	}
+	if len(instance.Spec.Workspace.InlineSources) > 0 {
+		return false
+	}
+	for p, content := range instance.Spec.Workspace.Files { //nolint:staticcheck // reading deprecated field for migration
+		instance.Spec.Workspace.InlineSources = append(instance.Spec.Workspace.InlineSources,
+			clawv1alpha1.InlineSource{
+				Path:    p,
+				Content: content,
+				Mode:    clawv1alpha1.SeedModeSeedIfMissing,
+			})
+	}
+	return true
+}
+
+// validateAllWorkspacePaths collects all target paths across inline, ConfigMap,
+// and Git sources, validates each path, and rejects duplicate targets.
+func validateAllWorkspacePaths(instance *clawv1alpha1.Claw) error {
+	if instance.Spec.Workspace == nil {
+		return nil
+	}
+	ws := instance.Spec.Workspace
+	seen := map[string]string{} // path → source description
+
+	for _, src := range ws.InlineSources {
+		if err := validateWorkspaceFiles(map[string]string{src.Path: ""}); err != nil {
+			return err
+		}
+		key := filepath.Clean(src.Path)
+		if prev, ok := seen[key]; ok {
+			return fmt.Errorf("workspace path %q is declared by both %s and inline source", key, prev)
+		}
+		seen[key] = "inline source"
+	}
+	for _, cms := range ws.ConfigMapSources {
+		for _, item := range cms.Items {
+			if err := validateWorkspaceFiles(map[string]string{item.Path: ""}); err != nil {
+				return err
+			}
+			key := filepath.Clean(item.Path)
+			if prev, ok := seen[key]; ok {
+				return fmt.Errorf("workspace path %q is declared by both %s and configMapSource %q",
+					key, prev, cms.ConfigMapRef.Name)
+			}
+			seen[key] = fmt.Sprintf("configMapSource %q", cms.ConfigMapRef.Name)
+		}
+	}
+	for _, gs := range ws.GitSources {
+		for _, item := range gs.Items {
+			if err := validateWorkspaceFiles(map[string]string{item.Path: ""}); err != nil {
+				return err
+			}
+			key := filepath.Clean(item.Path)
+			if prev, ok := seen[key]; ok {
+				return fmt.Errorf("workspace path %q is declared by both %s and gitSource %q",
+					key, prev, gs.URL)
+			}
+			seen[key] = fmt.Sprintf("gitSource %q", gs.URL)
+		}
+	}
+	return nil
+}
+
+// resolveSeedMode returns the effective mode using the three-tier cascade:
+// item → source → overwrite (global default).
+func resolveSeedMode(itemMode, sourceMode clawv1alpha1.SeedMode) string {
+	if itemMode != "" {
+		return string(itemMode)
+	}
+	if sourceMode != "" {
+		return string(sourceMode)
+	}
+	return string(clawv1alpha1.SeedModeOverwrite)
+}
+
+// builtinWorkspaceFiles are default files seeded into the workspace on first run.
+// They use seedIfMissing so user edits are preserved.
+var builtinWorkspaceFiles = []seedManifestEntry{
+	{Source: configMountPath + "AGENTS.md", Target: "AGENTS.md", Mode: string(clawv1alpha1.SeedModeSeedIfMissing)},
+	{Source: configMountPath + "SOUL.md", Target: "SOUL.md", Mode: string(clawv1alpha1.SeedModeSeedIfMissing)},
+	{Source: configMountPath + "BOOTSTRAP.md", Target: ".operator/BOOTSTRAP.md", Mode: string(clawv1alpha1.SeedModeSeedIfMissing)},
+}
+
+// generateSeedManifest builds the seeding manifest from all workspace source types,
+// including builtin workspace files (AGENTS.md, SOUL.md, BOOTSTRAP.md).
+func generateSeedManifest(ws *clawv1alpha1.WorkspaceSpec) []seedManifestEntry {
+	var entries []seedManifestEntry
+
+	// Always include builtin files (seedIfMissing)
+	entries = append(entries, builtinWorkspaceFiles...)
+
+	if ws == nil {
+		return entries
+	}
+
+	for _, src := range ws.InlineSources {
+		entries = append(entries, seedManifestEntry{
+			Source: configMountPath + workspaceKeyPrefix + encodeWorkspacePath(src.Path),
+			Target: src.Path,
+			Mode:   resolveSeedMode(src.Mode, ""),
+		})
+	}
+
+	for _, cms := range ws.ConfigMapSources {
+		for _, item := range cms.Items {
+			entries = append(entries, seedManifestEntry{
+				Source: configMapSourceMountFn + cms.ConfigMapRef.Name + "/" + item.Key,
+				Target: item.Path,
+				Mode:   resolveSeedMode(item.Mode, cms.Mode),
+			})
+		}
+	}
+
+	for i, gs := range ws.GitSources {
+		for _, item := range gs.Items {
+			entries = append(entries, seedManifestEntry{
+				Source: fmt.Sprintf("%s%d/%s", gitSourceMountFn, i, item.RepoPath),
+				Target: item.Path,
+				Mode:   resolveSeedMode(item.Mode, gs.Mode),
+			})
+		}
+	}
+
+	return entries
+}
+
+// injectSeedManifest generates the seeding manifest JSON and writes it into
+// the gateway ConfigMap.
+func injectSeedManifest(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	manifest := generateSeedManifest(instance.Spec.Workspace)
+
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal seed manifest: %w", err)
+	}
+
+	configMapName := getConfigMapName(instance.Name)
+	cmObj, err := findObject(objects, ConfigMapKind, configMapName)
+	if err != nil {
+		return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
+	}
+
+	if err := unstructured.SetNestedField(cmObj.Object, string(data), "data", seedManifestKey); err != nil {
+		return fmt.Errorf("failed to set seed manifest in ConfigMap: %w", err)
+	}
+	return nil
+}
+
 // injectWorkspaceFiles validates workspace file paths and writes _ws_ prefixed
 // keys into the gateway ConfigMap.
 func injectWorkspaceFiles(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
-	if instance.Spec.Workspace == nil || len(instance.Spec.Workspace.Files) == 0 {
+	if instance.Spec.Workspace == nil || len(instance.Spec.Workspace.InlineSources) == 0 {
 		return nil
 	}
 
-	if err := validateWorkspaceFiles(instance.Spec.Workspace.Files); err != nil {
+	paths := make(map[string]string, len(instance.Spec.Workspace.InlineSources))
+	for _, src := range instance.Spec.Workspace.InlineSources {
+		paths[src.Path] = src.Content
+	}
+	if err := validateWorkspaceFiles(paths); err != nil {
 		return err
 	}
 
@@ -112,13 +289,361 @@ func injectWorkspaceFiles(objects []*unstructured.Unstructured, instance *clawv1
 		return fmt.Errorf("ConfigMap %q not found in manifests", configMapName)
 	}
 
-	for p, content := range instance.Spec.Workspace.Files {
-		key := workspaceKeyPrefix + encodeWorkspacePath(p)
-		if err := unstructured.SetNestedField(cmObj.Object, content, "data", key); err != nil {
-			return fmt.Errorf("failed to set workspace file %q in ConfigMap: %w", p, err)
+	for _, src := range instance.Spec.Workspace.InlineSources {
+		key := workspaceKeyPrefix + encodeWorkspacePath(src.Path)
+		if err := unstructured.SetNestedField(cmObj.Object, src.Content, "data", key); err != nil {
+			return fmt.Errorf("failed to set workspace file %q in ConfigMap: %w", src.Path, err)
 		}
 	}
 	return nil
+}
+
+// validateConfigMapSources checks that all referenced ConfigMaps exist and
+// contain the specified keys.
+func validateConfigMapSources(ctx context.Context, c client.Reader, instance *clawv1alpha1.Claw) error {
+	if instance.Spec.Workspace == nil {
+		return nil
+	}
+	var errs []string
+	for _, cms := range instance.Spec.Workspace.ConfigMapSources {
+		cm := &corev1.ConfigMap{}
+		if err := c.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: cms.ConfigMapRef.Name}, cm); err != nil {
+			errs = append(errs, fmt.Sprintf("configMapSource: ConfigMap %q not found", cms.ConfigMapRef.Name))
+			continue
+		}
+		for _, item := range cms.Items {
+			if _, ok := cm.Data[item.Key]; !ok {
+				if _, ok := cm.BinaryData[item.Key]; !ok {
+					errs = append(errs, fmt.Sprintf("configMapSource: key %q not found in ConfigMap %q",
+						item.Key, cms.ConfigMapRef.Name))
+				}
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// configMapSourceVolumeName returns the volume name for a ConfigMap source.
+func configMapSourceVolumeName(cmName string) string {
+	return "ws-cm-" + cmName
+}
+
+// injectConfigMapSourceVolumes adds a ConfigMap volume and volumeMount per
+// ConfigMap source to the gateway Deployment. The volumes are mounted on the
+// init-seed container (added separately).
+func injectConfigMapSourceVolumes(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	if instance.Spec.Workspace == nil || len(instance.Spec.Workspace.ConfigMapSources) == 0 {
+		return nil
+	}
+
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind {
+			continue
+		}
+
+		volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
+
+		for _, cms := range instance.Spec.Workspace.ConfigMapSources {
+			volName := configMapSourceVolumeName(cms.ConfigMapRef.Name)
+			volumes = append(volumes, map[string]any{
+				"name": volName,
+				"configMap": map[string]any{
+					"name": cms.ConfigMapRef.Name,
+				},
+			})
+		}
+
+		if err := unstructured.SetNestedSlice(obj.Object, volumes, "spec", "template", "spec", "volumes"); err != nil {
+			return fmt.Errorf("failed to set volumes on claw deployment: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
+}
+
+// gitSourceVolumeName returns the emptyDir volume name for a git source by index.
+func gitSourceVolumeName(index int) string {
+	return fmt.Sprintf("ws-git-%d", index)
+}
+
+// generateGitSyncScript builds a shell script that clones each git source
+// into its emptyDir volume. Tokens for private repos are injected into the URL.
+func generateGitSyncScript(gitSources []clawv1alpha1.GitSource) string {
+	var sb strings.Builder
+	sb.WriteString("set -e\n")
+	for i, gs := range gitSources {
+		dest := fmt.Sprintf("%s%d", gitSourceMountFn, i)
+		cloneURL := gs.URL
+		if gs.SecretRef != nil {
+			fmt.Fprintf(&sb, "TOKEN=\"${GIT_TOKEN_%d}\"\n", i)
+			// inject token: https://host/path → https://oauth2:TOKEN@host/path
+			fmt.Fprintf(&sb, "CLONE_URL=$(echo '%s' | sed \"s|https://|https://oauth2:${TOKEN}@|\")\n", cloneURL)
+		} else {
+			fmt.Fprintf(&sb, "CLONE_URL='%s'\n", cloneURL)
+		}
+		if gs.Ref != "" {
+			fmt.Fprintf(&sb, "git clone --depth 1 --branch '%s' \"${CLONE_URL}\" '%s'\n", gs.Ref, dest)
+		} else {
+			fmt.Fprintf(&sb, "git clone --depth 1 \"${CLONE_URL}\" '%s'\n", dest)
+		}
+	}
+	return sb.String()
+}
+
+// injectGitSyncInitContainer adds the init-git-sync container and emptyDir
+// volumes to the gateway Deployment. Only called when gitSources is non-empty.
+func injectGitSyncInitContainer(
+	objects []*unstructured.Unstructured,
+	instance *clawv1alpha1.Claw,
+	gitSyncImage string,
+	proxyHost string,
+) error {
+	if instance.Spec.Workspace == nil || len(instance.Spec.Workspace.GitSources) == 0 {
+		return nil
+	}
+
+	gitSources := instance.Spec.Workspace.GitSources
+
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind {
+			continue
+		}
+
+		initContainers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "initContainers")
+		volumes, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "volumes")
+
+		// Build volumeMounts and env vars for the init container
+		var volumeMounts []any
+		var envVars []any
+
+		// Proxy env vars
+		envVars = append(envVars,
+			map[string]any{"name": "HTTP_PROXY", "value": proxyHost},
+			map[string]any{"name": "HTTPS_PROXY", "value": proxyHost},
+			map[string]any{"name": "NO_PROXY", "value": "localhost,127.0.0.1"},
+		)
+
+		// Proxy CA cert mount
+		volumeMounts = append(volumeMounts, map[string]any{
+			"name":      "proxy-ca",
+			"mountPath": "/etc/proxy-ca",
+			"readOnly":  true,
+		})
+
+		// Git SSL env var for CA cert
+		envVars = append(envVars,
+			map[string]any{"name": "GIT_SSL_CAINFO", "value": "/etc/proxy-ca/ca.crt"},
+		)
+
+		for i, gs := range gitSources {
+			volName := gitSourceVolumeName(i)
+
+			// Add emptyDir volume
+			volumes = append(volumes, map[string]any{
+				"name":     volName,
+				"emptyDir": map[string]any{},
+			})
+
+			// Mount into init container
+			volumeMounts = append(volumeMounts, map[string]any{
+				"name":      volName,
+				"mountPath": fmt.Sprintf("%s%d", gitSourceMountFn, i),
+			})
+
+			// Token env var from secret
+			if gs.SecretRef != nil {
+				envVars = append(envVars, map[string]any{
+					"name": fmt.Sprintf("GIT_TOKEN_%d", i),
+					"valueFrom": map[string]any{
+						"secretKeyRef": map[string]any{
+							"name": gs.SecretRef.Name,
+							"key":  gs.SecretRef.Key,
+						},
+					},
+				})
+			}
+		}
+
+		script := generateGitSyncScript(gitSources)
+
+		container := map[string]any{
+			"name":            ClawGitSyncContainerName,
+			"image":           gitSyncImage,
+			"imagePullPolicy": "IfNotPresent",
+			"command":         []any{"sh", "-c", script},
+			"env":             envVars,
+			"resources": map[string]any{
+				"requests": map[string]any{"memory": "64Mi", "cpu": "50m"},
+				"limits":   map[string]any{"memory": "256Mi", "cpu": "200m"},
+			},
+			"securityContext": map[string]any{
+				"allowPrivilegeEscalation": false,
+				"capabilities":             map[string]any{"drop": []any{"ALL"}},
+			},
+			"volumeMounts": volumeMounts,
+		}
+
+		// Insert after wait-for-proxy
+		insertIdx := len(initContainers)
+		for i, c := range initContainers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name == "wait-for-proxy" {
+				insertIdx = i + 1
+				break
+			}
+		}
+		// Insert at position
+		initContainers = append(initContainers, nil)
+		copy(initContainers[insertIdx+1:], initContainers[insertIdx:])
+		initContainers[insertIdx] = container
+
+		if err := unstructured.SetNestedSlice(obj.Object, initContainers, "spec", "template", "spec", "initContainers"); err != nil {
+			return fmt.Errorf("failed to set init containers on claw deployment: %w", err)
+		}
+		if err := unstructured.SetNestedSlice(obj.Object, volumes, "spec", "template", "spec", "volumes"); err != nil {
+			return fmt.Errorf("failed to set volumes on claw deployment: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
+}
+
+// seedScript is the shell script that reads the seed manifest and copies
+// files to the workspace with mode-aware logic. It uses basic JSON parsing
+// via sed since the init container runs in a minimal image.
+const seedScript = `set -e
+MANIFEST="/config/_seed_manifest.json"
+WORKSPACE="/home/node/.openclaw/workspace"
+if [ ! -f "$MANIFEST" ]; then
+  echo "[init-seed] no seed manifest found, skipping"
+  exit 0
+fi
+# Parse JSON array line-by-line (one entry per line, compact format)
+# Each line: {"source":"...","target":"...","mode":"..."}
+echo "$( cat "$MANIFEST" )" | tr ',' '\n' | grep -o '{[^}]*}' | while IFS= read -r entry; do
+  src=$(echo "$entry" | sed 's/.*"source":"\([^"]*\)".*/\1/')
+  tgt=$(echo "$entry" | sed 's/.*"target":"\([^"]*\)".*/\1/')
+  mode=$(echo "$entry" | sed 's/.*"mode":"\([^"]*\)".*/\1/')
+  dest="$WORKSPACE/$tgt"
+  destdir=$(dirname "$dest")
+  mkdir -p "$destdir"
+  if [ "$mode" = "seedIfMissing" ] && [ -f "$dest" ]; then
+    echo "[init-seed] skip (exists): $tgt"
+    continue
+  fi
+  if [ ! -f "$src" ]; then
+    echo "[init-seed] WARN: source not found: $src"
+    continue
+  fi
+  cp "$src" "$dest"
+  echo "[init-seed] seeded: $tgt (mode=$mode)"
+done
+echo "[init-seed] done"
+`
+
+// injectSeedInitContainer adds the init-seed container to the gateway Deployment.
+// It mounts the gateway ConfigMap, all ConfigMap source volumes, all git emptyDirs,
+// and the PVC workspace. It is always injected (after init-git-sync or wait-for-proxy).
+func injectSeedInitContainer(
+	objects []*unstructured.Unstructured,
+	instance *clawv1alpha1.Claw,
+	gatewayImage string,
+) error {
+	ws := instance.Spec.Workspace
+
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind {
+			continue
+		}
+
+		initContainers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "initContainers")
+
+		var volumeMounts []any
+
+		// Config volume (has _seed_manifest.json and _ws_* keys)
+		volumeMounts = append(volumeMounts, map[string]any{
+			"name":      "config",
+			"mountPath": configMountPath,
+		})
+
+		// PVC workspace
+		volumeMounts = append(volumeMounts, map[string]any{
+			"name":      "claw-home",
+			"mountPath": "/home/node/.openclaw",
+			"subPath":   "home",
+		})
+
+		// ConfigMap source volumes
+		if ws != nil {
+			for _, cms := range ws.ConfigMapSources {
+				volName := configMapSourceVolumeName(cms.ConfigMapRef.Name)
+				volumeMounts = append(volumeMounts, map[string]any{
+					"name":      volName,
+					"mountPath": configMapSourceMountFn + cms.ConfigMapRef.Name + "/",
+					"readOnly":  true,
+				})
+			}
+
+			// Git emptyDir volumes
+			for i := range ws.GitSources {
+				volName := gitSourceVolumeName(i)
+				volumeMounts = append(volumeMounts, map[string]any{
+					"name":      volName,
+					"mountPath": fmt.Sprintf("%s%d", gitSourceMountFn, i),
+					"readOnly":  true,
+				})
+			}
+		}
+
+		container := map[string]any{
+			"name":            ClawSeedContainerName,
+			"image":           gatewayImage,
+			"imagePullPolicy": "IfNotPresent",
+			"command":         []any{"sh", "-c", seedScript},
+			"resources": map[string]any{
+				"requests": map[string]any{"memory": "32Mi", "cpu": "10m"},
+				"limits":   map[string]any{"memory": "64Mi", "cpu": "100m"},
+			},
+			"securityContext": map[string]any{
+				"allowPrivilegeEscalation": false,
+				"capabilities":             map[string]any{"drop": []any{"ALL"}},
+			},
+			"volumeMounts": volumeMounts,
+		}
+
+		// Insert after init-git-sync if present, otherwise after wait-for-proxy
+		insertIdx := len(initContainers)
+		for i, c := range initContainers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _, _ := unstructured.NestedString(cm, "name")
+			if name == ClawGitSyncContainerName {
+				insertIdx = i + 1
+				break
+			}
+			if name == "wait-for-proxy" {
+				insertIdx = i + 1
+			}
+		}
+
+		initContainers = append(initContainers, nil)
+		copy(initContainers[insertIdx+1:], initContainers[insertIdx:])
+		initContainers[insertIdx] = container
+
+		if err := unstructured.SetNestedSlice(obj.Object, initContainers, "spec", "template", "spec", "initContainers"); err != nil {
+			return fmt.Errorf("failed to set init containers on claw deployment: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
 }
 
 // injectSkillFiles validates skill names and writes _skill_ prefixed keys

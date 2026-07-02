@@ -62,6 +62,9 @@ const (
 	ClawProxyContainerName      = "proxy"
 	ClawGatewayContainerName    = "gateway"
 	ClawInitConfigContainerName = "init-config"
+	ClawGitSyncContainerName    = "init-git-sync"
+	ClawSeedContainerName       = "init-seed"
+	DefaultGitSyncImage         = "alpine/git:2.47.2"
 	ClawConfigModeEnvVar        = "CLAW_CONFIG_MODE"
 	DefaultKubectlImage         = "quay.io/openshift/origin-cli:4.21"
 	DefaultOpenClawImage        = "ghcr.io/openclaw/openclaw:2026.6.11"
@@ -391,6 +394,7 @@ type ClawResourceReconciler struct {
 	UserSecretReader   client.Reader
 	ProxyImage         string
 	KubectlImage       string
+	GitSyncImage       string
 	OTelCollectorImage string
 	ImagePullPolicy    string
 	// MetricsRefreshed is closed by Start() after the initial metrics refresh.
@@ -479,6 +483,17 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			clawv1alpha1.ConditionReasonValidationFailed, err.Error())
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after MCP secret validation failure")
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Validate ConfigMap sources exist and contain specified keys
+	if err := validateConfigMapSources(ctx, r.Client, instance); err != nil {
+		logger.Error(err, "ConfigMap source validation failed")
+		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
+			clawv1alpha1.ConditionReasonConfigFailed, err.Error())
+		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
+			logger.Error(statusErr, "Failed to update status after ConfigMap source validation failure")
 		}
 		return ctrl.Result{}, err
 	}
@@ -749,8 +764,8 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 		return fmt.Errorf("failed to write enriched operator.json back to ConfigMap: %w", err)
 	}
 
-	if err := injectWorkspaceFiles(objects, instance); err != nil {
-		return fmt.Errorf("failed to inject workspace files: %w", err)
+	if err := r.enrichWorkspaceSources(objects, instance); err != nil {
+		return err
 	}
 	if err := injectSkillFiles(objects, instance); err != nil {
 		return fmt.Errorf("failed to inject skill files: %w", err)
@@ -799,13 +814,53 @@ func (r *ClawResourceReconciler) enrichConfigAndNetworkPolicy(
 }
 
 // findObject locates an unstructured object by kind and name.
-func findObject(objects []*unstructured.Unstructured, kind, name string) (*unstructured.Unstructured, error) {
+func findObject(objects []*unstructured.Unstructured, kind, name string) (*unstructured.Unstructured, error) { //nolint:unparam // kind is parameterized for readability at call sites
 	for _, obj := range objects {
 		if obj.GetKind() == kind && obj.GetName() == name {
 			return obj, nil
 		}
 	}
 	return nil, fmt.Errorf("%s %q not found", kind, name)
+}
+
+// enrichWorkspaceSources handles workspace file normalization, validation,
+// inline key injection, seed manifest generation, and volume/init container setup.
+func (r *ClawResourceReconciler) enrichWorkspaceSources(
+	objects []*unstructured.Unstructured,
+	instance *clawv1alpha1.Claw,
+) error {
+	if normalizeWorkspaceFiles(instance) {
+		ctrl.Log.Info("spec.workspace.files is deprecated; use spec.workspace.inlineSources instead",
+			"instance", instance.Name)
+	}
+	if err := validateAllWorkspacePaths(instance); err != nil {
+		return fmt.Errorf("workspace path conflict: %w", err)
+	}
+	if err := injectWorkspaceFiles(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject workspace files: %w", err)
+	}
+	if err := injectSeedManifest(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject seed manifest: %w", err)
+	}
+	if err := injectConfigMapSourceVolumes(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject ConfigMap source volumes: %w", err)
+	}
+	gitSyncImage := r.GitSyncImage
+	if gitSyncImage == "" {
+		gitSyncImage = DefaultGitSyncImage
+	}
+	proxyHost := fmt.Sprintf("http://%s-proxy:8080", instance.Name)
+	if err := injectGitSyncInitContainer(objects, instance, gitSyncImage, proxyHost); err != nil {
+		return fmt.Errorf("failed to inject git sync init container: %w", err)
+	}
+	gatewayImage := instance.Spec.Image
+	if gatewayImage == "" {
+		gatewayImage = DefaultOpenClawImage
+	}
+	if err := injectSeedInitContainer(objects, instance, gatewayImage); err != nil {
+		return fmt.Errorf("failed to inject seed init container: %w", err)
+	}
+	return nil
 }
 
 // configureDeployments applies deployment overrides (proxy image, pull policy, credentials)

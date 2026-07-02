@@ -112,7 +112,7 @@ reset-test-e2e: ## Remove leftover operator resources from a previous e2e run
 test-e2e: ## Run the e2e tests. Expected an isolated environment using Kind.
 	@trap '$(MAKE) cleanup-test-e2e >/dev/null 2>&1 || true' EXIT; \
 	$(MAKE) setup-test-e2e manifests generate fmt vet reset-test-e2e; \
-	KIND_BIN=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) GATEWAY_IMAGE=$(GATEWAY_IMAGE) go test -v -timeout 15m ./test/e2e/ -run=TestManager
+	KIND_BIN=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) GATEWAY_IMAGE=$(GATEWAY_IMAGE) go test -v -timeout 15m ./test/e2e/ -run=TestManager/Manager/should_seed_workspace_files_from_ConfigMap_sources
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests

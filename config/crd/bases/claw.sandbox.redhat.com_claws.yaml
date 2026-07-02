@@ -837,14 +837,179 @@ spec:
                   Workspace configures workspace file seeding and bootstrap behavior.
                   Files are seeded once (seedIfMissing) — user edits are preserved.
                 properties:
+                  configMapSources:
+                    description: ConfigMapSources seeds workspace files from ConfigMap
+                      keys.
+                    items:
+                      description: ConfigMapSource seeds workspace files from a ConfigMap.
+                      properties:
+                        configMapRef:
+                          description: ConfigMapRef identifies the source ConfigMap
+                            (same namespace as the Claw CR).
+                          properties:
+                            name:
+                              description: Name of the ConfigMap.
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        items:
+                          description: Items maps specific ConfigMap keys to workspace
+                            paths.
+                          items:
+                            description: ConfigMapItem maps a ConfigMap key to a workspace
+                              path.
+                            properties:
+                              key:
+                                description: Key is the key in the ConfigMap's data
+                                  map.
+                                minLength: 1
+                                type: string
+                              mode:
+                                description: Mode overrides the source-level mode
+                                  for this item.
+                                enum:
+                                - overwrite
+                                - seedIfMissing
+                                type: string
+                              path:
+                                description: Path is the workspace-relative target
+                                  path.
+                                minLength: 1
+                                type: string
+                            required:
+                            - key
+                            - path
+                            type: object
+                          minItems: 1
+                          type: array
+                        mode:
+                          description: |-
+                            Mode controls seeding behavior for all items in this source.
+                            Individual items can override this. Default: overwrite.
+                          enum:
+                          - overwrite
+                          - seedIfMissing
+                          type: string
+                      required:
+                      - configMapRef
+                      - items
+                      type: object
+                    type: array
                   files:
                     additionalProperties:
                       type: string
                     description: |-
-                      Files maps workspace-relative paths to file content.
-                      Each file is seeded once (seedIfMissing) — user edits via the
-                      OpenClaw UI are preserved across restarts.
+                      Deprecated: use InlineSources instead. Retained for backward compatibility.
+                      The controller normalizes Files entries to InlineSources with mode seedIfMissing.
                     type: object
+                  gitSources:
+                    description: GitSources seeds workspace files from Git repositories
+                      via HTTPS.
+                    items:
+                      description: GitSource seeds workspace files from a Git repository.
+                      properties:
+                        items:
+                          description: Items maps specific repository file paths to
+                            workspace paths.
+                          items:
+                            description: GitItem maps a file in a Git repository to
+                              a workspace path.
+                            properties:
+                              mode:
+                                description: Mode overrides the source-level mode
+                                  for this item.
+                                enum:
+                                - overwrite
+                                - seedIfMissing
+                                type: string
+                              path:
+                                description: Path is the workspace-relative target
+                                  path.
+                                minLength: 1
+                                type: string
+                              repoPath:
+                                description: RepoPath is the path to a single file
+                                  in the repository.
+                                minLength: 1
+                                type: string
+                            required:
+                            - path
+                            - repoPath
+                            type: object
+                          minItems: 1
+                          type: array
+                        mode:
+                          description: |-
+                            Mode controls seeding behavior for all items in this source.
+                            Individual items can override this. Default: overwrite.
+                          enum:
+                          - overwrite
+                          - seedIfMissing
+                          type: string
+                        ref:
+                          description: |-
+                            Ref is the Git reference to check out: branch name, tag, or commit SHA.
+                            Default: the repository's default branch.
+                          type: string
+                        secretRef:
+                          description: |-
+                            SecretRef references a Secret holding an HTTPS personal access token
+                            for private repository authentication.
+                          properties:
+                            key:
+                              description: Key is the key in the Secret's data map
+                              minLength: 1
+                              type: string
+                            name:
+                              description: Name is the name of the Secret
+                              minLength: 1
+                              type: string
+                            role:
+                              description: |-
+                                Role distinguishes multiple secrets for the same credential.
+                                Required when multiple secretRef entries are present (e.g., Slack botToken/appToken).
+                              maxLength: 63
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                        url:
+                          description: URL is the HTTPS URL of the Git repository.
+                          minLength: 1
+                          type: string
+                      required:
+                      - items
+                      - url
+                      type: object
+                    type: array
+                  inlineSources:
+                    description: InlineSources seeds workspace files from inline content.
+                    items:
+                      description: InlineSource defines a workspace file with inline
+                        content.
+                      properties:
+                        content:
+                          description: Content is the inline file content.
+                          type: string
+                        mode:
+                          description: 'Mode controls seeding behavior. Default: overwrite.'
+                          enum:
+                          - overwrite
+                          - seedIfMissing
+                          type: string
+                        path:
+                          description: Path is the workspace-relative file path (e.g.,
+                            "SOUL.md", "docs/guide.md").
+                          minLength: 1
+                          type: string
+                      required:
+                      - content
+                      - path
+                      type: object
+                    type: array
                   skipBootstrap:
                     description: |-
                       SkipBootstrap suppresses the OpenClaw first-run questionnaire.

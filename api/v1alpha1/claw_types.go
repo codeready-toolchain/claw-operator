@@ -46,6 +46,15 @@ const (
 	ConfigModeOverwrite ConfigMode = "overwrite"
 )
 
+// SeedMode controls how workspace files are seeded into the PVC.
+// +kubebuilder:validation:Enum=overwrite;seedIfMissing
+type SeedMode string
+
+const (
+	SeedModeOverwrite     SeedMode = "overwrite"
+	SeedModeSeedIfMissing SeedMode = "seedIfMissing"
+)
+
 // McpTransport selects the HTTP transport type for remote MCP servers.
 // +kubebuilder:validation:Enum=streamable-http;sse
 type McpTransport string
@@ -373,6 +382,109 @@ type RawConfig struct {
 	runtime.RawExtension `json:",inline"`
 }
 
+// InlineSource defines a workspace file with inline content.
+type InlineSource struct {
+	// Path is the workspace-relative file path (e.g., "SOUL.md", "docs/guide.md").
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
+
+	// Content is the inline file content.
+	// +kubebuilder:validation:Required
+	Content string `json:"content"`
+
+	// Mode controls seeding behavior. Default: overwrite.
+	// +optional
+	Mode SeedMode `json:"mode,omitempty"`
+}
+
+// ConfigMapRef references a ConfigMap in the same namespace.
+type ConfigMapRef struct {
+	// Name of the ConfigMap.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+}
+
+// ConfigMapItem maps a ConfigMap key to a workspace path.
+type ConfigMapItem struct {
+	// Key is the key in the ConfigMap's data map.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
+
+	// Path is the workspace-relative target path.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
+
+	// Mode overrides the source-level mode for this item.
+	// +optional
+	Mode SeedMode `json:"mode,omitempty"`
+}
+
+// ConfigMapSource seeds workspace files from a ConfigMap.
+type ConfigMapSource struct {
+	// ConfigMapRef identifies the source ConfigMap (same namespace as the Claw CR).
+	// +kubebuilder:validation:Required
+	ConfigMapRef ConfigMapRef `json:"configMapRef"`
+
+	// Items maps specific ConfigMap keys to workspace paths.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinItems=1
+	Items []ConfigMapItem `json:"items"`
+
+	// Mode controls seeding behavior for all items in this source.
+	// Individual items can override this. Default: overwrite.
+	// +optional
+	Mode SeedMode `json:"mode,omitempty"`
+}
+
+// GitItem maps a file in a Git repository to a workspace path.
+type GitItem struct {
+	// RepoPath is the path to a single file in the repository.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	RepoPath string `json:"repoPath"`
+
+	// Path is the workspace-relative target path.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
+
+	// Mode overrides the source-level mode for this item.
+	// +optional
+	Mode SeedMode `json:"mode,omitempty"`
+}
+
+// GitSource seeds workspace files from a Git repository.
+type GitSource struct {
+	// URL is the HTTPS URL of the Git repository.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	URL string `json:"url"`
+
+	// Ref is the Git reference to check out: branch name, tag, or commit SHA.
+	// Default: the repository's default branch.
+	// +optional
+	Ref string `json:"ref,omitempty"`
+
+	// SecretRef references a Secret holding an HTTPS personal access token
+	// for private repository authentication.
+	// +optional
+	SecretRef *SecretRefEntry `json:"secretRef,omitempty"`
+
+	// Items maps specific repository file paths to workspace paths.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinItems=1
+	Items []GitItem `json:"items"`
+
+	// Mode controls seeding behavior for all items in this source.
+	// Individual items can override this. Default: overwrite.
+	// +optional
+	Mode SeedMode `json:"mode,omitempty"`
+}
+
 // WorkspaceSpec configures workspace file seeding.
 type WorkspaceSpec struct {
 	// SkipBootstrap suppresses the OpenClaw first-run questionnaire.
@@ -380,11 +492,22 @@ type WorkspaceSpec struct {
 	// +optional
 	SkipBootstrap bool `json:"skipBootstrap,omitempty"`
 
-	// Files maps workspace-relative paths to file content.
-	// Each file is seeded once (seedIfMissing) — user edits via the
-	// OpenClaw UI are preserved across restarts.
+	// Deprecated: use InlineSources instead. Retained for backward compatibility.
+	// The controller normalizes Files entries to InlineSources with mode seedIfMissing.
 	// +optional
 	Files map[string]string `json:"files,omitempty"`
+
+	// InlineSources seeds workspace files from inline content.
+	// +optional
+	InlineSources []InlineSource `json:"inlineSources,omitempty"`
+
+	// ConfigMapSources seeds workspace files from ConfigMap keys.
+	// +optional
+	ConfigMapSources []ConfigMapSource `json:"configMapSources,omitempty"`
+
+	// GitSources seeds workspace files from Git repositories via HTTPS.
+	// +optional
+	GitSources []GitSource `json:"gitSources,omitempty"`
 }
 
 // MetricsSpec configures Prometheus metrics collection via an OTel Collector sidecar.
