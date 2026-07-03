@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // ConfigMap key prefixes for workspace files and skills.
@@ -304,11 +305,13 @@ func validateConfigMapSources(ctx context.Context, c client.Reader, instance *cl
 	if instance.Spec.Workspace == nil {
 		return nil
 	}
+	logger := log.FromContext(ctx)
 	var errs []string
 	for _, cms := range instance.Spec.Workspace.ConfigMapSources {
 		cm := &corev1.ConfigMap{}
 		if err := c.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: cms.ConfigMapRef.Name}, cm); err != nil {
-			errs = append(errs, fmt.Sprintf("configMapSource: ConfigMap %q not found", cms.ConfigMapRef.Name))
+			logger.Error(err, "failed to get ConfigMap", "configMapName", cms.ConfigMapRef.Name, "namespace", instance.Namespace)
+			errs = append(errs, fmt.Sprintf("configMapSource: ConfigMap %q not found in namespace %q", cms.ConfigMapRef.Name, instance.Namespace))
 			continue
 		}
 		for _, item := range cms.Items {
@@ -517,6 +520,9 @@ func injectGitSyncInitContainer(
 // seedScript is the shell script that reads the seed manifest and copies
 // files to the workspace with mode-aware logic. It uses basic JSON parsing
 // via sed since the init container runs in a minimal image.
+// seedScript uses node (available in the gateway image) for robust JSON
+// parsing, then iterates the entries in shell to copy files with
+// mode-aware logic.
 const seedScript = `set -e
 MANIFEST="/config/_seed_manifest.json"
 WORKSPACE="/home/node/.openclaw/workspace"
@@ -524,15 +530,12 @@ if [ ! -f "$MANIFEST" ]; then
   echo "[init-seed] no seed manifest found, skipping"
   exit 0
 fi
-# Parse JSON array line-by-line (one entry per line, compact format)
-# Each line: {"source":"...","target":"...","mode":"..."}
-echo "$( cat "$MANIFEST" )" | tr ',' '\n' | grep -o '{[^}]*}' | while IFS= read -r entry; do
-  src=$(echo "$entry" | sed 's/.*"source":"\([^"]*\)".*/\1/')
-  tgt=$(echo "$entry" | sed 's/.*"target":"\([^"]*\)".*/\1/')
-  mode=$(echo "$entry" | sed 's/.*"mode":"\([^"]*\)".*/\1/')
+node -e '
+  const entries = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  entries.forEach(e => console.log(e.source + "\t" + e.target + "\t" + e.mode));
+' "$MANIFEST" | while IFS="$(printf '\t')" read -r src tgt mode; do
   dest="$WORKSPACE/$tgt"
-  destdir=$(dirname "$dest")
-  mkdir -p "$destdir"
+  mkdir -p "$(dirname "$dest")"
   if [ "$mode" = "seedIfMissing" ] && [ -f "$dest" ]; then
     echo "[init-seed] skip (exists): $tgt"
     continue

@@ -391,12 +391,17 @@ type ClawResourceReconciler struct {
 	// UserSecretReader reads user-owned Secrets directly from the API server,
 	// bypassing the informer cache (where Transform has stripped .Data).
 	// Operator-owned Secrets keep full .Data in cache and use r.Get().
-	UserSecretReader   client.Reader
-	ProxyImage         string
-	KubectlImage       string
-	GitSyncImage       string
-	OTelCollectorImage string
-	ImagePullPolicy    string
+	UserSecretReader client.Reader
+	// UserConfigMapReader reads user-owned ConfigMaps directly from the API
+	// server, bypassing the label-filtered informer cache. Used to validate
+	// workspace configMapSources that reference ConfigMaps without the
+	// instance label.
+	UserConfigMapReader client.Reader
+	ProxyImage          string
+	KubectlImage        string
+	GitSyncImage        string
+	OTelCollectorImage  string
+	ImagePullPolicy     string
 	// MetricsRefreshed is closed by Start() after the initial metrics refresh.
 	// Reconcile() waits on it so no reconciliation runs before metrics are populated.
 	MetricsRefreshed chan struct{}
@@ -488,7 +493,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Validate ConfigMap sources exist and contain specified keys
-	if err := validateConfigMapSources(ctx, r.Client, instance); err != nil {
+	if err := validateConfigMapSources(ctx, r.UserConfigMapReader, instance); err != nil {
 		logger.Error(err, "ConfigMap source validation failed")
 		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
 			clawv1alpha1.ConditionReasonConfigFailed, err.Error())

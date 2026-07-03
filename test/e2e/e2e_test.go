@@ -32,8 +32,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"sigs.k8s.io/yaml"
 
+	"github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 	"github.com/codeready-toolchain/claw-operator/internal/controller"
 	"github.com/codeready-toolchain/claw-operator/test/utils"
 )
@@ -66,43 +69,63 @@ const (
 	proxyServiceName    = clawInstanceName + "-proxy"
 )
 
-// clawYAMLWithGemini returns a Claw CR YAML using spec.credentials[] with apiKey type.
-func clawYAMLWithGemini(secretName, secretKey string) string {
-	return fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
-kind: Claw
-metadata:
-  name: instance
-spec:
-  credentials:
-    - name: gemini
-      type: apiKey
-      secretRef:
-        - name: %s
-          key: %s
-      domain: ".googleapis.com"
-      apiKey:
-        header: x-goog-api-key
-`, secretName, secretKey)
+type ClawSpecOption func(*v1alpha1.ClawSpec)
+
+func WithImage(image string) ClawSpecOption {
+	return func(spec *v1alpha1.ClawSpec) {
+		spec.Image = image
+	}
 }
 
-// clawYAMLWithImage returns a Claw CR YAML with an explicit spec.image and apiKey credential.
-func clawYAMLWithImage(image, secretName, secretKey string) string {
-	return fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
-kind: Claw
-metadata:
-  name: instance
-spec:
-  image: %s
-  credentials:
-    - name: gemini
-      type: apiKey
-      secretRef:
-        - name: %s
-          key: %s
-      domain: ".googleapis.com"
-      apiKey:
-        header: x-goog-api-key
-`, image, secretName, secretKey)
+func WithGeminiCredentials(secretName, secretKey string) ClawSpecOption {
+	return func(spec *v1alpha1.ClawSpec) {
+		spec.Credentials = []v1alpha1.CredentialSpec{
+			{
+				Name: "gemini",
+				Type: v1alpha1.CredentialTypeAPIKey,
+				APIKey: &v1alpha1.APIKeyConfig{
+					Header: "x-goog-api-key",
+				},
+				Domain:   ".googleapis.com",
+				Provider: "gemini",
+				SecretRef: []v1alpha1.SecretRefEntry{
+					{
+						Name: secretName,
+						Key:  secretKey,
+					},
+				},
+			},
+		}
+	}
+}
+
+func WithConfigMapSources(configMapSources ...v1alpha1.ConfigMapSource) ClawSpecOption {
+	return func(spec *v1alpha1.ClawSpec) {
+		if spec.Workspace == nil {
+			spec.Workspace = &v1alpha1.WorkspaceSpec{}
+		}
+		spec.Workspace.ConfigMapSources = configMapSources
+	}
+}
+
+func newClawYAML(t *testing.T, opts ...ClawSpecOption) []byte {
+	t.Helper()
+	claw := &v1alpha1.Claw{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Claw",
+			APIVersion: "claw.sandbox.redhat.com/v1alpha1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "instance",
+		},
+		Spec: v1alpha1.ClawSpec{},
+	}
+	for _, apply := range opts {
+		apply(&claw.Spec)
+	}
+	y, err := yaml.Marshal(claw)
+	require.NoError(t, err)
+	return y
 }
 
 func TestManager(t *testing.T) { //nolint:gocyclo
@@ -756,8 +779,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 			t.Log("creating Claw CR referencing first Secret")
 			crFile := filepath.Join("/tmp", "claw-e2e-test.yaml")
-			err := os.WriteFile(crFile, []byte(clawYAMLWithGemini("llm-key-1", "api-key")),
-				os.FileMode(0o644))
+			clawYAML := newClawYAML(t, WithGeminiCredentials("llm-key-1", "api-key"))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
 			require.NoError(t, err)
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
@@ -804,8 +827,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"--from-literal=api-key=second-api-key")
 
 			t.Log("updating Claw CR to reference the second Secret")
-			err = os.WriteFile(crFile, []byte(clawYAMLWithGemini("llm-key-2", "api-key")),
-				os.FileMode(0o644))
+			clawYAML = newClawYAML(t, WithGeminiCredentials("llm-key-2", "api-key"))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
 			require.NoError(t, err)
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
@@ -1218,8 +1241,8 @@ spec:
 
 			t.Log("applying Claw CR referencing the unlabeled Secret")
 			crFile := filepath.Join("/tmp", "claw-e2e-unlabeled.yaml")
-			err = os.WriteFile(crFile, []byte(clawYAMLWithGemini(unlabeledSecretName, "api-key")),
-				os.FileMode(0o644))
+			clawYAML := newClawYAML(t, WithGeminiCredentials(unlabeledSecretName, "api-key"))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
 			require.NoError(t, err)
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
@@ -1874,9 +1897,10 @@ spec:
 				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR with explicit image")
-			crYAML := clawYAMLWithImage(gatewayImage, "gemini-api-key", "api-key")
-			crFile := filepath.Join(t.TempDir(), "claw.yaml")
-			require.NoError(t, os.WriteFile(crFile, []byte(crYAML), 0o644))
+			crFile := filepath.Join("/tmp", "claw-e2e-image.yaml")
+			clawYAML := newClawYAML(t, WithImage(gatewayImage), WithGeminiCredentials("gemini-api-key", "api-key"))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
+			require.NoError(t, err)
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
@@ -1954,7 +1978,8 @@ spec:
 				"--from-literal=soul.md=# Enterprise Soul\nYou are an enterprise assistant.",
 				"--from-literal=tools.md=# Tools\nUse approved tools only.",
 				"-n", userNamespace)
-			_, err := utils.Run(t, cmd)
+			out, err := utils.Run(t, cmd)
+			t.Logf("create configmap output: %q", out)
 			require.NoError(t, err, "Failed to create workspace source ConfigMap")
 
 			t.Log("creating the credential Secret")
@@ -1965,31 +1990,19 @@ spec:
 				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying Claw CR with configMapSources")
-			crYAML := fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
-kind: Claw
-metadata:
-  name: instance
-spec:
-  credentials:
-    - name: gemini
-      provider: google
-      secretRef:
-        - name: gemini-api-key
-          key: api-key
-  workspace:
-    skipBootstrap: true
-    configMapSources:
-      - configMapRef:
-          name: %s
-        items:
-          - key: soul.md
-            path: "SOUL.md"
-          - key: tools.md
-            path: "TOOLS.md"
-            mode: seedIfMissing
-`, wsConfigMapName)
 			crFile := filepath.Join("/tmp", "claw-e2e-cm-sources.yaml")
-			err = os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
+			clawYAML := newClawYAML(t,
+				WithGeminiCredentials("gemini-api-key", "api-key"),
+				WithConfigMapSources(v1alpha1.ConfigMapSource{
+					ConfigMapRef: v1alpha1.ConfigMapRef{
+						Name: wsConfigMapName,
+					},
+					Items: []v1alpha1.ConfigMapItem{
+						{Key: "soul.md", Path: "SOUL.md"},
+						{Key: "tools.md", Path: "TOOLS.md", Mode: v1alpha1.SeedModeSeedIfMissing},
+					},
+				}))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
 			require.NoError(t, err)
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
@@ -2062,6 +2075,7 @@ spec:
 			cmd = exec.Command("kubectl", "logs", podName, "-c",
 				controller.ClawSeedContainerName, "-n", userNamespace)
 			seedLogs, err := utils.Run(t, cmd)
+			// t.Logf("init-seed logs: %q", seedLogs)
 			require.NoError(t, err, "failed to get init-seed logs")
 			assert.Contains(t, seedLogs, "SOUL.md",
 				"init-seed logs should mention SOUL.md")
