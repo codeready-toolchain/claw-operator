@@ -27,7 +27,10 @@ type Injector interface {
 	Inject(req *http.Request) error
 }
 
-const injectorGCP = "gcp"
+const (
+	injectorGCP        = "gcp"
+	injectorCodexOAuth = "codex_oauth"
+)
 
 // authHeaders are stripped from every request before injection (defense in depth).
 var authHeaders = []string{
@@ -38,6 +41,8 @@ var authHeaders = []string{
 	"Impersonate-User",
 	"Impersonate-Group",
 	"Impersonate-Uid",
+	"Chatgpt-Account-Id",
+	"Openai-Beta",
 }
 
 // StripAuthHeaders removes all known auth and impersonation headers from the request.
@@ -70,6 +75,8 @@ func NewInjector(route *Route) (Injector, error) {
 		return NewOAuth2Injector(route)
 	case "kubernetes":
 		return NewKubernetesInjector(route)
+	case injectorCodexOAuth:
+		return NewCodexOAuthInjector(route)
 	default:
 		return nil, fmt.Errorf("unknown injector type: %s", route.Injector)
 	}

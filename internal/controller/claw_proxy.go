@@ -54,6 +54,7 @@ const (
 	injectorPathToken  = "path_token"
 	injectorOAuth2     = "oauth2"
 	injectorKubernetes = "kubernetes"
+	injectorCodexOAuth = "codex_oauth"
 )
 
 // gcpOAuth2Domain is the GCP OAuth2 token endpoint domain. GCP credentials
@@ -62,23 +63,24 @@ const gcpOAuth2Domain = "oauth2.googleapis.com"
 
 // proxyRoute is a single route entry in the proxy config JSON.
 type proxyRoute struct {
-	Domain         string            `json:"domain"`
-	Injector       string            `json:"injector"`
-	Header         string            `json:"header,omitempty"`
-	ValuePrefix    string            `json:"valuePrefix,omitempty"`
-	EnvVar         string            `json:"envVar,omitempty"`
-	SAFilePath     string            `json:"saFilePath,omitempty"`
-	GCPProject     string            `json:"gcpProject,omitempty"`
-	GCPLocation    string            `json:"gcpLocation,omitempty"`
-	PathPrefix     string            `json:"pathPrefix,omitempty"`
-	Upstream       string            `json:"upstream,omitempty"`
-	ClientID       string            `json:"clientID,omitempty"`
-	TokenURL       string            `json:"tokenURL,omitempty"`
-	Scopes         []string          `json:"scopes,omitempty"`
-	DefaultHeaders map[string]string `json:"defaultHeaders,omitempty"`
-	KubeconfigPath string            `json:"kubeconfigPath,omitempty"`
-	CACert         string            `json:"caCert,omitempty"`
-	AllowedPaths   []string          `json:"allowedPaths,omitempty"`
+	Domain            string            `json:"domain"`
+	Injector          string            `json:"injector"`
+	Header            string            `json:"header,omitempty"`
+	ValuePrefix       string            `json:"valuePrefix,omitempty"`
+	EnvVar            string            `json:"envVar,omitempty"`
+	SAFilePath        string            `json:"saFilePath,omitempty"`
+	GCPProject        string            `json:"gcpProject,omitempty"`
+	GCPLocation       string            `json:"gcpLocation,omitempty"`
+	PathPrefix        string            `json:"pathPrefix,omitempty"`
+	Upstream          string            `json:"upstream,omitempty"`
+	ClientID          string            `json:"clientID,omitempty"`
+	TokenURL          string            `json:"tokenURL,omitempty"`
+	Scopes            []string          `json:"scopes,omitempty"`
+	DefaultHeaders    map[string]string `json:"defaultHeaders,omitempty"`
+	KubeconfigPath    string            `json:"kubeconfigPath,omitempty"`
+	CACert            string            `json:"caCert,omitempty"`
+	AllowedPaths      []string          `json:"allowedPaths,omitempty"`
+	CodexAuthFilePath string            `json:"codexAuthFilePath,omitempty"`
 }
 
 // proxyConfig is the top-level proxy configuration JSON.
@@ -321,6 +323,9 @@ func buildCredentialRoute(cred clawv1alpha1.CredentialSpec) proxyRoute {
 			route.TokenURL = cred.OAuth2.TokenURL
 			route.Scopes = cred.OAuth2.Scopes
 		}
+	case clawv1alpha1.CredentialTypeCodexOAuth:
+		route.Injector = injectorCodexOAuth
+		route.CodexAuthFilePath = "/etc/proxy/credentials/" + cred.Name + "/auth.json"
 	}
 
 	return route
@@ -615,6 +620,29 @@ func configureProxyForCredentials(objects []*unstructured.Unstructured, instance
 							map[string]any{
 								"key":  ref.Key,
 								"path": "kubeconfig",
+							},
+						},
+					},
+				})
+				volumeMounts = append(volumeMounts, map[string]any{
+					"name":      volName,
+					"mountPath": "/etc/proxy/credentials/" + cred.Name,
+					"readOnly":  true,
+				})
+
+			case clawv1alpha1.CredentialTypeCodexOAuth:
+				if ref == nil {
+					continue
+				}
+				volName := "cred-" + cred.Name
+				volumes = append(volumes, map[string]any{
+					"name": volName,
+					"secret": map[string]any{
+						"secretName": ref.Name,
+						"items": []any{
+							map[string]any{
+								"key":  ref.Key,
+								"path": "auth.json",
 							},
 						},
 					},

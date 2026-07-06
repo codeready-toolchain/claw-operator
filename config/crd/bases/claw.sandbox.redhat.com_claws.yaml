@@ -288,16 +288,17 @@ spec:
                       - oauth2
                       - none
                       - kubernetes
+                      - codexOAuth
                       type: string
                   required:
                   - name
                   type: object
                   x-kubernetes-validations:
                   - message: 'type is required (inferred only for known providers:
-                      google, anthropic, openai, xai, openrouter)'
+                      google, anthropic, openai, xai, openrouter, openai-oauth)'
                     rule: has(self.type) || has(self.channel) || (has(self.provider)
                       && self.provider in ['google', 'anthropic', 'openai', 'xai',
-                      'openrouter'])
+                      'openrouter', 'openai-oauth'])
                   - message: provider and channel are mutually exclusive
                     rule: '!has(self.provider) || !has(self.channel)'
                   - message: secretRef is required unless type is none or channel

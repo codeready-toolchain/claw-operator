@@ -19,10 +19,13 @@ package controller
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	clawv1alpha1 "github.com/codeready-toolchain/claw-operator/api/v1alpha1"
+	"github.com/codeready-toolchain/claw-operator/internal/proxy"
 )
 
 // kubeconfigCluster holds parsed cluster info from a kubeconfig.
@@ -59,10 +63,16 @@ type kubeconfigData struct {
 	RawBytes []byte
 }
 
-// resolvedCredential wraps a CredentialSpec with parsed kubeconfig data (non-nil for kubernetes type only).
+// codexOAuthData holds parsed data from a Codex auth.json file.
+type codexOAuthData struct {
+	AccountID string
+}
+
+// resolvedCredential wraps a CredentialSpec with parsed data for types that need it.
 type resolvedCredential struct {
 	clawv1alpha1.CredentialSpec
 	KubeConfig *kubeconfigData
+	CodexOAuth *codexOAuthData
 }
 
 // primarySecret returns the first SecretRefEntry, or nil if the slice is empty.
@@ -236,6 +246,16 @@ func (r *ClawResourceReconciler) resolveCredentials(ctx context.Context, instanc
 						continue
 					}
 					rc.KubeConfig = kd
+				}
+
+				if cred.Type == clawv1alpha1.CredentialTypeCodexOAuth {
+					auth, err := proxy.ParseCodexAuthJSON(data)
+					if err != nil {
+						errs = append(errs, fmt.Errorf("credential %q: %w", cred.Name, err))
+						credFailed = true
+						continue
+					}
+					rc.CodexOAuth = &codexOAuthData{AccountID: auth.AccountID}
 				}
 			}
 			if credFailed {
@@ -511,4 +531,31 @@ func hasKubernetesCredentials(creds []resolvedCredential) bool {
 		}
 	}
 	return false
+}
+
+// codexOAuthAccountID returns the account ID for the named codexOAuth credential, or empty string.
+func codexOAuthAccountID(creds []resolvedCredential, credName string) string {
+	for i := range creds {
+		if creds[i].Name == credName && creds[i].CodexOAuth != nil {
+			return creds[i].CodexOAuth.AccountID
+		}
+	}
+	return ""
+}
+
+// buildSyntheticJWT constructs an unsigned JWT containing the account_id claim.
+// OpenClaw's openai-chatgpt-responses provider extracts account_id from the JWT
+// payload before making requests. This JWT is never verified by any real endpoint —
+// the proxy replaces the Authorization header with the real access token.
+func buildSyntheticJWT(accountID string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+
+	payload := map[string]string{
+		"sub":        "placeholder",
+		"account_id": accountID,
+	}
+	payloadJSON, _ := json.Marshal(payload)
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
+
+	return strings.Join([]string{header, payloadB64, ""}, ".")
 }
