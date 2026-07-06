@@ -979,6 +979,7 @@ spec:
                         url:
                           description: URL is the HTTPS URL of the Git repository.
                           minLength: 1
+                          pattern: ^https://
                           type: string
                       required:
                       - items

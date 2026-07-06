@@ -83,11 +83,11 @@ The `init-git-sync` container uses `alpine/git` (~8 MB). The controller generate
 
 **Rationale:** We only need one-shot `git clone --depth 1`, not a polling sidecar. `alpine/git` fits the existing init container script generation pattern. `git-sync` (the Kubernetes sidecar) is designed for continuous polling and has an opinionated symlink directory layout that would require extra steps to extract individual files.
 
-### 8. Git auth: HTTPS token only
+### 8. Git auth: HTTPS token via GIT_ASKPASS
 
-The secret value is injected into the clone URL as `https://oauth2:<token>@host/path.git`. SSH key auth is deferred to a future change.
+The clone URL embeds only the username (`https://oauth2@host/path.git`). The token is injected at runtime via a temporary `GIT_ASKPASS` script that echoes the token from an environment variable (`GIT_TOKEN_<index>`). This ensures the token never appears in process arguments, `/proc` listings, or git error messages. The askpass script is removed immediately after the clone. SSH key auth is deferred to a future change.
 
-**Rationale:** HTTPS token auth covers GitHub, GitLab, Bitbucket, and most enterprise Git servers. SSH adds complexity (known_hosts management, key file permissions, SSH agent). It can be added later without API changes — `SecretRefEntry` already has the fields needed.
+**Rationale:** HTTPS token auth covers GitHub, GitLab, Bitbucket, and most enterprise Git servers. `GIT_ASKPASS` is the standard git mechanism for non-interactive credential injection — it keeps the token out of argv and logs. SSH adds complexity (known_hosts management, key file permissions, SSH agent). It can be added later without API changes — `SecretRefEntry` already has the fields needed.
 
 ### 9. Git items: file-only, no directory copy
 
@@ -275,7 +275,7 @@ init-volume ──▶ init-config ──▶ wait-for-proxy ──▶ init-git-sy
                                                                      workspace)
 ```
 
-- **init-git-sync**: Only injected when `gitSources` is non-empty. Uses `alpine/git` image (from `GIT_SYNC_IMAGE` env var). Controller generates a shell script per the plugin init container pattern. Mounts proxy CA cert, sets `HTTP_PROXY`/`HTTPS_PROXY`. Runs `git clone --depth 1 --branch <ref>` per git source, with token injected into URL for private repos.
+- **init-git-sync**: Only injected when `gitSources` is non-empty. Uses `alpine/git` image (from `GIT_SYNC_IMAGE` env var). Controller generates a shell script per the plugin init container pattern. Mounts proxy CA cert, sets `HTTP_PROXY`/`HTTPS_PROXY`. Runs `git clone --depth 1 --branch <ref>` per git source, with credentials injected via `GIT_ASKPASS` for private repos (token never appears in argv or clone URL).
 - **init-seed**: Always injected (replaces the file seeding logic previously in `merge.js`). Mounts the gateway ConfigMap, all ConfigMap source volumes, all git emptyDirs, and the PVC. Reads `_seed_manifest.json` and copies each file using the specified mode.
 
 ### Volumes added to gateway Deployment
@@ -283,7 +283,7 @@ init-volume ──▶ init-config ──▶ wait-for-proxy ──▶ init-git-sy
 | Source type | Volume type | Volume name | Mount path |
 |---|---|---|---|
 | Inline | Existing gateway ConfigMap | `config` (existing) | `/config/` |
-| ConfigMap | ConfigMap volume (one per source) | `ws-cm-<cm-name>` | `/configmap-sources/<cm-name>/` |
+| ConfigMap | ConfigMap volume (one per source) | `ws-cm-<sanitized>` (dots→dashes, truncated to 63 chars with hash suffix) | `/configmap-sources/<vol-name>/` |
 | Git | emptyDir (one per git source) | `ws-git-<index>` | `/git-sources/<index>/` |
 
 ConfigMap volumes and git emptyDirs are mounted on the relevant init containers (`init-git-sync` gets git emptyDirs; `init-seed` gets everything).
@@ -294,4 +294,4 @@ ConfigMap volumes and git emptyDirs are mounted on the relevant init containers 
 - **Git clone latency**: Adds pod startup time proportional to repo size and network speed. **Mitigation**: `--depth 1` minimizes clone size. Sparse checkout could be added later for very large repos.
 - **ConfigMap 1 MiB limit for seeding manifest**: The manifest itself is small (metadata only, not file contents), so this is not a practical concern.
 - **`init-config` refactoring**: Removing file seeding from `merge.js` changes a well-tested init script. **Mitigation**: The seeding logic moves to `init-seed` with equivalent behavior. Existing tests cover the merge logic independently.
-- **Git token exposure**: The token is injected into the clone URL, which may appear in process listings or error logs. **Mitigation**: The init container runs briefly and the URL is constructed in a shell variable, not a command-line argument. A future enhancement could use `git credential.helper` for more secure injection.
+- **Git token exposure**: **Mitigated** by using `GIT_ASKPASS` — the token is passed via an environment variable and a temporary askpass script, never embedded in the clone URL or process arguments. The askpass script is removed immediately after the clone completes.

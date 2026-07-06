@@ -2021,9 +2021,7 @@ spec:
 			require.NoError(t, err, "Claw Ready did not become True")
 
 			t.Log("verifying ConfigMap source volume on gateway Deployment")
-			volJP := fmt.Sprintf(
-				"jsonpath={.spec.template.spec.volumes[?(@.name=='ws-cm-%s')].configMap.name}",
-				wsConfigMapName)
+			volJP := fmt.Sprintf("jsonpath={.spec.template.spec.volumes[?(@.name=='ws-cm-%s')].configMap.name}", wsConfigMapName)
 			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
 				"-o", volJP, "-n", userNamespace)
 			volOutput, err := utils.Run(t, cmd)

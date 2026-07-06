@@ -462,6 +462,7 @@ type GitSource struct {
 	// URL is the HTTPS URL of the Git repository.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https://`
 	URL string `json:"url"`
 
 	// Ref is the Git reference to check out: branch name, tag, or commit SHA.

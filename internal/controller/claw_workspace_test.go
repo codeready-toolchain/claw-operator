@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -400,6 +401,78 @@ func TestValidateAllWorkspacePaths(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "must not be absolute")
 	})
+
+	t.Run("should reject duplicate configMapSource refs", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			Spec: clawv1alpha1.ClawSpec{
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					ConfigMapSources: []clawv1alpha1.ConfigMapSource{
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "shared"},
+							Items:        []clawv1alpha1.ConfigMapItem{{Key: "a", Path: "a.md"}},
+						},
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "shared"},
+							Items:        []clawv1alpha1.ConfigMapItem{{Key: "b", Path: "b.md"}},
+						},
+					},
+				},
+			},
+		}
+		err := validateAllWorkspacePaths(instance)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `"shared" is referenced more than once`)
+	})
+
+	t.Run("should accept distinct configMapSource refs with different names", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			Spec: clawv1alpha1.ClawSpec{
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					ConfigMapSources: []clawv1alpha1.ConfigMapSource{
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "team-config"},
+							Items:        []clawv1alpha1.ConfigMapItem{{Key: "soul.md", Path: "SOUL.md"}},
+						},
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "shared-tools"},
+							Items:        []clawv1alpha1.ConfigMapItem{{Key: "tools.md", Path: "TOOLS.md"}},
+						},
+					},
+				},
+			},
+		}
+		err := validateAllWorkspacePaths(instance)
+		assert.NoError(t, err)
+	})
+
+	t.Run("should reject duplicate configMapSource refs even with other sources present", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			Spec: clawv1alpha1.ClawSpec{
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					InlineSources: []clawv1alpha1.InlineSource{
+						{Path: "README.md", Content: "hello"},
+					},
+					ConfigMapSources: []clawv1alpha1.ConfigMapSource{
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "team"},
+							Items:        []clawv1alpha1.ConfigMapItem{{Key: "a", Path: "a.md"}},
+						},
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "other"},
+							Items:        []clawv1alpha1.ConfigMapItem{{Key: "b", Path: "b.md"}},
+						},
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "team"},
+							Items:        []clawv1alpha1.ConfigMapItem{{Key: "c", Path: "c.md"}},
+						},
+					},
+				},
+			},
+		}
+		err := validateAllWorkspacePaths(instance)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `"team" is referenced more than once`)
+	})
 }
 
 // --- generateSeedManifest tests ---
@@ -459,9 +532,9 @@ func TestGenerateSeedManifest(t *testing.T) {
 		for _, e := range entries {
 			byTarget[e.Target] = e
 		}
-		assert.Equal(t, "/configmap-sources/team-config/soul.md", byTarget["custom-soul.md"].Source)
+		assert.Equal(t, "/configmap-sources/ws-cm-team-config/soul.md", byTarget["custom-soul.md"].Source)
 		assert.Equal(t, "seedIfMissing", byTarget["custom-soul.md"].Mode, "should inherit source-level mode")
-		assert.Equal(t, "/configmap-sources/team-config/tools.md", byTarget["TOOLS.md"].Source)
+		assert.Equal(t, "/configmap-sources/ws-cm-team-config/tools.md", byTarget["TOOLS.md"].Source)
 		assert.Equal(t, "overwrite", byTarget["TOOLS.md"].Mode, "item mode should override source mode")
 	})
 
@@ -910,6 +983,38 @@ func TestInjectConfigMapSourceVolumes(t *testing.T) {
 	})
 }
 
+func TestConfigMapSourceVolumeName(t *testing.T) {
+	t.Run("should prefix with ws-cm-", func(t *testing.T) {
+		assert.Equal(t, "ws-cm-team-config", configMapSourceVolumeName("team-config"))
+	})
+
+	t.Run("should replace dots with dashes", func(t *testing.T) {
+		assert.Equal(t, "ws-cm-my-app-config", configMapSourceVolumeName("my.app.config"))
+	})
+
+	t.Run("should truncate long names with hash suffix to stay within 63 chars", func(t *testing.T) {
+		longName := strings.Repeat("a", 200)
+		result := configMapSourceVolumeName(longName)
+		assert.LessOrEqual(t, len(result), 63)
+		assert.True(t, strings.HasPrefix(result, "ws-cm-"))
+		assert.Regexp(t, `-[0-9a-f]{8}$`, result, "truncated name should end with hash suffix")
+	})
+
+	t.Run("should not end with a dash before hash suffix after truncation", func(t *testing.T) {
+		// 48 chars of truncated body (maxLen 63 - prefix 6 - dash 1 - hash 8), place a dash right at the boundary
+		name := strings.Repeat("a", 48) + "-" + strings.Repeat("b", 20)
+		result := configMapSourceVolumeName(name)
+		assert.LessOrEqual(t, len(result), 63)
+		assert.Regexp(t, `[a-z0-9]-[0-9a-f]{8}$`, result, "no trailing dash before hash suffix")
+	})
+
+	t.Run("should produce different names for long names sharing a prefix", func(t *testing.T) {
+		a := configMapSourceVolumeName(strings.Repeat("a", 100) + "-alpha")
+		b := configMapSourceVolumeName(strings.Repeat("a", 100) + "-beta")
+		assert.NotEqual(t, a, b, "different ConfigMap names must produce different volume names")
+	})
+}
+
 func TestValidateConfigMapSources(t *testing.T) {
 	t.Run("should be no-op when workspace is nil", func(t *testing.T) {
 		instance := &clawv1alpha1.Claw{
@@ -1002,6 +1107,43 @@ func TestValidateConfigMapSources(t *testing.T) {
 	})
 }
 
+// --- shellQuote tests ---
+
+func TestShellQuote(t *testing.T) {
+	t.Run("should wrap simple string in single quotes", func(t *testing.T) {
+		assert.Equal(t, "'hello'", shellQuote("hello"))
+	})
+
+	t.Run("should escape embedded single quotes", func(t *testing.T) {
+		assert.Equal(t, "'it'\\''s'", shellQuote("it's"))
+	})
+
+	t.Run("should handle multiple single quotes", func(t *testing.T) {
+		assert.Equal(t, "'a'\\''b'\\''c'", shellQuote("a'b'c"))
+	})
+
+	t.Run("should handle empty string", func(t *testing.T) {
+		assert.Equal(t, "''", shellQuote(""))
+	})
+
+	t.Run("should preserve double quotes and special chars", func(t *testing.T) {
+		assert.Equal(t, "'hello \"world\" $HOME'", shellQuote(`hello "world" $HOME`))
+	})
+}
+
+// --- isCommitSHA tests ---
+
+func TestIsCommitSHA(t *testing.T) {
+	assert.True(t, isCommitSHA("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"))
+	assert.True(t, isCommitSHA("0000000000000000000000000000000000000000"))
+	assert.False(t, isCommitSHA("main"))
+	assert.False(t, isCommitSHA("v2.0"))
+	assert.False(t, isCommitSHA("a1b2c3d"))                                          // too short
+	assert.False(t, isCommitSHA("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2xx"))       // too long
+	assert.False(t, isCommitSHA("g1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"))         // non-hex char
+	assert.False(t, isCommitSHA("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2deadbeef")) // 48 chars
+}
+
 // --- generateGitSyncScript tests ---
 
 func TestGenerateGitSyncScript(t *testing.T) {
@@ -1020,9 +1162,10 @@ func TestGenerateGitSyncScript(t *testing.T) {
 		assert.Contains(t, script, "git clone --depth 1 --branch 'main'")
 		assert.Contains(t, script, "/git-sources/0")
 		assert.NotContains(t, script, "GIT_TOKEN")
+		assert.NotContains(t, script, "ASKPASS")
 	})
 
-	t.Run("should generate clone with token for private repo", func(t *testing.T) {
+	t.Run("should use GIT_ASKPASS for private repo", func(t *testing.T) {
 		script := generateGitSyncScript([]clawv1alpha1.GitSource{
 			{
 				URL: "https://git.corp.com/team/config.git",
@@ -1036,9 +1179,15 @@ func TestGenerateGitSyncScript(t *testing.T) {
 				},
 			},
 		})
+		assert.Contains(t, script, "ASKPASS_0=$(mktemp)")
 		assert.Contains(t, script, "GIT_TOKEN_0")
-		assert.Contains(t, script, "oauth2:${TOKEN}@")
+		assert.Contains(t, script, "chmod +x")
+		assert.Contains(t, script, "CLONE_URL='https://oauth2@git.corp.com/team/config.git'")
+		assert.Contains(t, script, "GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=\"$ASKPASS_0\"")
 		assert.Contains(t, script, "--branch 'v2.0'")
+		assert.Contains(t, script, "rm -f \"$ASKPASS_0\"")
+		assert.NotContains(t, script, "sed", "token must not be injected into clone URL via sed")
+		assert.NotContains(t, script, "oauth2:${TOKEN}@", "token must not appear in clone URL")
 	})
 
 	t.Run("should omit --branch when ref is empty", func(t *testing.T) {
@@ -1050,6 +1199,59 @@ func TestGenerateGitSyncScript(t *testing.T) {
 		})
 		assert.Contains(t, script, "git clone --depth 1 \"${CLONE_URL}\"")
 		assert.NotContains(t, script, "--branch")
+	})
+
+	t.Run("should use fetch for commit SHA ref", func(t *testing.T) {
+		script := generateGitSyncScript([]clawv1alpha1.GitSource{
+			{
+				URL: "https://github.com/team/config.git",
+				Ref: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+				Items: []clawv1alpha1.GitItem{
+					{RepoPath: "SOUL.md", Path: "SOUL.md"},
+				},
+			},
+		})
+		assert.Contains(t, script, "git init '/git-sources/0'")
+		assert.Contains(t, script, "git -C '/git-sources/0' fetch --depth 1")
+		assert.Contains(t, script, "'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'")
+		assert.Contains(t, script, "git -C '/git-sources/0' checkout FETCH_HEAD")
+		assert.NotContains(t, script, "--branch")
+	})
+
+	t.Run("should use fetch for commit SHA ref with private repo", func(t *testing.T) {
+		script := generateGitSyncScript([]clawv1alpha1.GitSource{
+			{
+				URL: "https://git.corp.com/team/config.git",
+				Ref: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+				SecretRef: &clawv1alpha1.SecretRefEntry{
+					Name: "git-creds",
+					Key:  "token",
+				},
+				Items: []clawv1alpha1.GitItem{
+					{RepoPath: "SOUL.md", Path: "SOUL.md"},
+				},
+			},
+		})
+		assert.Contains(t, script, "ASKPASS_0=$(mktemp)")
+		assert.Contains(t, script, "git init '/git-sources/0'")
+		assert.Contains(t, script, "GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=\"$ASKPASS_0\" git -C '/git-sources/0' fetch --depth 1")
+		assert.Contains(t, script, "checkout FETCH_HEAD")
+		assert.Contains(t, script, "rm -f \"$ASKPASS_0\"")
+		assert.NotContains(t, script, "--branch")
+	})
+
+	t.Run("should shell-escape single quotes in URL and ref", func(t *testing.T) {
+		script := generateGitSyncScript([]clawv1alpha1.GitSource{
+			{
+				URL: "https://example.com/it's-a-repo.git",
+				Ref: "it's-a-tag",
+				Items: []clawv1alpha1.GitItem{
+					{RepoPath: "a.md", Path: "a.md"},
+				},
+			},
+		})
+		assert.Contains(t, script, "'https://example.com/it'\\''s-a-repo.git'")
+		assert.Contains(t, script, "'it'\\''s-a-tag'")
 	})
 }
 
@@ -1631,7 +1833,7 @@ func TestWorkspaceIntegration(t *testing.T) {
 			byTarget[e.Target] = e
 		}
 		require.Contains(t, byTarget, "custom-soul.md")
-		assert.Equal(t, "/configmap-sources/team-config-int/soul.md", byTarget["custom-soul.md"].Source)
+		assert.Equal(t, "/configmap-sources/ws-cm-team-config-int/soul.md", byTarget["custom-soul.md"].Source)
 	})
 
 	t.Run("should add git sync init container and emptyDir volumes for gitSources after reconcile", func(t *testing.T) {

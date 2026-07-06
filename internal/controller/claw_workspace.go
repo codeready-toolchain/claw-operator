@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -38,6 +40,7 @@ const (
 	seedManifestKey        = "_seed_manifest.json"
 	configMapSourceMountFn = "/configmap-sources/"
 	gitSourceMountFn       = "/git-sources/"
+	commitSHALength        = 40
 	configMountPath        = "/config/"
 )
 
@@ -155,7 +158,13 @@ func validateAllWorkspacePaths(instance *clawv1alpha1.Claw) error {
 		}
 		seen[key] = "inline source"
 	}
+	seenCM := map[string]bool{}
 	for _, cms := range ws.ConfigMapSources {
+		if seenCM[cms.ConfigMapRef.Name] {
+			return fmt.Errorf("configMapSource %q is referenced more than once; combine items into a single entry",
+				cms.ConfigMapRef.Name)
+		}
+		seenCM[cms.ConfigMapRef.Name] = true
 		for _, item := range cms.Items {
 			if err := validateWorkspaceFiles(map[string]string{item.Path: ""}); err != nil {
 				return err
@@ -225,9 +234,10 @@ func generateSeedManifest(ws *clawv1alpha1.WorkspaceSpec) []seedManifestEntry {
 	}
 
 	for _, cms := range ws.ConfigMapSources {
+		volName := configMapSourceVolumeName(cms.ConfigMapRef.Name)
 		for _, item := range cms.Items {
 			entries = append(entries, seedManifestEntry{
-				Source: configMapSourceMountFn + cms.ConfigMapRef.Name + "/" + item.Key,
+				Source: configMapSourceMountFn + volName + "/" + item.Key,
 				Target: item.Path,
 				Mode:   resolveSeedMode(item.Mode, cms.Mode),
 			})
@@ -329,9 +339,22 @@ func validateConfigMapSources(ctx context.Context, c client.Reader, instance *cl
 	return nil
 }
 
-// configMapSourceVolumeName returns the volume name for a ConfigMap source.
+// configMapSourceVolumeName returns a DNS-1123 volume name for a ConfigMap
+// source. When truncation is needed, a short hash suffix is appended to
+// avoid collisions between names that share a long prefix.
 func configMapSourceVolumeName(cmName string) string {
-	return "ws-cm-" + cmName
+	const prefix = "ws-cm-"
+	const maxLen = 63
+	const hashLen = 8 // 8 hex chars from SHA-256
+	name := strings.ReplaceAll(cmName, ".", "-")
+	if len(prefix)+len(name) <= maxLen {
+		return prefix + name
+	}
+	h := sha256.Sum256([]byte(cmName))
+	suffix := hex.EncodeToString(h[:4])
+	truncLen := maxLen - len(prefix) - 1 - hashLen // 1 for the dash separator
+	name = strings.TrimRight(name[:truncLen], "-")
+	return prefix + name + "-" + suffix
 }
 
 // injectConfigMapSourceVolumes adds a ConfigMap volume and volumeMount per
@@ -367,30 +390,66 @@ func injectConfigMapSourceVolumes(objects []*unstructured.Unstructured, instance
 	return fmt.Errorf("claw deployment not found in manifests")
 }
 
+// shellQuote wraps s in single quotes, escaping any embedded single quotes
+// using the standard '\” technique so the result is safe to interpolate
+// into a shell script.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // gitSourceVolumeName returns the emptyDir volume name for a git source by index.
 func gitSourceVolumeName(index int) string {
 	return fmt.Sprintf("ws-git-%d", index)
 }
 
+// isCommitSHA returns true when ref is a full 40-character hex SHA-1.
+func isCommitSHA(ref string) bool {
+	if len(ref) != commitSHALength {
+		return false
+	}
+	_, err := hex.DecodeString(ref)
+	return err == nil
+}
+
 // generateGitSyncScript builds a shell script that clones each git source
-// into its emptyDir volume. Tokens for private repos are injected into the URL.
+// into its emptyDir volume. For private repos, credentials are passed via
+// GIT_ASKPASS so the token never appears in process arguments.
 func generateGitSyncScript(gitSources []clawv1alpha1.GitSource) string {
 	var sb strings.Builder
 	sb.WriteString("set -e\n")
 	for i, gs := range gitSources {
 		dest := fmt.Sprintf("%s%d", gitSourceMountFn, i)
-		cloneURL := gs.URL
+		quotedDest := shellQuote(dest)
+		var clonePrefix string
 		if gs.SecretRef != nil {
-			fmt.Fprintf(&sb, "TOKEN=\"${GIT_TOKEN_%d}\"\n", i)
-			// inject token: https://host/path → https://oauth2:TOKEN@host/path
-			fmt.Fprintf(&sb, "CLONE_URL=$(echo '%s' | sed \"s|https://|https://oauth2:${TOKEN}@|\")\n", cloneURL)
+			// Write a temporary GIT_ASKPASS script that echoes the token.
+			// The username oauth2 is embedded in the URL so git only
+			// prompts for the password.
+			fmt.Fprintf(&sb, "ASKPASS_%d=$(mktemp)\n", i)
+			fmt.Fprintf(&sb, "printf '#!/bin/sh\\necho \"${GIT_TOKEN_%d}\"\\n' > \"$ASKPASS_%d\"\n", i, i)
+			fmt.Fprintf(&sb, "chmod +x \"$ASKPASS_%d\"\n", i)
+			authURL := strings.Replace(gs.URL, "https://", "https://oauth2@", 1)
+			fmt.Fprintf(&sb, "CLONE_URL=%s\n", shellQuote(authURL))
+			clonePrefix = fmt.Sprintf("GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=\"$ASKPASS_%d\" ", i)
 		} else {
-			fmt.Fprintf(&sb, "CLONE_URL='%s'\n", cloneURL)
+			fmt.Fprintf(&sb, "CLONE_URL=%s\n", shellQuote(gs.URL))
 		}
-		if gs.Ref != "" {
-			fmt.Fprintf(&sb, "git clone --depth 1 --branch '%s' \"${CLONE_URL}\" '%s'\n", gs.Ref, dest)
+		if gs.Ref != "" && isCommitSHA(gs.Ref) {
+			// SHA refs cannot use --branch; fetch the exact commit instead.
+			fmt.Fprintf(&sb, "%sgit init %s\n", clonePrefix, quotedDest)
+			fmt.Fprintf(&sb, "%sgit -C %s fetch --depth 1 \"${CLONE_URL}\" %s\n",
+				clonePrefix, quotedDest, shellQuote(gs.Ref))
+			fmt.Fprintf(&sb, "%sgit -C %s checkout FETCH_HEAD\n",
+				clonePrefix, quotedDest)
+		} else if gs.Ref != "" {
+			fmt.Fprintf(&sb, "%sgit clone --depth 1 --branch %s \"${CLONE_URL}\" %s\n",
+				clonePrefix, shellQuote(gs.Ref), quotedDest)
 		} else {
-			fmt.Fprintf(&sb, "git clone --depth 1 \"${CLONE_URL}\" '%s'\n", dest)
+			fmt.Fprintf(&sb, "%sgit clone --depth 1 \"${CLONE_URL}\" %s\n",
+				clonePrefix, quotedDest)
+		}
+		if gs.SecretRef != nil {
+			fmt.Fprintf(&sb, "rm -f \"$ASKPASS_%d\"\n", i)
 		}
 	}
 	return sb.String()
@@ -588,7 +647,7 @@ func injectSeedInitContainer(
 				volName := configMapSourceVolumeName(cms.ConfigMapRef.Name)
 				volumeMounts = append(volumeMounts, map[string]any{
 					"name":      volName,
-					"mountPath": configMapSourceMountFn + cms.ConfigMapRef.Name + "/",
+					"mountPath": configMapSourceMountFn + volName + "/",
 					"readOnly":  true,
 				})
 			}
