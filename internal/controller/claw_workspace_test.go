@@ -1158,6 +1158,8 @@ func TestGenerateGitSyncScript(t *testing.T) {
 			},
 		})
 		assert.Contains(t, script, "set -e")
+		assert.Contains(t, script, "combined-ca.crt")
+		assert.Contains(t, script, "export GIT_SSL_CAINFO=/tmp/combined-ca.crt")
 		assert.Contains(t, script, "CLONE_URL='https://github.com/team/config.git'")
 		assert.Contains(t, script, "git clone --depth 1 --branch 'main'")
 		assert.Contains(t, script, "/git-sources/0")
@@ -1375,7 +1377,6 @@ func TestInjectGitSyncInitContainer(t *testing.T) {
 		}
 		assert.Equal(t, "http://test-proxy:8080", envMap["HTTP_PROXY"])
 		assert.Equal(t, "http://test-proxy:8080", envMap["HTTPS_PROXY"])
-		assert.Equal(t, "/etc/proxy-ca/ca.crt", envMap["GIT_SSL_CAINFO"])
 
 		vMounts, _, _ := unstructured.NestedSlice(gitSync, "volumeMounts")
 		mountNames := map[string]bool{}

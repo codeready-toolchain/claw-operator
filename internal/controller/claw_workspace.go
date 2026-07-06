@@ -417,6 +417,12 @@ func isCommitSHA(ref string) bool {
 func generateGitSyncScript(gitSources []clawv1alpha1.GitSource) string {
 	var sb strings.Builder
 	sb.WriteString("set -e\n")
+	// Combine the proxy CA with the system CA bundle so git trusts both
+	// MITM'd connections (proxy CA) and direct CONNECT tunnels (upstream CAs).
+	sb.WriteString("cat /etc/proxy-ca/ca.crt /etc/ssl/certs/ca-certificates.crt " +
+		"> /tmp/combined-ca.crt 2>/dev/null " +
+		"|| cp /etc/proxy-ca/ca.crt /tmp/combined-ca.crt\n")
+	sb.WriteString("export GIT_SSL_CAINFO=/tmp/combined-ca.crt\n")
 	for i, gs := range gitSources {
 		dest := fmt.Sprintf("%s%d", gitSourceMountFn, i)
 		quotedDest := shellQuote(dest)
@@ -494,11 +500,6 @@ func injectGitSyncInitContainer(
 			"mountPath": "/etc/proxy-ca",
 			"readOnly":  true,
 		})
-
-		// Git SSL env var for CA cert
-		envVars = append(envVars,
-			map[string]any{"name": "GIT_SSL_CAINFO", "value": "/etc/proxy-ca/ca.crt"},
-		)
 
 		for i, gs := range gitSources {
 			volName := gitSourceVolumeName(i)
