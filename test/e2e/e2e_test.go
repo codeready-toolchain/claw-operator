@@ -32,8 +32,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"sigs.k8s.io/yaml"
 
+	"github.com/codeready-toolchain/claw-operator/api/v1alpha1"
 	"github.com/codeready-toolchain/claw-operator/internal/controller"
 	"github.com/codeready-toolchain/claw-operator/test/utils"
 )
@@ -66,43 +69,63 @@ const (
 	proxyServiceName    = clawInstanceName + "-proxy"
 )
 
-// clawYAMLWithGemini returns a Claw CR YAML using spec.credentials[] with apiKey type.
-func clawYAMLWithGemini(secretName, secretKey string) string {
-	return fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
-kind: Claw
-metadata:
-  name: instance
-spec:
-  credentials:
-    - name: gemini
-      type: apiKey
-      secretRef:
-        - name: %s
-          key: %s
-      domain: ".googleapis.com"
-      apiKey:
-        header: x-goog-api-key
-`, secretName, secretKey)
+type ClawSpecOption func(*v1alpha1.ClawSpec)
+
+func WithImage(image string) ClawSpecOption {
+	return func(spec *v1alpha1.ClawSpec) {
+		spec.Image = image
+	}
 }
 
-// clawYAMLWithImage returns a Claw CR YAML with an explicit spec.image and apiKey credential.
-func clawYAMLWithImage(image, secretName, secretKey string) string {
-	return fmt.Sprintf(`apiVersion: claw.sandbox.redhat.com/v1alpha1
-kind: Claw
-metadata:
-  name: instance
-spec:
-  image: %s
-  credentials:
-    - name: gemini
-      type: apiKey
-      secretRef:
-        - name: %s
-          key: %s
-      domain: ".googleapis.com"
-      apiKey:
-        header: x-goog-api-key
-`, image, secretName, secretKey)
+func WithGeminiCredentials(secretName, secretKey string) ClawSpecOption {
+	return func(spec *v1alpha1.ClawSpec) {
+		spec.Credentials = []v1alpha1.CredentialSpec{
+			{
+				Name: "gemini",
+				Type: v1alpha1.CredentialTypeAPIKey,
+				APIKey: &v1alpha1.APIKeyConfig{
+					Header: "x-goog-api-key",
+				},
+				Domain:   ".googleapis.com",
+				Provider: "gemini",
+				SecretRef: []v1alpha1.SecretRefEntry{
+					{
+						Name: secretName,
+						Key:  secretKey,
+					},
+				},
+			},
+		}
+	}
+}
+
+func WithConfigMapSources(configMapSources ...v1alpha1.ConfigMapSource) ClawSpecOption {
+	return func(spec *v1alpha1.ClawSpec) {
+		if spec.Workspace == nil {
+			spec.Workspace = &v1alpha1.WorkspaceSpec{}
+		}
+		spec.Workspace.ConfigMapSources = configMapSources
+	}
+}
+
+func newClawYAML(t *testing.T, opts ...ClawSpecOption) []byte {
+	t.Helper()
+	claw := &v1alpha1.Claw{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Claw",
+			APIVersion: "claw.sandbox.redhat.com/v1alpha1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "instance",
+		},
+		Spec: v1alpha1.ClawSpec{},
+	}
+	for _, apply := range opts {
+		apply(&claw.Spec)
+	}
+	y, err := yaml.Marshal(claw)
+	require.NoError(t, err)
+	return y
 }
 
 func TestManager(t *testing.T) { //nolint:gocyclo
@@ -756,8 +779,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 
 			t.Log("creating Claw CR referencing first Secret")
 			crFile := filepath.Join("/tmp", "claw-e2e-test.yaml")
-			err := os.WriteFile(crFile, []byte(clawYAMLWithGemini("llm-key-1", "api-key")),
-				os.FileMode(0o644))
+			clawYAML := newClawYAML(t, WithGeminiCredentials("llm-key-1", "api-key"))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
 			require.NoError(t, err)
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
@@ -804,8 +827,8 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 				"--from-literal=api-key=second-api-key")
 
 			t.Log("updating Claw CR to reference the second Secret")
-			err = os.WriteFile(crFile, []byte(clawYAMLWithGemini("llm-key-2", "api-key")),
-				os.FileMode(0o644))
+			clawYAML = newClawYAML(t, WithGeminiCredentials("llm-key-2", "api-key"))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
 			require.NoError(t, err)
 
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
@@ -1218,8 +1241,8 @@ spec:
 
 			t.Log("applying Claw CR referencing the unlabeled Secret")
 			crFile := filepath.Join("/tmp", "claw-e2e-unlabeled.yaml")
-			err = os.WriteFile(crFile, []byte(clawYAMLWithGemini(unlabeledSecretName, "api-key")),
-				os.FileMode(0o644))
+			clawYAML := newClawYAML(t, WithGeminiCredentials(unlabeledSecretName, "api-key"))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
 			require.NoError(t, err)
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
@@ -1874,9 +1897,10 @@ spec:
 				"--from-literal=api-key=test-api-key-value")
 
 			t.Log("applying the Claw CR with explicit image")
-			crYAML := clawYAMLWithImage(gatewayImage, "gemini-api-key", "api-key")
-			crFile := filepath.Join(t.TempDir(), "claw.yaml")
-			require.NoError(t, os.WriteFile(crFile, []byte(crYAML), 0o644))
+			crFile := filepath.Join("/tmp", "claw-e2e-image.yaml")
+			clawYAML := newClawYAML(t, WithImage(gatewayImage), WithGeminiCredentials("gemini-api-key", "api-key"))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
+			require.NoError(t, err)
 			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
 			_, err = utils.Run(t, cmd)
 			require.NoError(t, err, "Failed to apply Claw CR")
@@ -1931,6 +1955,296 @@ spec:
 					return err == nil && output == podPhaseRunning, nil
 				})
 			require.NoError(t, err, "Gateway pod did not reach Running state")
+		})
+
+		t.Run("should seed workspace files from ConfigMap sources", func(t *testing.T) {
+			const wsConfigMapName = "e2e-workspace-config"
+
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "configmap", wsConfigMapName, "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating workspace source ConfigMap")
+			cmd := exec.Command("kubectl", "create", "configmap", wsConfigMapName,
+				"--from-literal=soul.md=# Enterprise Soul\nYou are an enterprise assistant.",
+				"--from-literal=tools.md=# Tools\nUse approved tools only.",
+				"-n", userNamespace)
+			out, err := utils.Run(t, cmd)
+			t.Logf("create configmap output: %q", out)
+			require.NoError(t, err, "Failed to create workspace source ConfigMap")
+
+			t.Log("creating the credential Secret")
+			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value")
+
+			t.Log("applying Claw CR with configMapSources")
+			crFile := filepath.Join("/tmp", "claw-e2e-cm-sources.yaml")
+			clawYAML := newClawYAML(t,
+				WithGeminiCredentials("gemini-api-key", "api-key"),
+				WithConfigMapSources(v1alpha1.ConfigMapSource{
+					ConfigMapRef: v1alpha1.ConfigMapRef{
+						Name: wsConfigMapName,
+					},
+					Items: []v1alpha1.ConfigMapItem{
+						{Key: "soul.md", Path: "SOUL.md"},
+						{Key: "tools.md", Path: "TOOLS.md", Mode: v1alpha1.SeedModeSeedIfMissing},
+					},
+				}))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR with configMapSources")
+
+			t.Log("waiting for Claw Ready condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw Ready did not become True")
+
+			t.Log("verifying ConfigMap source volume on gateway Deployment")
+			volJP := fmt.Sprintf("jsonpath={.spec.template.spec.volumes[?(@.name=='ws-cm-%s')].configMap.name}", wsConfigMapName)
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", volJP, "-n", userNamespace)
+			volOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err, "should find ws-cm volume")
+			assert.Equal(t, wsConfigMapName, volOutput,
+				"ConfigMap source volume should reference the workspace ConfigMap")
+
+			t.Log("verifying seed manifest has ConfigMap source entries")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
+				"-o", "jsonpath={.data._seed_manifest\\.json}",
+				"-n", userNamespace)
+			manifestJSON, err := utils.Run(t, cmd)
+			require.NoError(t, err, "seed manifest should exist in gateway ConfigMap")
+			assert.Contains(t, manifestJSON, wsConfigMapName,
+				"seed manifest should reference the ConfigMap source")
+			assert.Contains(t, manifestJSON, "SOUL.md",
+				"seed manifest should include SOUL.md target")
+			assert.Contains(t, manifestJSON, "TOOLS.md",
+				"seed manifest should include TOOLS.md target")
+
+			t.Log("verifying init-seed container is present")
+			initSeedJP := fmt.Sprintf(
+				"jsonpath={.spec.template.spec.initContainers[?(@.name=='%s')].name}",
+				controller.ClawSeedContainerName)
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", initSeedJP, "-n", userNamespace)
+			initSeedName, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, controller.ClawSeedContainerName, initSeedName,
+				"init-seed container should be present in the Deployment")
+
+			t.Log("verifying gateway pod is Running (init-seed completed successfully)")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=claw",
+						"-o", "jsonpath={.items[0].status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == podPhaseRunning, nil
+				})
+			require.NoError(t, err, "Gateway pod did not reach Running — init-seed may have failed")
+
+			t.Log("verifying init-seed logs show seeded files")
+			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+				"-o", "jsonpath={.items[0].metadata.name}", "-n", userNamespace)
+			podName, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "logs", podName, "-c",
+				controller.ClawSeedContainerName, "-n", userNamespace)
+			seedLogs, err := utils.Run(t, cmd)
+			// t.Logf("init-seed logs: %q", seedLogs)
+			require.NoError(t, err, "failed to get init-seed logs")
+			assert.Contains(t, seedLogs, "SOUL.md",
+				"init-seed logs should mention SOUL.md")
+		})
+
+		t.Run("should wire git source init container and volumes", func(t *testing.T) {
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "e2e-git-token", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value")
+
+			t.Log("creating the git token Secret")
+			cmd = exec.Command("kubectl", "delete", "secret", "e2e-git-token",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, "e2e-git-token",
+				"--from-literal=token=ghp_fake_e2e_token")
+
+			t.Log("applying Claw CR with gitSources")
+			crYAML := `apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      provider: google
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+  workspace:
+    skipBootstrap: true
+    gitSources:
+      - url: https://git.example.com/team/agent-config.git
+        ref: main
+        secretRef:
+          name: e2e-git-token
+          key: token
+        items:
+          - repoPath: "configs/SOUL.md"
+            path: "SOUL.md"
+          - repoPath: "configs/AGENTS.md"
+            path: "AGENTS.md"
+`
+			crFile := filepath.Join("/tmp", "claw-e2e-git-sources.yaml")
+			err := os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR with gitSources")
+
+			t.Log("waiting for Claw ProxyConfigured condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw ProxyConfigured did not become True")
+
+			t.Log("verifying init-git-sync container exists with correct image")
+			gitSyncJP := fmt.Sprintf(
+				"jsonpath={.spec.template.spec.initContainers[?(@.name=='%s')].image}",
+				controller.ClawGitSyncContainerName)
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", gitSyncJP, "-n", userNamespace)
+			gitSyncImage, err := utils.Run(t, cmd)
+			require.NoError(t, err, "init-git-sync container should exist")
+			assert.Contains(t, gitSyncImage, "alpine/git",
+				"init-git-sync should use alpine/git image")
+
+			t.Log("verifying init-git-sync has proxy env vars")
+			envJP := fmt.Sprintf(
+				"jsonpath={.spec.template.spec.initContainers[?(@.name=='%s')].env[?(@.name=='HTTPS_PROXY')].value}",
+				controller.ClawGitSyncContainerName)
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", envJP, "-n", userNamespace)
+			proxyEnv, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Contains(t, proxyEnv, "proxy:8080",
+				"init-git-sync should have HTTPS_PROXY set to the proxy service")
+
+			t.Log("verifying init-git-sync has GIT_TOKEN_0 env from Secret")
+			tokenJP := fmt.Sprintf(
+				"jsonpath={.spec.template.spec.initContainers[?(@.name=='%s')].env[?(@.name=='GIT_TOKEN_0')].valueFrom.secretKeyRef.name}",
+				controller.ClawGitSyncContainerName)
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", tokenJP, "-n", userNamespace)
+			tokenSecretRef, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "e2e-git-token", tokenSecretRef,
+				"GIT_TOKEN_0 should reference the git token Secret")
+
+			t.Log("verifying emptyDir volume for git source")
+			gitVolJP := "jsonpath={.spec.template.spec.volumes[?(@.name=='ws-git-0')].emptyDir}"
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", gitVolJP, "-n", userNamespace)
+			gitVolOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err, "ws-git-0 volume should exist")
+			assert.Equal(t, "{}", gitVolOutput,
+				"ws-git-0 should be an emptyDir volume")
+
+			t.Log("verifying seed manifest has git source entries")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
+				"-o", "jsonpath={.data._seed_manifest\\.json}",
+				"-n", userNamespace)
+			manifestJSON, err := utils.Run(t, cmd)
+			require.NoError(t, err, "seed manifest should exist")
+			assert.Contains(t, manifestJSON, "/git-sources/0/configs/SOUL.md",
+				"seed manifest should contain git source path for SOUL.md")
+			assert.Contains(t, manifestJSON, "/git-sources/0/configs/AGENTS.md",
+				"seed manifest should contain git source path for AGENTS.md")
+
+			t.Log("verifying init-git-sync command contains clone script")
+			cmdJP := fmt.Sprintf(
+				"jsonpath={.spec.template.spec.initContainers[?(@.name=='%s')].command}",
+				controller.ClawGitSyncContainerName)
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", cmdJP, "-n", userNamespace)
+			cmdOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Contains(t, cmdOutput, "git clone --depth 1",
+				"init-git-sync command should contain shallow clone")
+			assert.Contains(t, cmdOutput, "oauth2",
+				"clone script should use oauth2 token injection for private repos")
+
+			t.Log("verifying init container ordering")
+			allInitJP := "jsonpath={.spec.template.spec.initContainers[*].name}"
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", allInitJP, "-n", userNamespace)
+			allInitNames, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			initNames := strings.Fields(allInitNames)
+			require.True(t, len(initNames) >= 5,
+				"should have at least 5 init containers (init-volume, init-config, wait-for-proxy, init-git-sync, init-seed)")
+
+			gitSyncIdx := -1
+			seedIdx := -1
+			waitProxyIdx := -1
+			for i, name := range initNames {
+				switch name {
+				case "wait-for-proxy":
+					waitProxyIdx = i
+				case controller.ClawGitSyncContainerName:
+					gitSyncIdx = i
+				case controller.ClawSeedContainerName:
+					seedIdx = i
+				}
+			}
+			assert.Greater(t, gitSyncIdx, waitProxyIdx,
+				"init-git-sync should come after wait-for-proxy")
+			assert.Greater(t, seedIdx, gitSyncIdx,
+				"init-seed should come after init-git-sync")
 		})
 	})
 }

@@ -263,14 +263,16 @@ func main() {
 	}
 
 	clawReconciler := &controller.ClawResourceReconciler{
-		Client:             mgr.GetClient(),
-		Scheme:             mgr.GetScheme(),
-		UserSecretReader:   controller.NewLoggingUserSecretReader(mgr.GetAPIReader()),
-		ProxyImage:         os.Getenv("PROXY_IMAGE"),
-		KubectlImage:       os.Getenv("KUBECTL_IMAGE"),
-		OTelCollectorImage: os.Getenv("OTEL_COLLECTOR_IMAGE"),
-		ImagePullPolicy:    imagePullPolicy,
-		MetricsRefreshed:   make(chan struct{}),
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		UserSecretReader:    controller.NewLoggingUserSecretReader(mgr.GetAPIReader()),
+		UserConfigMapReader: mgr.GetAPIReader(),
+		ProxyImage:          os.Getenv("PROXY_IMAGE"),
+		KubectlImage:        os.Getenv("KUBECTL_IMAGE"),
+		GitSyncImage:        os.Getenv("GIT_SYNC_IMAGE"),
+		OTelCollectorImage:  os.Getenv("OTEL_COLLECTOR_IMAGE"),
+		ImagePullPolicy:     imagePullPolicy,
+		MetricsRefreshed:    make(chan struct{}),
 	}
 	if err = clawReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Claw")

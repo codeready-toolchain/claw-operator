@@ -65,15 +65,6 @@ data:
       return result;
     }
 
-    function seedIfMissing(src, dest) {
-      if (!fs.existsSync(dest)) {
-        const dir = path.dirname(dest);
-        fs.mkdirSync(dir, { recursive: true });
-        fs.copyFileSync(src, dest);
-        console.log(`[init-config] seeded ${dest}`);
-      }
-    }
-
     function copyAlways(src, dest) {
       const dir = path.dirname(dest);
       fs.mkdirSync(dir, { recursive: true });
@@ -119,31 +110,7 @@ data:
       console.log(`[init-config] wrote openclaw.json (mode=${mode}, first_run=${!fs.existsSync(pvcPath)})`);
     }
 
-    // Seed user-provided workspace files (_ws_* keys) before static seeds
-    // so _ws_AGENTS.md takes precedence over the builtin AGENTS.md
-    for (const f of fs.readdirSync(configDir)) {
-      if (!f.startsWith("_ws_")) continue;
-      const relPath = f.slice(4).replace(/--/g, "/");
-      seedIfMissing(
-        path.join(configDir, f),
-        path.join(workspaceDir, relPath)
-      );
-    }
-
-    // Seed builtin user-owned files (no-op if _ws_ variant already seeded above).
-    seedIfMissing(path.join(configDir, "AGENTS.md"), path.join(workspaceDir, "AGENTS.md"));
-    seedIfMissing(path.join(configDir, "SOUL.md"), path.join(workspaceDir, "SOUL.md"));
-
-    // Seed BOOTSTRAP.md into .operator/ subdirectory, NOT the workspace root.
-    // OpenClaw 6.1+ deletes root BOOTSTRAP.md when it detects "completion evidence"
-    // (custom SOUL.md or skills/*/SKILL.md). The bootstrap-extra-files hook loads
-    // it from .operator/ instead, bypassing the reconciliation logic.
-    seedIfMissing(
-      path.join(configDir, "BOOTSTRAP.md"),
-      path.join(workspaceDir, ".operator", "BOOTSTRAP.md")
-    );
-
-    // Always copy operator-managed skill files
+    // Copy operator-managed skill files (always overwritten)
     copyAlways(
       path.join(configDir, "PLATFORM.md"),
       path.join(workspaceDir, "skills", "platform", "SKILL.md")
