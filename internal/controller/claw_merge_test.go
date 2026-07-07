@@ -504,12 +504,12 @@ func TestMergeJS(t *testing.T) {
 }
 
 // TestMergeJSSeedOnly exhaustively covers the seedOnly mode test matrix from
-// docs/proposals/user-owned-config-design.md's Implementation Plan. Failure
-// modes here are silent and asymmetric (under-reasserting leaves a
-// security/auth field unprotected; over-reasserting silently clobbers a
-// user/agent's customization) and only surface on the second-or-later
-// restart of an already-seeded instance — so this suite intentionally covers
-// every row of the design doc's matrix, not just one representative case.
+// docs/adr/0021-seed-only-config-mode.md. Failure modes here are silent and
+// asymmetric (under-reasserting leaves a security/auth field unprotected;
+// over-reasserting silently clobbers a user/agent's customization) and only
+// surface on the second-or-later restart of an already-seeded instance — so
+// this suite intentionally covers every row of the matrix, not just one
+// representative case.
 func TestMergeJSSeedOnly(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node not found in PATH, skipping merge.js tests")

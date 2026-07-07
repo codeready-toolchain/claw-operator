@@ -31,11 +31,9 @@ instance (or the user, via the UI/CLI) legitimately mutates its own
 configuration over time — installing plugins, registering custom providers,
 tuning MCP servers — and expects those changes to survive restarts.
 
-Full design exploration, including the two-bucket ownership analysis and five
-resolved open questions, lives in
-[docs/proposals/user-owned-config-design.md](../proposals/user-owned-config-design.md)
-and [docs/proposals/user-owned-config-questions.md](../proposals/user-owned-config-questions.md).
-This ADR records the as-implemented decisions.
+This ADR records the as-implemented decisions from the original design
+exploration (two-bucket ownership analysis and five resolved open questions
+around gating, ownership boundary, convergence, and naming).
 
 > **Naming disambiguation:** `seedOnly` (this ADR) is a `ConfigMode` value
 > (`spec.config.mergeMode`) governing the *whole* `openclaw.json` file. It is
@@ -87,9 +85,10 @@ B** — a genuine candidate for `seedOnly` freezing.
   `gateway.auth.mode`, `gateway.controlUi.dangerouslyDisableDeviceAuth`,
   `gateway.trustedProxies`, the Route-host entry in
   `gateway.controlUi.allowedOrigins` (append-only), `tools.web.search.*`,
-  `agents.defaults.memorySearch.*`, `diagnostics.otel.{metrics,metricsEndpoint}`.
-  Credential injection itself never touches `openclaw.json` at all — it
-  happens transparently at the MITM proxy layer.
+  `tools.web.fetch.enabled`, `agents.defaults.memorySearch.*`,
+  `diagnostics.otel.{metrics,metricsEndpoint}`. Credential injection itself
+  never touches `openclaw.json` at all — it happens transparently at the
+  MITM proxy layer.
 - **Credential/routing-critical sub-fields** of a CR-declared
   provider/channel/MCP-server entry — only these specific sub-fields are
   reasserted; everything else in the same entry is Bucket B:

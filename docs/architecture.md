@@ -43,7 +43,7 @@ A third `spec.config.mergeMode` value seeds `openclaw.json` once on first boot, 
 
 | Owner | Sections | `seedOnly` restart behavior |
 |---|---|---|
-| Operator (sub-field only) | `gateway.*` infra/auth keys, Route-host entry in `allowedOrigins`, `tools.web.search.*`, `agents.defaults.memorySearch.*`, `diagnostics.otel.{metrics,metricsEndpoint}` | Reasserted every restart, same as `merge`/`overwrite` |
+| Operator (sub-field only) | `gateway.*` infra/auth keys, Route-host entry in `allowedOrigins`, `tools.web.search.*`, `tools.web.fetch.enabled`, `agents.defaults.memorySearch.*`, `diagnostics.otel.{metrics,metricsEndpoint}` | Reasserted every restart, same as `merge`/`overwrite` |
 | Operator (sub-field only) | `models.providers.<name>.{baseUrl,apiKey,api}`, `channels.<name>.{enabled,botToken,token,appToken}`, `mcp.servers.<name>` (full entry, only for `envFrom`/`credentialRef`/URL-based servers) | Reasserted every restart; the rest of each entry is left untouched |
 | Operator → User (gap-fill) | New CR-declared provider/channel/MCP server, `agents.defaults.model.primary`/`.fallbacks` when absent | Added automatically the first time it's absent from the PVC file; never touched again once present |
 | User | Everything else in a declared entry (`dmPolicy`, `allowFrom`, a provider's local `.models`), `agents.list`, non-declared channels/MCP servers/plugins, `tools.*` beyond web search, `cron.*` | Frozen after first seed — never reset |
