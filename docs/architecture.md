@@ -49,7 +49,7 @@ A third `spec.config.mergeMode` value seeds `openclaw.json` once on first boot, 
 | User | Everything else in a declared entry (`dmPolicy`, `allowFrom`, a provider's local `.models`), `agents.list`, non-declared channels/MCP servers/plugins, `tools.*` beyond web search, `cron.*` | Frozen after first seed — never reset |
 | User (skill docs) | `PLATFORM.md`, `KUBERNETES.md`, `_skill_*` | `seedIfMissing` instead of the `merge`/`overwrite` modes' `copyAlways` — seeded once, edits/deletions persist |
 
-A cluster admin can restrict which `mergeMode` values are permitted via the `ClawOperatorConfig` singleton CRD (see ADR-0021). If a Claw requests a disallowed mode, `Ready` reports `False` with reason `ConfigModeNotAllowed` and reconciliation halts without restarting the running instance. Missing `ClawOperatorConfig` fails open (all modes allowed).
+A cluster admin can restrict which `mergeMode` values are permitted via the `ClawOperatorConfig` singleton CRD (see ADR-0021). If a Claw requests a disallowed mode — whether it's brand new or already running — `Ready` reports `False` with reason `ConfigModeNotAllowed` and the instance is scaled to zero replicas (the same non-destructive mechanism `spec.idle` uses; Secrets/PVC/CR spec are untouched). Fixing the mode, or widening the policy, brings it straight back. Missing `ClawOperatorConfig` fails open (all modes allowed).
 
 ## Multi-Instance Support
 

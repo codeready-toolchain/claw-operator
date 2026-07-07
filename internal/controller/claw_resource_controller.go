@@ -456,25 +456,18 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Enforce cluster-admin policy on which spec.config.mergeMode values are
 	// allowed (ClawOperatorConfig). Fails open when no policy is configured.
+	// A denial doesn't just block a brand-new Claw's first reconcile — it
+	// actively scales an already-running instance to zero (handlePolicyIdle),
+	// so policy is enforceable fleet-wide, not only at creation time.
 	allowed, err := r.checkConfigModeAllowed(ctx, instance)
 	if err != nil {
 		logger.Error(err, "Failed to evaluate ClawOperatorConfig policy")
 		return ctrl.Result{}, err
 	}
 	if !allowed {
-		msg := fmt.Sprintf("mergeMode %q is not allowed by ClawOperatorConfig", effectiveConfigMode(instance))
-		logger.Info(msg)
-		setCondition(instance, clawv1alpha1.ConditionTypeReady, metav1.ConditionFalse,
-			clawv1alpha1.ConditionReasonConfigModeNotAllowed, msg)
-		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
-			logger.Error(statusErr, "Failed to update status after config mode gating failure")
-			// Unlike a successful gating denial (a stable policy state, deliberately
-			// not requeued below), a failed status write is a transient API problem —
-			// return it so the Ready:False/ConfigModeNotAllowed condition actually
-			// gets persisted on retry instead of being silently dropped.
-			return ctrl.Result{}, statusErr
-		}
-		return ctrl.Result{}, nil
+		logger.Info("mergeMode not allowed by ClawOperatorConfig, idling instance",
+			"mode", effectiveConfigMode(instance))
+		return r.handlePolicyIdle(ctx, instance)
 	}
 
 	// Short-circuit when idled — scale deployments to zero and return

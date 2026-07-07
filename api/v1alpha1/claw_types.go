@@ -103,6 +103,7 @@ const (
 	ConditionReasonConfigFailed         = "ConfigFailed"
 	ConditionReasonIdle                 = "Idle"
 	ConditionReasonIdledByRequest       = "IdledByRequest"
+	ConditionReasonIdledByPolicy        = "IdledByPolicy"
 	ConditionReasonConfigModeNotAllowed = "ConfigModeNotAllowed"
 )
 

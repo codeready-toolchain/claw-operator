@@ -59,7 +59,8 @@ around gating, ownership boundary, convergence, and naming).
    with that fresh state once it reaches the pod.
 5. **Fail safe, not silent.** If a cluster admin disallows a mode, a Claw
    that requests it gets clear, visible feedback (`Ready: False`), not a
-   silent fallback to a different mode.
+   silent fallback to a different mode. This applies whether the Claw is
+   brand new or already running — see "Cluster-Admin Gating" below.
 
 ## Ownership Boundary: The Two-Bucket Model
 
@@ -173,17 +174,26 @@ enforces:
 (`internal/controller/claw_operator_config.go`) runs early in `Reconcile`,
 before credential resolution. On denial, it reuses the existing `Ready`
 condition — no new condition type — setting `Ready: False` with reason
-`ConfigModeNotAllowed` and returning `nil` (not an error), so
-controller-runtime doesn't apply exponential-backoff retries to what's a
-stable policy mismatch, not a transient failure. Because halting reconcile
-early never re-renders the Deployment, an already-running instance whose
-mode becomes disallowed after the fact (an admin tightens policy
-retroactively) is never restarted or downgraded — it keeps running
-untouched, just with `Ready: False` until the mismatch is resolved.
+`ConfigModeNotAllowed`, and delegates to `handlePolicyIdle`
+(`internal/controller/claw_idle.go`) to actively scale the Claw's Deployments
+to zero replicas, the same mechanism `spec.idle` already uses (a new `Idle`
+condition reason, `IdledByPolicy`, distinguishes the two triggers). This
+makes policy enforceable fleet-wide, not just for brand-new Claws: an
+already-running instance whose mode becomes disallowed after the fact (an
+admin tightens policy retroactively) is scaled to zero on its next
+reconcile, not left running the disallowed mode indefinitely. The scale-down
+is non-destructive — Secrets, the PVC, and the Claw CR's `spec` are never
+touched (in particular, `spec.config.mergeMode` is never silently rewritten
+on the user's behalf) — so fixing the mode, or widening the policy again,
+brings the instance straight back with no data loss. Both `handlePolicyIdle`
+and the gating check itself return `nil` (not an error) on a stable denial,
+so controller-runtime doesn't apply exponential-backoff retries to what's a
+policy mismatch, not a transient failure.
 
 `SetupWithManager` also watches `ClawOperatorConfig` and enqueues every
 `Claw` CR in the cluster on change, so a policy edit is reflected promptly
-instead of waiting for an unrelated reconcile trigger.
+instead of waiting for an unrelated reconcile trigger — including scaling
+down every now-non-compliant Claw at once.
 
 ## Summary Table
 
@@ -200,7 +210,7 @@ instead of waiting for an unrelated reconcile trigger.
 | # | Question | Decision |
 |---|----------|----------|
 | Q1 | Mechanism for cluster-admin gating | `ClawOperatorConfig`, a Namespaced singleton CRD in the operator's own runtime namespace (resolved via `WATCH_NAMESPACE`) |
-| Q2 | How gating violations are surfaced | Reuse the existing `Ready` condition (no new condition type); halt reconcile without returning an error |
+| Q2 | How gating violations are surfaced | Reuse the existing `Ready` condition (no new condition type); actively scale the instance to zero replicas (reusing the `spec.idle` mechanism) rather than only blocking new Claws; halt without returning an error |
 | Q3 | Ownership boundary | Two-bucket model, with sub-field-level reassertion for declared providers/channels/MCP servers |
 | Q4 | Update/convergence mechanism | Bucket A: covered by the existing reconcile→hash→rollout pipeline, no new mechanism. Bucket B: automatic gap-fill for *new* entries; opt-in resync for *existing* entries is a deferred fast-follow; schema-breaking migrations are explicit out-of-scope future work |
 | Q5 | Naming for the new `mergeMode` value | `seedOnly` — disambiguated from the unrelated `SeedMode`/`seedIfMissing` via doc-comments rather than a rename |
@@ -215,6 +225,12 @@ instead of waiting for an unrelated reconcile trigger.
   condition, not this type's).
 - `internal/controller/claw_operator_config.go`: `effectiveConfigMode` and
   `checkConfigModeAllowed` gating logic.
+- `internal/controller/claw_idle.go`: `handlePolicyIdle` scales an
+  out-of-policy Claw's Deployments to zero, sharing
+  `scaleToZeroAndSetIdleStatus` with the pre-existing `spec.idle` path
+  (`handleIdle`); `ConditionReasonIdledByPolicy` distinguishes it from a
+  user-requested idle (`ConditionReasonIdledByRequest`) on the `Idle`
+  condition.
 - `internal/controller/claw_mcp.go`: `injectMcpServers` writes the private
   `_seedOnlyMeta` marker; `mcpServerIsBucketA` decides membership
   (`command == ""` i.e. URL-based, or non-empty `EnvFrom`, or

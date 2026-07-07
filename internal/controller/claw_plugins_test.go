@@ -175,6 +175,17 @@ func TestGeneratePluginInstallScript(t *testing.T) {
 		assert.Contains(t, script, `mkdir -p "$EXT"`)
 		assert.Contains(t, script, `ls "$EXT"`)
 	})
+
+	t.Run("should clear the openclaw CLI's npm project cache before installing", func(t *testing.T) {
+		script := generatePluginInstallScript([]string{"@openclaw/matrix"})
+		assert.Contains(t, script, `rm -rf "/home/node/.openclaw/npm/projects"`)
+
+		npmCleanupIdx := strings.Index(script, `rm -rf "/home/node/.openclaw/npm/projects"`)
+		installIdx := strings.Index(script, "openclaw plugins install")
+		require.Greater(t, npmCleanupIdx, 0)
+		require.Greater(t, installIdx, 0)
+		assert.Less(t, npmCleanupIdx, installIdx, "npm project cache cleanup should happen before install")
+	})
 }
 
 // --- configurePluginsInitContainer tests ---

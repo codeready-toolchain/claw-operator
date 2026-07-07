@@ -147,6 +147,12 @@ else
   find "$EXT" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
 fi
 mkdir -p "$EXT"
+# The openclaw CLI also tracks per-package install state under
+# ~/.openclaw/npm/projects/<hash>, separate from $EXT above. It refuses to
+# reinstall ("plugin already exists ... delete it first") if a stale project
+# dir survives from a prior boot, so it's wiped unconditionally here — it's a
+# pure install cache the CLI recreates from scratch on every install.
+rm -rf "/home/node/.openclaw/npm/projects"
 ls "$EXT" 2>/dev/null | sort > /tmp/before-plugins.txt
 `)
 	for _, pkg := range plugins {

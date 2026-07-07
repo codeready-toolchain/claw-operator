@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -158,6 +159,134 @@ func TestClawOperatorConfigGating(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConfigModeRetroactiveEnforcement covers the gap left by gating alone:
+// checkConfigModeAllowed only ever ran on a Claw's very first reconcile, so
+// an already-running instance whose mode became disallowed later (an admin
+// tightening policy) kept running in the disallowed mode forever, with only
+// a Ready:False status flag to show for it. handlePolicyIdle closes that gap
+// by actively scaling an out-of-policy instance to zero, the same way
+// spec.idle does, so policy is enforceable fleet-wide and not just for
+// brand-new Claws. See docs/adr/0021-seed-only-config-mode.md.
+func TestConfigModeRetroactiveEnforcement(t *testing.T) {
+	ctx := context.Background()
+	resourceName := "retroactive-enforcement"
+	t.Cleanup(func() { deleteAndWaitAllResources(t, namespace, resourceName) })
+
+	opNamespace := setupOperatorNamespace(t, ctx, resourceName+"-op")
+	opConfig := &clawv1alpha1.ClawOperatorConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      clawv1alpha1.ClawOperatorConfigSingletonName,
+			Namespace: opNamespace,
+		},
+		Spec: clawv1alpha1.ClawOperatorConfigSpec{
+			AllowedConfigModes: []clawv1alpha1.ConfigMode{clawv1alpha1.ConfigModeMerge, clawv1alpha1.ConfigModeSeedOnly},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, opConfig))
+
+	secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+	require.NoError(t, k8sClient.Create(ctx, secret))
+
+	instance := testClawWithMergeMode(resourceName, namespace, clawv1alpha1.ConfigModeSeedOnly)
+	instance.Spec.Credentials = testCredentials()
+	require.NoError(t, k8sClient.Create(ctx, instance))
+
+	reconciler := &ClawResourceReconciler{
+		Client:            k8sClient,
+		Scheme:            scheme.Scheme,
+		UserSecretReader:  k8sClient,
+		OperatorNamespace: opNamespace,
+	}
+
+	coreDeployments := []string{
+		getClawDeploymentName(resourceName),
+		getProxyDeploymentName(resourceName),
+	}
+
+	t.Run("runs normally while seedOnly is allowed", func(t *testing.T) {
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+		setCoreDeploymentsAvailable(t, ctx, resourceName, namespace)
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		for _, name := range coreDeployments {
+			deployment := &appsv1.Deployment{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployment))
+			require.NotNil(t, deployment.Spec.Replicas)
+			assert.Equal(t, int32(1), *deployment.Spec.Replicas, "expected 1 replica on %s", name)
+		}
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
+		readyCond := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeReady)
+		require.NotNil(t, readyCond)
+		assert.Equal(t, metav1.ConditionTrue, readyCond.Status)
+	})
+
+	t.Run("tightening policy scales the running instance to zero", func(t *testing.T) {
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: clawv1alpha1.ClawOperatorConfigSingletonName, Namespace: opNamespace,
+		}, opConfig))
+		opConfig.Spec.AllowedConfigModes = []clawv1alpha1.ConfigMode{clawv1alpha1.ConfigModeMerge}
+		require.NoError(t, k8sClient.Update(ctx, opConfig))
+
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		for _, name := range coreDeployments {
+			deployment := &appsv1.Deployment{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployment))
+			require.NotNil(t, deployment.Spec.Replicas)
+			assert.Equal(t, int32(0), *deployment.Spec.Replicas,
+				"expected %s to be scaled to zero once seedOnly became disallowed", name)
+		}
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
+
+		readyCond := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeReady)
+		require.NotNil(t, readyCond)
+		assert.Equal(t, metav1.ConditionFalse, readyCond.Status)
+		assert.Equal(t, clawv1alpha1.ConditionReasonConfigModeNotAllowed, readyCond.Reason)
+
+		idleCond := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeIdle)
+		require.NotNil(t, idleCond, "Idle condition should be set when scaled to zero by policy")
+		assert.Equal(t, metav1.ConditionTrue, idleCond.Status)
+		assert.Equal(t, clawv1alpha1.ConditionReasonIdledByPolicy, idleCond.Reason)
+
+		// Spec is never mutated on the user's behalf — the CR still literally
+		// requests seedOnly; only the running Deployments were touched.
+		assert.Equal(t, clawv1alpha1.ConfigModeSeedOnly, updated.Spec.Config.MergeMode)
+	})
+
+	t.Run("widening policy again restores normal operation", func(t *testing.T) {
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: clawv1alpha1.ClawOperatorConfigSingletonName, Namespace: opNamespace,
+		}, opConfig))
+		opConfig.Spec.AllowedConfigModes = []clawv1alpha1.ConfigMode{clawv1alpha1.ConfigModeMerge, clawv1alpha1.ConfigModeSeedOnly}
+		require.NoError(t, k8sClient.Update(ctx, opConfig))
+
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+		setCoreDeploymentsAvailable(t, ctx, resourceName, namespace)
+		reconcileClaw(t, ctx, reconciler, resourceName, namespace)
+
+		for _, name := range coreDeployments {
+			deployment := &appsv1.Deployment{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployment))
+			require.NotNil(t, deployment.Spec.Replicas)
+			assert.Equal(t, int32(1), *deployment.Spec.Replicas, "expected %s restored to 1 replica", name)
+		}
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
+
+		assert.Nil(t, meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeIdle),
+			"Idle condition should be removed once policy allows the mode again")
+
+		readyCond := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeReady)
+		require.NotNil(t, readyCond)
+		assert.Equal(t, metav1.ConditionTrue, readyCond.Status)
+	})
 }
 
 func TestClawOperatorConfigNameValidation(t *testing.T) {
