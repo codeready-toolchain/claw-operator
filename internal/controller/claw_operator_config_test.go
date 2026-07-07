@@ -229,10 +229,15 @@ func TestClawOperatorConfigGating(t *testing.T) {
 func TestFindAllClaws(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("should map ClawOperatorConfig change to every Claw CR", func(t *testing.T) {
+	t.Run("should map the singleton ClawOperatorConfig change to every Claw CR", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 		createClawInstance(t, ctx, testInstanceName, namespace)
-		reconciler := createClawReconciler()
+		reconciler := &ClawResourceReconciler{
+			Client:            k8sClient,
+			Scheme:            scheme.Scheme,
+			UserSecretReader:  k8sClient,
+			OperatorNamespace: namespace,
+		}
 
 		opConfig := &clawv1alpha1.ClawOperatorConfig{
 			ObjectMeta: metav1.ObjectMeta{
@@ -249,7 +254,12 @@ func TestFindAllClaws(t *testing.T) {
 
 	t.Run("should return empty when no Claw CRs exist", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
-		reconciler := createClawReconciler()
+		reconciler := &ClawResourceReconciler{
+			Client:            k8sClient,
+			Scheme:            scheme.Scheme,
+			UserSecretReader:  k8sClient,
+			OperatorNamespace: namespace,
+		}
 
 		opConfig := &clawv1alpha1.ClawOperatorConfig{
 			ObjectMeta: metav1.ObjectMeta{
@@ -260,6 +270,45 @@ func TestFindAllClaws(t *testing.T) {
 
 		requests := reconciler.findAllClaws(ctx, opConfig)
 		assert.Empty(t, requests)
+	})
+
+	t.Run("should ignore a ClawOperatorConfig with the wrong name", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstance(t, ctx, testInstanceName, namespace)
+		reconciler := &ClawResourceReconciler{
+			Client:            k8sClient,
+			Scheme:            scheme.Scheme,
+			UserSecretReader:  k8sClient,
+			OperatorNamespace: namespace,
+		}
+
+		notTheSingleton := &clawv1alpha1.ClawOperatorConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "not-cluster", Namespace: namespace},
+		}
+
+		requests := reconciler.findAllClaws(ctx, notTheSingleton)
+		assert.Empty(t, requests, "only the singleton name should trigger a cluster-wide fan-out")
+	})
+
+	t.Run("should ignore a same-named ClawOperatorConfig outside the operator namespace", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		createClawInstance(t, ctx, testInstanceName, namespace)
+		reconciler := &ClawResourceReconciler{
+			Client:            k8sClient,
+			Scheme:            scheme.Scheme,
+			UserSecretReader:  k8sClient,
+			OperatorNamespace: "some-other-operator-namespace",
+		}
+
+		wrongNamespace := &clawv1alpha1.ClawOperatorConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      clawv1alpha1.ClawOperatorConfigSingletonName,
+				Namespace: namespace,
+			},
+		}
+
+		requests := reconciler.findAllClaws(ctx, wrongNamespace)
+		assert.Empty(t, requests, "a same-named object outside the operator's own namespace is not the policy singleton")
 	})
 }
 

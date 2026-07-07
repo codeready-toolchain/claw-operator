@@ -19,8 +19,11 @@ forever:
 
 Issue #224 asks for a third mode where the operator seeds `openclaw.json`
 **once** on first boot, and from then on treats the file (plus workspace,
-skills, plugins, and MCP config) as belonging to the user/agent. A narrow set
-of infrastructure/security keys remain operator-enforced regardless of mode,
+skills, and MCP config) as belonging to the user/agent — declarative
+`spec.plugins` installs are the one exception, remaining operator-managed and
+reinstalled every restart since they're Kubernetes-side, deterministically-
+convergent state rather than `openclaw.json` content. A narrow set of
+infrastructure/security keys remain operator-enforced regardless of mode,
 since those aren't safe to delegate — everything else becomes durable user
 state instead of "whatever key the operator doesn't currently recognize."
 

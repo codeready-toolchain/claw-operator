@@ -17,11 +17,14 @@ forever:
 
 This addresses [GitHub issue #224](https://github.com/codeready-toolchain/claw-operator/issues/224),
 which asks for a third mode where the operator seeds `openclaw.json` **once**
-on first boot, then treats the file (plus MCP config) as belonging to the
-user/agent from then on. A narrow set of infrastructure/security keys remain
-operator-enforced regardless of mode, since those aren't safe to delegate —
-everything else becomes durable user state instead of "whatever key the
-operator doesn't currently recognize."
+on first boot, then treats the file as belonging to the user/agent from then
+on. A narrow set of infrastructure/security keys remain operator-enforced
+regardless of mode, since those aren't safe to delegate — this includes
+credentialed or proxy-routed MCP servers, whose entry is reasserted on every
+restart just like a declared provider or channel (see the two-bucket model
+below); everything else, including MCP servers with no credential or proxy
+constraint, becomes durable user state instead of "whatever key the operator
+doesn't currently recognize."
 
 This matters for interactive/agentic workflows where the running OpenClaw
 instance (or the user, via the UI/CLI) legitimately mutates its own

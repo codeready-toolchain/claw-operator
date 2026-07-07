@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -130,6 +131,13 @@ func runMergeJS(t *testing.T, setup mergeTestSetup) mergeTestResult {
 	cmd := exec.Command("node", scriptPath) //nolint:gosec
 	if setup.configMode != "" {
 		cmd.Env = append(os.Environ(), "CLAW_CONFIG_MODE="+setup.configMode)
+	} else {
+		// Explicitly unset rather than leaving cmd.Env nil, so the child can't
+		// inherit an ambient CLAW_CONFIG_MODE from the test process's own
+		// environment — setup.configMode == "" must always mean "unset".
+		cmd.Env = slices.DeleteFunc(os.Environ(), func(e string) bool {
+			return strings.HasPrefix(e, "CLAW_CONFIG_MODE=")
+		})
 	}
 
 	var stdout, stderr strings.Builder
@@ -545,6 +553,52 @@ func TestMergeJSSeedOnly(t *testing.T) {
 		customModel, hasCustomModel := nestedValue(result.config, "models.providers.google.models.custom-model")
 		assert.True(t, hasCustomModel, "hand-populated local .models array should be preserved (Bucket B)")
 		assert.Equal(t, map[string]any{"alias": "Custom"}, customModel)
+	})
+
+	t.Run("malformed declared provider/channel entries are replaced with the declared structure", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"models": {"providers": {
+				"google": {"baseUrl": "https://real.example.com", "apiKey": "real-key", "api": "openai-completions"},
+				"openai": {"baseUrl": "https://openai.example.com", "apiKey": "openai-key", "api": "openai-completions"},
+				"acme": {"baseUrl": "https://acme.example.com", "apiKey": "acme-key", "api": "openai-completions"}
+			}},
+			"channels": {"telegram": {"enabled": true, "botToken": "placeholder"}}
+		}`
+		pvcJSON := `{
+			"models": {"providers": {"google": null, "openai": ["not", "an", "object"], "acme": "corrupted-string"}},
+			"channels": {"telegram": "corrupted-string"}
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON, pvcJSON: pvcJSON, configMode: "seedOnly"})
+
+		google, _ := nestedValue(result.config, "models.providers.google")
+		assert.Equal(t, map[string]any{"baseUrl": "https://real.example.com", "apiKey": "real-key", "api": "openai-completions"}, google,
+			"a null provider entry should be repaired with the full declared structure")
+		openai, _ := nestedValue(result.config, "models.providers.openai")
+		assert.Equal(t, map[string]any{"baseUrl": "https://openai.example.com", "apiKey": "openai-key", "api": "openai-completions"}, openai,
+			"an array-shaped provider entry should be repaired with the full declared structure")
+		acme, _ := nestedValue(result.config, "models.providers.acme")
+		assert.Equal(t, map[string]any{"baseUrl": "https://acme.example.com", "apiKey": "acme-key", "api": "openai-completions"}, acme,
+			"a scalar-shaped provider entry should be repaired with the full declared structure")
+		telegram, _ := nestedValue(result.config, "channels.telegram")
+		assert.Equal(t, map[string]any{"enabled": true, "botToken": "placeholder"}, telegram,
+			"a scalar-shaped channel entry should be repaired with the full declared structure")
+	})
+
+	t.Run("malformed declared MCP bucket-A entry is replaced with the declared structure", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"mcp": {"servers": {"db": {"command": "node", "args": ["db-mcp-server.js"], "env": {"DB_PASSWORD": "DB_PASSWORD"}}}},
+			"_seedOnlyMeta": {"mcpBucketAServers": ["db"]}
+		}`
+		pvcJSON := `{"mcp": {"servers": {"db": null}}}`
+
+		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON, pvcJSON: pvcJSON, configMode: "seedOnly"})
+
+		db, _ := nestedValue(result.config, "mcp.servers.db")
+		assert.Equal(t, map[string]any{"command": "node", "args": []any{"db-mcp-server.js"}, "env": map[string]any{"DB_PASSWORD": "DB_PASSWORD"}}, db,
+			"a null bucket-A MCP server entry should be repaired with the full declared structure")
 	})
 
 	t.Run("declared channel's botToken/enabled corrected, dmPolicy/allowFrom preserved", func(t *testing.T) {

@@ -164,11 +164,20 @@ data:
       }
     }
 
+    function isPlainObject(value) {
+      return typeof value === "object" && value !== null && !Array.isArray(value);
+    }
+
     // reassertBucketA overwrites only the credential/routing-critical
     // sub-fields of providers/channels/MCP servers that are declared in the
     // CR (i.e. present in both ops and the existing PVC file). Everything
     // else in each entry (Bucket B) is left completely untouched. Entries
     // present only in the PVC file (not CR-declared) are never touched.
+    // If a declared entry's existing value is malformed (null, a scalar, or
+    // an array instead of an object) it's treated as broken and replaced
+    // wholesale with the declared entry, rather than silently skipped — a
+    // hand-corrupted Bucket-A entry (e.g. a provider with no baseUrl/apiKey)
+    // must not be left permanently unrepaired.
     // mcpBucketAServers is a Set of MCP server names needing full-entry
     // reassertion (see injectMcpServers's _seedOnlyMeta marker) — this can't
     // be inferred from JSON shape alone (a command+env entry looks the same
@@ -178,7 +187,11 @@ data:
       const baseProviders = getPath(base, ["models", "providers"]);
       if (baseProviders) {
         for (const name of Object.keys(opsProviders)) {
-          if (!baseProviders[name] || typeof baseProviders[name] !== "object") continue;
+          if (!(name in baseProviders)) continue;
+          if (!isPlainObject(baseProviders[name])) {
+            baseProviders[name] = opsProviders[name];
+            continue;
+          }
           for (const key of PROVIDER_BUCKET_A_KEYS) {
             if (opsProviders[name][key] !== undefined) {
               baseProviders[name][key] = opsProviders[name][key];
@@ -191,7 +204,11 @@ data:
       const baseChannels = base.channels;
       if (baseChannels) {
         for (const name of Object.keys(opsChannels)) {
-          if (!baseChannels[name] || typeof baseChannels[name] !== "object") continue;
+          if (!(name in baseChannels)) continue;
+          if (!isPlainObject(baseChannels[name])) {
+            baseChannels[name] = opsChannels[name];
+            continue;
+          }
           for (const key of CHANNEL_BUCKET_A_KEYS) {
             if (opsChannels[name][key] !== undefined) {
               baseChannels[name][key] = opsChannels[name][key];
@@ -204,7 +221,7 @@ data:
       const baseMcpServers = getPath(base, ["mcp", "servers"]);
       if (baseMcpServers) {
         for (const name of Object.keys(opsMcpServers)) {
-          if (!baseMcpServers[name]) continue;
+          if (!(name in baseMcpServers)) continue;
           if (mcpBucketAServers.has(name)) {
             baseMcpServers[name] = opsMcpServers[name];
           }

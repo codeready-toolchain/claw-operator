@@ -468,6 +468,11 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			clawv1alpha1.ConditionReasonConfigModeNotAllowed, msg)
 		if statusErr := r.Status().Update(ctx, instance); statusErr != nil {
 			logger.Error(statusErr, "Failed to update status after config mode gating failure")
+			// Unlike a successful gating denial (a stable policy state, deliberately
+			// not requeued below), a failed status write is a transient API problem —
+			// return it so the Ready:False/ConfigModeNotAllowed condition actually
+			// gets persisted on retry instead of being silently dropped.
+			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{}, nil
 	}
@@ -1615,8 +1620,17 @@ func (r *ClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // findAllClaws maps a ClawOperatorConfig change to every Claw CR in the
 // cluster, so tightening/loosening admin policy is reflected in each Claw's
 // Ready condition promptly instead of waiting for an unrelated reconcile
-// trigger (e.g. a CR edit or credential rotation).
-func (r *ClawResourceReconciler) findAllClaws(ctx context.Context, _ client.Object) []reconcile.Request {
+// trigger (e.g. a CR edit or credential rotation). Only the singleton
+// ClawOperatorConfig actually consulted by checkConfigModeAllowed (name
+// ClawOperatorConfigSingletonName, in the operator's own namespace)
+// triggers this cluster-wide fan-out; any other ClawOperatorConfig object
+// (e.g. a stray one in a tenant namespace) is never looked up by the
+// reconciler and so is ignored here too.
+func (r *ClawResourceReconciler) findAllClaws(ctx context.Context, obj client.Object) []reconcile.Request {
+	if obj.GetName() != clawv1alpha1.ClawOperatorConfigSingletonName || obj.GetNamespace() != r.OperatorNamespace {
+		return nil
+	}
+
 	openClawList := &clawv1alpha1.ClawList{}
 	if err := r.List(ctx, openClawList); err != nil {
 		return nil
