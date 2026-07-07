@@ -21,7 +21,8 @@ spec:
           ClawOperatorConfig is the Schema for the clawoperatorconfigs API. A single
           instance named "cluster" must live in the operator's own runtime namespace
           (resolved via the WATCH_NAMESPACE environment variable) — it is never
-          looked up in, or honored from, a tenant namespace.
+          looked up in, or honored from, a tenant namespace. The name is enforced
+          at admission time by the XValidation rule above (ClawOperatorConfigSingletonName).
         properties:
           apiVersion:
             description: |-
@@ -66,5 +67,8 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: ClawOperatorConfig must be named 'cluster'
+          rule: self.metadata.name == 'cluster'
     served: true
     storage: true

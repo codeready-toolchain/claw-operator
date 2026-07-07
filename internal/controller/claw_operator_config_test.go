@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,173 +57,134 @@ func testClawWithMergeMode(name, namespace string, mode clawv1alpha1.ConfigMode)
 	return instance
 }
 
+// TestClawOperatorConfigGating table-drives the four ways checkConfigModeAllowed
+// can resolve for a given Claw: an explicit deny, an explicit allow, fail-open
+// on a missing singleton, and fail-open on an empty allowlist. Each case
+// shares the same create-singleton/create-Claw/reconcile/assert-condition
+// shape; only the singleton's presence/allowlist, the Claw's mergeMode, and
+// the expected outcome vary per case.
 func TestClawOperatorConfigGating(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("disallowed mode sets Ready False with ConfigModeNotAllowed", func(t *testing.T) {
-		resourceName := "gating-disallowed"
-		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace, resourceName) })
+	tests := []struct {
+		name string
+		// singleton is nil when no ClawOperatorConfig should be created at
+		// all (exercises the fail-open "missing singleton" path); otherwise
+		// it's the AllowedConfigModes to set on the created singleton (an
+		// empty-but-non-nil slice exercises the fail-open "empty allowlist"
+		// path).
+		singleton  []clawv1alpha1.ConfigMode
+		clawMode   clawv1alpha1.ConfigMode
+		wantDenied bool
+	}{
+		{
+			name:       "disallowed mode sets Ready False with ConfigModeNotAllowed",
+			singleton:  []clawv1alpha1.ConfigMode{clawv1alpha1.ConfigModeMerge},
+			clawMode:   clawv1alpha1.ConfigModeSeedOnly,
+			wantDenied: true,
+		},
+		{
+			name:       "allowed mode has no gating effect",
+			singleton:  []clawv1alpha1.ConfigMode{clawv1alpha1.ConfigModeMerge, clawv1alpha1.ConfigModeSeedOnly},
+			clawMode:   clawv1alpha1.ConfigModeSeedOnly,
+			wantDenied: false,
+		},
+		{
+			name:       "no ClawOperatorConfig singleton fails open",
+			singleton:  nil,
+			clawMode:   clawv1alpha1.ConfigModeOverwrite,
+			wantDenied: false,
+		},
+		{
+			name:       "singleton with empty allowedConfigModes allows everything",
+			singleton:  []clawv1alpha1.ConfigMode{},
+			clawMode:   clawv1alpha1.ConfigModeSeedOnly,
+			wantDenied: false,
+		},
+	}
 
-		opNamespace := setupOperatorNamespace(t, ctx, "gating-disallowed-op")
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resourceName := fmt.Sprintf("gating-case-%d", i)
+			t.Cleanup(func() { deleteAndWaitAllResources(t, namespace, resourceName) })
+
+			opNamespace := setupOperatorNamespace(t, ctx, resourceName+"-op")
+			if tc.singleton != nil {
+				opConfig := &clawv1alpha1.ClawOperatorConfig{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      clawv1alpha1.ClawOperatorConfigSingletonName,
+						Namespace: opNamespace,
+					},
+					Spec: clawv1alpha1.ClawOperatorConfigSpec{AllowedConfigModes: tc.singleton},
+				}
+				require.NoError(t, k8sClient.Create(ctx, opConfig))
+				t.Cleanup(func() { _ = k8sClient.Delete(ctx, opConfig) })
+			}
+
+			instance := testClawWithMergeMode(resourceName, namespace, tc.clawMode)
+			if !tc.wantDenied {
+				// Only the allowed/fail-open cases reconcile far enough to need
+				// real credentials; the denied case halts before credential
+				// resolution, so a missing secret there would false-pass.
+				secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+				require.NoError(t, k8sClient.Create(ctx, secret))
+				instance.Spec.Credentials = testCredentials()
+			}
+			require.NoError(t, k8sClient.Create(ctx, instance))
+
+			reconciler := &ClawResourceReconciler{
+				Client:            k8sClient,
+				Scheme:            scheme.Scheme,
+				UserSecretReader:  k8sClient,
+				OperatorNamespace: opNamespace,
+			}
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
+			})
+			require.NoError(t, err, "reconcile should not return an error regardless of gating outcome "+
+				"(a denial is a stable policy state, not a transient failure)")
+
+			updated := &clawv1alpha1.Claw{}
+			require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
+			cond := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeReady)
+			if tc.wantDenied {
+				require.NotNil(t, cond, "Ready condition should be set")
+				assert.Equal(t, metav1.ConditionFalse, cond.Status)
+				assert.Equal(t, clawv1alpha1.ConditionReasonConfigModeNotAllowed, cond.Reason)
+			} else if cond != nil {
+				assert.NotEqual(t, clawv1alpha1.ConditionReasonConfigModeNotAllowed, cond.Reason,
+					"an allowed/fail-open case must never produce the gating failure reason")
+			}
+		})
+	}
+}
+
+func TestClawOperatorConfigNameValidation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("rejects a name other than the singleton at admission time", func(t *testing.T) {
+		opNamespace := setupOperatorNamespace(t, ctx, "name-validation-op")
+		opConfig := &clawv1alpha1.ClawOperatorConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "not-cluster", Namespace: opNamespace},
+		}
+
+		err := k8sClient.Create(ctx, opConfig)
+		require.Error(t, err, "the API server must reject a non-singleton name via the CEL XValidation rule")
+		assert.Contains(t, err.Error(), "must be named 'cluster'")
+	})
+
+	t.Run("accepts the singleton name", func(t *testing.T) {
+		opNamespace := setupOperatorNamespace(t, ctx, "name-validation-ok-op")
 		opConfig := &clawv1alpha1.ClawOperatorConfig{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clawv1alpha1.ClawOperatorConfigSingletonName,
 				Namespace: opNamespace,
 			},
-			Spec: clawv1alpha1.ClawOperatorConfigSpec{
-				AllowedConfigModes: []clawv1alpha1.ConfigMode{clawv1alpha1.ConfigModeMerge},
-			},
 		}
+
 		require.NoError(t, k8sClient.Create(ctx, opConfig))
 		t.Cleanup(func() { _ = k8sClient.Delete(ctx, opConfig) })
-
-		instance := testClawWithMergeMode(resourceName, namespace, clawv1alpha1.ConfigModeSeedOnly)
-		require.NoError(t, k8sClient.Create(ctx, instance))
-
-		reconciler := &ClawResourceReconciler{
-			Client:            k8sClient,
-			Scheme:            scheme.Scheme,
-			UserSecretReader:  k8sClient,
-			OperatorNamespace: opNamespace,
-		}
-
-		_, err := reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
-		})
-		require.NoError(t, err, "gating denial should not return an error (stable policy state, not transient failure)")
-
-		updated := &clawv1alpha1.Claw{}
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
-		cond := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeReady)
-		require.NotNil(t, cond, "Ready condition should be set")
-		assert.Equal(t, metav1.ConditionFalse, cond.Status)
-		assert.Equal(t, clawv1alpha1.ConditionReasonConfigModeNotAllowed, cond.Reason)
-	})
-
-	t.Run("allowed mode has no gating effect", func(t *testing.T) {
-		resourceName := "gating-allowed"
-		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace, resourceName) })
-
-		opNamespace := setupOperatorNamespace(t, ctx, "gating-allowed-op")
-		opConfig := &clawv1alpha1.ClawOperatorConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      clawv1alpha1.ClawOperatorConfigSingletonName,
-				Namespace: opNamespace,
-			},
-			Spec: clawv1alpha1.ClawOperatorConfigSpec{
-				AllowedConfigModes: []clawv1alpha1.ConfigMode{
-					clawv1alpha1.ConfigModeMerge,
-					clawv1alpha1.ConfigModeSeedOnly,
-				},
-			},
-		}
-		require.NoError(t, k8sClient.Create(ctx, opConfig))
-		t.Cleanup(func() { _ = k8sClient.Delete(ctx, opConfig) })
-
-		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-		require.NoError(t, k8sClient.Create(ctx, secret))
-
-		instance := testClawWithMergeMode(resourceName, namespace, clawv1alpha1.ConfigModeSeedOnly)
-		instance.Spec.Credentials = testCredentials()
-		require.NoError(t, k8sClient.Create(ctx, instance))
-
-		reconciler := &ClawResourceReconciler{
-			Client:            k8sClient,
-			Scheme:            scheme.Scheme,
-			UserSecretReader:  k8sClient,
-			OperatorNamespace: opNamespace,
-		}
-
-		_, err := reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
-		})
-		require.NoError(t, err, "reconcile should succeed for an allowed mode")
-
-		updated := &clawv1alpha1.Claw{}
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
-		cond := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeReady)
-		if cond != nil {
-			assert.NotEqual(t, clawv1alpha1.ConditionReasonConfigModeNotAllowed, cond.Reason,
-				"an allowed mode must never produce the gating failure reason")
-		}
-	})
-
-	t.Run("no ClawOperatorConfig singleton fails open", func(t *testing.T) {
-		resourceName := "gating-fail-open"
-		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace, resourceName) })
-
-		opNamespace := setupOperatorNamespace(t, ctx, "gating-fail-open-op")
-		// Deliberately no ClawOperatorConfig singleton created in opNamespace.
-
-		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-		require.NoError(t, k8sClient.Create(ctx, secret))
-
-		instance := testClawWithMergeMode(resourceName, namespace, clawv1alpha1.ConfigModeOverwrite)
-		instance.Spec.Credentials = testCredentials()
-		require.NoError(t, k8sClient.Create(ctx, instance))
-
-		reconciler := &ClawResourceReconciler{
-			Client:            k8sClient,
-			Scheme:            scheme.Scheme,
-			UserSecretReader:  k8sClient,
-			OperatorNamespace: opNamespace,
-		}
-
-		_, err := reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
-		})
-		require.NoError(t, err, "reconcile should succeed when no ClawOperatorConfig singleton exists (fail-open)")
-
-		updated := &clawv1alpha1.Claw{}
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
-		cond := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeReady)
-		if cond != nil {
-			assert.NotEqual(t, clawv1alpha1.ConditionReasonConfigModeNotAllowed, cond.Reason,
-				"missing ClawOperatorConfig must fail open, not deny")
-		}
-	})
-
-	t.Run("singleton with empty allowedConfigModes allows everything", func(t *testing.T) {
-		resourceName := "gating-empty-allowlist"
-		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace, resourceName) })
-
-		opNamespace := setupOperatorNamespace(t, ctx, "gating-empty-op")
-		opConfig := &clawv1alpha1.ClawOperatorConfig{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      clawv1alpha1.ClawOperatorConfigSingletonName,
-				Namespace: opNamespace,
-			},
-			Spec: clawv1alpha1.ClawOperatorConfigSpec{},
-		}
-		require.NoError(t, k8sClient.Create(ctx, opConfig))
-		t.Cleanup(func() { _ = k8sClient.Delete(ctx, opConfig) })
-
-		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
-		require.NoError(t, k8sClient.Create(ctx, secret))
-
-		instance := testClawWithMergeMode(resourceName, namespace, clawv1alpha1.ConfigModeSeedOnly)
-		instance.Spec.Credentials = testCredentials()
-		require.NoError(t, k8sClient.Create(ctx, instance))
-
-		reconciler := &ClawResourceReconciler{
-			Client:            k8sClient,
-			Scheme:            scheme.Scheme,
-			UserSecretReader:  k8sClient,
-			OperatorNamespace: opNamespace,
-		}
-
-		_, err := reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: client.ObjectKey{Name: resourceName, Namespace: namespace},
-		})
-		require.NoError(t, err, "reconcile should succeed when allowedConfigModes is empty (unrestricted)")
-
-		updated := &clawv1alpha1.Claw{}
-		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: resourceName, Namespace: namespace}, updated))
-		cond := meta.FindStatusCondition(updated.Status.Conditions, clawv1alpha1.ConditionTypeReady)
-		if cond != nil {
-			assert.NotEqual(t, clawv1alpha1.ConditionReasonConfigModeNotAllowed, cond.Reason,
-				"empty allowedConfigModes must allow every mode")
-		}
 	})
 }
 

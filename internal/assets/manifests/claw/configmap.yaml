@@ -168,60 +168,60 @@ data:
       return typeof value === "object" && value !== null && !Array.isArray(value);
     }
 
-    // reassertBucketA overwrites only the credential/routing-critical
-    // sub-fields of providers/channels/MCP servers that are declared in the
-    // CR (i.e. present in both ops and the existing PVC file). Everything
-    // else in each entry (Bucket B) is left completely untouched. Entries
-    // present only in the PVC file (not CR-declared) are never touched.
-    // If a declared entry's existing value is malformed (null, a scalar, or
-    // an array instead of an object) it's treated as broken and replaced
-    // wholesale with the declared entry, rather than silently skipped — a
-    // hand-corrupted Bucket-A entry (e.g. a provider with no baseUrl/apiKey)
-    // must not be left permanently unrepaired.
-    // mcpBucketAServers is a Set of MCP server names needing full-entry
-    // reassertion (see injectMcpServers's _seedOnlyMeta marker) — this can't
-    // be inferred from JSON shape alone (a command+env entry looks the same
-    // whether or not env came from envFrom).
-    function reassertBucketA(base, ops, mcpBucketAServers) {
-      const opsProviders = getPath(ops, ["models", "providers"]) || {};
-      const baseProviders = getPath(base, ["models", "providers"]);
-      if (baseProviders) {
-        for (const name of Object.keys(opsProviders)) {
-          if (!(name in baseProviders)) continue;
-          if (!isPlainObject(baseProviders[name])) {
-            baseProviders[name] = opsProviders[name];
-            continue;
-          }
-          for (const key of PROVIDER_BUCKET_A_KEYS) {
-            if (opsProviders[name][key] !== undefined) {
-              baseProviders[name][key] = opsProviders[name][key];
-            }
-          }
-        }
-      }
+    // hasOwn guards every declared-entry lookup below against dangerous
+    // names like "__proto__"/"constructor"/"prototype": the `in` operator
+    // (used previously) matches these via the prototype chain even when
+    // they're not real own entries, and reading/writing through them (e.g.
+    // base[name] = ops[name]) can reassign an object's own prototype or, if
+    // base[name] happens to resolve to Object.prototype itself, pollute it
+    // globally for the rest of this script's execution. Provider/channel/MCP
+    // server names are CR-author-controlled strings, so this is a real
+    // reachable input, not just theoretical.
+    function hasOwn(obj, name) {
+      return Object.prototype.hasOwnProperty.call(obj, name);
+    }
 
-      const opsChannels = ops.channels || {};
-      const baseChannels = base.channels;
-      if (baseChannels) {
-        for (const name of Object.keys(opsChannels)) {
-          if (!(name in baseChannels)) continue;
-          if (!isPlainObject(baseChannels[name])) {
-            baseChannels[name] = opsChannels[name];
-            continue;
-          }
-          for (const key of CHANNEL_BUCKET_A_KEYS) {
-            if (opsChannels[name][key] !== undefined) {
-              baseChannels[name][key] = opsChannels[name][key];
-            }
+    // reassertBucketAEntries overwrites only the allowlisted sub-fields of
+    // declared providers/channels (i.e. present in both ops and the
+    // existing PVC file). Everything else in each entry (Bucket B) is left
+    // completely untouched. Entries present only in the PVC file (not
+    // CR-declared) are never touched. If a declared entry's existing value
+    // is malformed (null, a scalar, or an array instead of an object) it's
+    // treated as broken and replaced wholesale with the declared entry,
+    // rather than silently skipped — a hand-corrupted Bucket-A entry (e.g. a
+    // provider with no baseUrl/apiKey) must not be left permanently
+    // unrepaired.
+    function reassertBucketAEntries(baseMap, opsMap, bucketAKeys) {
+      if (!baseMap) return;
+      for (const name of Object.keys(opsMap)) {
+        if (!hasOwn(baseMap, name)) continue;
+        if (!isPlainObject(baseMap[name])) {
+          baseMap[name] = opsMap[name];
+          continue;
+        }
+        for (const key of bucketAKeys) {
+          if (opsMap[name][key] !== undefined) {
+            baseMap[name][key] = opsMap[name][key];
           }
         }
       }
+    }
+
+    // reassertBucketA applies reassertBucketAEntries to declared
+    // providers/channels, plus the analogous full-entry reassertion for MCP
+    // servers. mcpBucketAServers is a Set of MCP server names needing
+    // full-entry reassertion (see injectMcpServers's _seedOnlyMeta marker)
+    // — this can't be inferred from JSON shape alone (a command+env entry
+    // looks the same whether or not env came from envFrom).
+    function reassertBucketA(base, ops, mcpBucketAServers) {
+      reassertBucketAEntries(getPath(base, ["models", "providers"]), getPath(ops, ["models", "providers"]) || {}, PROVIDER_BUCKET_A_KEYS);
+      reassertBucketAEntries(base.channels, ops.channels || {}, CHANNEL_BUCKET_A_KEYS);
 
       const opsMcpServers = getPath(ops, ["mcp", "servers"]) || {};
       const baseMcpServers = getPath(base, ["mcp", "servers"]);
       if (baseMcpServers) {
         for (const name of Object.keys(opsMcpServers)) {
-          if (!(name in baseMcpServers)) continue;
+          if (!hasOwn(baseMcpServers, name)) continue;
           if (mcpBucketAServers.has(name)) {
             baseMcpServers[name] = opsMcpServers[name];
           }

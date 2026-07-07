@@ -36,11 +36,13 @@ type ClawOperatorConfigSpec struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:path=clawoperatorconfigs,scope=Namespaced
+// +kubebuilder:validation:XValidation:rule="self.metadata.name == 'cluster'",message="ClawOperatorConfig must be named 'cluster'"
 
 // ClawOperatorConfig is the Schema for the clawoperatorconfigs API. A single
 // instance named "cluster" must live in the operator's own runtime namespace
 // (resolved via the WATCH_NAMESPACE environment variable) — it is never
-// looked up in, or honored from, a tenant namespace.
+// looked up in, or honored from, a tenant namespace. The name is enforced
+// at admission time by the XValidation rule above (ClawOperatorConfigSingletonName).
 type ClawOperatorConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

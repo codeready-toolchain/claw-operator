@@ -238,7 +238,8 @@ func TestInjectMcpServers(t *testing.T) {
 
 		injectMcpServers(config, instance)
 
-		meta := config["_seedOnlyMeta"].(map[string]any)
+		meta, ok := config["_seedOnlyMeta"].(map[string]any)
+		require.True(t, ok, "_seedOnlyMeta should be set")
 		assert.Empty(t, meta["mcpBucketAServers"])
 	})
 }

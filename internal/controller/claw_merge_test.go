@@ -601,6 +601,41 @@ func TestMergeJSSeedOnly(t *testing.T) {
 			"a null bucket-A MCP server entry should be repaired with the full declared structure")
 	})
 
+	t.Run("dangerous provider/channel/MCP server names are never merged as own entries", func(t *testing.T) {
+		operatorJSON := `{
+			"gateway": {"port": 18789},
+			"models": {"providers": {
+				"google": {"baseUrl": "https://real.example.com", "apiKey": "real-key", "api": "openai-completions"},
+				"__proto__": {"baseUrl": "https://evil.example.com", "apiKey": "evil-key", "api": "openai-completions"},
+				"constructor": {"baseUrl": "https://evil2.example.com", "apiKey": "evil-key-2", "api": "openai-completions"}
+			}},
+			"mcp": {"servers": {"db": {"command": "node"}, "__proto__": {"command": "evil"}}},
+			"_seedOnlyMeta": {"mcpBucketAServers": ["db", "__proto__"]}
+		}`
+		pvcJSON := `{
+			"models": {"providers": {"google": {"baseUrl": "https://real.example.com", "apiKey": "real-key", "api": "openai-completions"}}},
+			"mcp": {"servers": {"db": {"command": "node"}}}
+		}`
+
+		result := runMergeJS(t, mergeTestSetup{operatorJSON: operatorJSON, pvcJSON: pvcJSON, configMode: "seedOnly"})
+
+		providers, ok := nestedValue(result.config, "models.providers")
+		require.True(t, ok)
+		providersMap, ok := providers.(map[string]any)
+		require.True(t, ok)
+		assert.NotContains(t, providersMap, "__proto__", "__proto__ must never be treated as a mergeable provider name")
+		assert.NotContains(t, providersMap, "constructor", "constructor must never be treated as a mergeable provider name")
+
+		mcpServers, ok := nestedValue(result.config, "mcp.servers")
+		require.True(t, ok)
+		mcpServersMap, ok := mcpServers.(map[string]any)
+		require.True(t, ok)
+		assert.NotContains(t, mcpServersMap, "__proto__", "__proto__ must never be treated as a mergeable MCP server name")
+
+		google, _ := nestedValue(result.config, "models.providers.google.baseUrl")
+		assert.Equal(t, "https://real.example.com", google, "legitimate sibling entries must remain unaffected")
+	})
+
 	t.Run("declared channel's botToken/enabled corrected, dmPolicy/allowFrom preserved", func(t *testing.T) {
 		operatorJSON := `{
 			"gateway": {"port": 18789},
