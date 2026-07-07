@@ -204,6 +204,43 @@ func TestInjectMcpServers(t *testing.T) {
 		assert.Len(t, mcp, 1)
 		assert.Contains(t, mcp, "servers")
 	})
+
+	t.Run("should flag URL-based and envFrom servers as bucket-A in _seedOnlyMeta", func(t *testing.T) {
+		config := map[string]any{}
+		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
+			"remote":       {URL: "https://example.com/mcp"},
+			"credentialed": {URL: "https://example.com/mcp2", CredentialRef: "some-cred"},
+			"secret-backed": {
+				Command: "node",
+				Args:    []string{"server.js"},
+				EnvFrom: []clawv1alpha1.McpEnvFromSecret{
+					{Name: "API_KEY", SecretRef: clawv1alpha1.SecretRefEntry{Name: "s", Key: "k"}},
+				},
+			},
+			"plain": {Command: "node", Args: []string{"server.js"}, Env: map[string]string{"FOO": "bar"}},
+		})
+
+		injectMcpServers(config, instance)
+
+		meta, ok := config["_seedOnlyMeta"].(map[string]any)
+		require.True(t, ok, "_seedOnlyMeta should be set")
+		bucketA, ok := meta["mcpBucketAServers"].([]any)
+		require.True(t, ok, "mcpBucketAServers should be a slice")
+		assert.ElementsMatch(t, []any{"remote", "credentialed", "secret-backed"}, bucketA)
+		assert.NotContains(t, bucketA, "plain")
+	})
+
+	t.Run("should not include plain command servers in bucket-A list", func(t *testing.T) {
+		config := map[string]any{}
+		instance := testClawWithMcpServers(map[string]clawv1alpha1.McpServerSpec{
+			"plain": {Command: "node", Args: []string{"server.js"}, Env: map[string]string{"FOO": "bar"}},
+		})
+
+		injectMcpServers(config, instance)
+
+		meta := config["_seedOnlyMeta"].(map[string]any)
+		assert.Empty(t, meta["mcpBucketAServers"])
+	})
 }
 
 func TestBuildMcpServerConfig(t *testing.T) {

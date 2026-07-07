@@ -262,6 +262,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// WATCH_NAMESPACE identifies the operator's own runtime namespace (populated
+	// via the Kubernetes downward API), used to look up the ClawOperatorConfig
+	// admin-policy singleton — never a tenant namespace. Required: fails fast if
+	// unset, since a silently-empty value would make the singleton lookup
+	// ambiguous.
+	operatorNamespace := os.Getenv("WATCH_NAMESPACE")
+	if operatorNamespace == "" {
+		setupLog.Error(nil, "WATCH_NAMESPACE environment variable must be set")
+		os.Exit(1)
+	}
+
 	clawReconciler := &controller.ClawResourceReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
@@ -272,6 +283,7 @@ func main() {
 		GitSyncImage:        os.Getenv("GIT_SYNC_IMAGE"),
 		OTelCollectorImage:  os.Getenv("OTEL_COLLECTOR_IMAGE"),
 		ImagePullPolicy:     imagePullPolicy,
+		OperatorNamespace:   operatorNamespace,
 		MetricsRefreshed:    make(chan struct{}),
 	}
 	if err = clawReconciler.SetupWithManager(mgr); err != nil {

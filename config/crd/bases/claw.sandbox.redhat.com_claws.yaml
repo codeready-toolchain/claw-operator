@@ -108,15 +108,20 @@ spec:
                     - enum:
                       - merge
                       - overwrite
+                      - seedOnly
                     - enum:
                       - merge
                       - overwrite
+                      - seedOnly
                     default: merge
                     description: |-
                       MergeMode controls how operator config is applied on pod start.
                       "merge" (default) deep-merges operator settings into the existing
                       user config, preserving user-owned keys. "overwrite" fully replaces
-                      the config on every pod start.
+                      the config on every pod start. "seedOnly" seeds the config once on
+                      first boot, then leaves it untouched except for a narrow,
+                      always-enforced infrastructure/credential subset. A cluster admin may
+                      restrict which modes are allowed via ClawOperatorConfig.
                     type: string
                   raw:
                     description: |-

@@ -5,8 +5,9 @@
 Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. Detailed architecture reference in `docs/architecture.md`.
 
 **CRDs** (API group `claw.sandbox.redhat.com/v1alpha1`):
-- `Claw` — Main CRD. Spec: `config` (ConfigSpec: raw RawExtension, mergeMode merge/overwrite), `credentials` ([]CredentialSpec), `auth` (AuthSpec: mode token/password, passwordSecretRef, disableDevicePairing). Status: `conditions`, `url`, `gatewayTokenSecretRef`
+- `Claw` — Main CRD. Spec: `config` (ConfigSpec: raw RawExtension, mergeMode merge/overwrite/seedOnly), `credentials` ([]CredentialSpec), `auth` (AuthSpec: mode token/password, passwordSecretRef, disableDevicePairing). Status: `conditions`, `url`, `gatewayTokenSecretRef`
 - `ClawDevicePairingRequest` — Device pairing. Spec: `requestID`, `selector` (LabelSelector). Controller matches exactly one pod
+- `ClawOperatorConfig` — Cluster-admin policy singleton (name `cluster`, in the operator's own namespace). Spec: `allowedConfigModes` ([]ConfigMode, empty = unrestricted). Gates which `mergeMode` values `Claw` CRs may use; see [ADR-0021](docs/adr/0021-seed-only-config-mode.md)
 
 ## Common Commands
 
@@ -47,11 +48,11 @@ Detailed architecture reference: @docs/architecture.md
 
 ## Key Directories
 
-- `api/v1alpha1/` -- CRD types (`claw_types.go`, `clawdevicepairingrequest_types.go`). Condition/annotation constants live here
-- `internal/controller/` -- Reconciler + tests. Key files: `claw_resource_controller.go` (main reconciler), `claw_credentials.go` (credential validation, gateway secret), `claw_providers.go` (centralized `knownProviders` registry, provider defaults/routing), `claw_proxy.go` (proxy config), `claw_deployment.go` (deployment configuration), `claw_status.go` (status updates), `claw_models.go` (model catalog accessor, delegates to `knownProviders`), `claw_auth.go` (auth mode + device pairing)
+- `api/v1alpha1/` -- CRD types (`claw_types.go`, `clawdevicepairingrequest_types.go`, `clawoperatorconfig_types.go`). Condition/annotation constants live here
+- `internal/controller/` -- Reconciler + tests. Key files: `claw_resource_controller.go` (main reconciler), `claw_credentials.go` (credential validation, gateway secret), `claw_providers.go` (centralized `knownProviders` registry, provider defaults/routing), `claw_proxy.go` (proxy config), `claw_deployment.go` (deployment configuration), `claw_status.go` (status updates), `claw_models.go` (model catalog accessor, delegates to `knownProviders`), `claw_auth.go` (auth mode + device pairing), `claw_operator_config.go` (ClawOperatorConfig mergeMode gating)
 - `internal/proxy/` -- MITM proxy library
 - `internal/assets/manifests/` -- Embedded Kustomize manifests (two components: `claw/`, `claw-proxy/`)
-- `cmd/main.go` -- Manager entrypoint (reads `PROXY_IMAGE`, `KUBECTL_IMAGE`, `IMAGE_PULL_POLICY` env vars)
+- `cmd/main.go` -- Manager entrypoint (reads `PROXY_IMAGE`, `KUBECTL_IMAGE`, `IMAGE_PULL_POLICY`, `WATCH_NAMESPACE` env vars)
 - `cmd/proxy/main.go` -- Proxy binary entrypoint
 - `config/` -- Kustomize overlays for CRDs, RBAC, manager deployment
 

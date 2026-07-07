@@ -84,6 +84,7 @@ rules:
 - apiGroups:
   - claw.sandbox.redhat.com
   resources:
+  - clawoperatorconfigs
   - claws
   verbs:
   - get
