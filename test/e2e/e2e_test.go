@@ -682,6 +682,47 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			kubeMd, err := utils.Run(t, cmd)
 			require.NoError(t, err)
 			assert.Empty(t, kubeMd, "KUBERNETES.md should not exist without kubernetes credentials")
+
+			// Everything above only inspects the *inputs* to merge.js (the ConfigMap
+			// keys and the init-config command line) — it never confirms merge.js
+			// actually ran correctly and produced the right file on the PVC. Wait for
+			// the pod and exec in to check the real output.
+			t.Log("waiting for gateway pod to be Running (init-config must have succeeded)")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods",
+						"-l", "app=claw",
+						"-o", "jsonpath={.items[0].status.phase}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == podPhaseRunning, nil
+				})
+			require.NoError(t, err, "Gateway pod did not reach Running — init-config/merge.js may have failed")
+
+			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+				"-o", "jsonpath={.items[0].metadata.name}", "-n", userNamespace)
+			podName, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+
+			t.Log("verifying merge.js actually produced a merged openclaw.json on the PVC " +
+				"(not just that the right ConfigMap keys and init command exist)")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "cat", "/home/node/.openclaw/openclaw.json")
+			mergedOnDisk, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to read merged openclaw.json from the gateway container")
+
+			var merged map[string]any
+			require.NoError(t, json.Unmarshal([]byte(mergedOnDisk), &merged),
+				"merged openclaw.json on disk should be valid JSON")
+			assert.Contains(t, merged, "gateway",
+				"merged config on disk should have the gateway section (from operator.json)")
+			agentsOnDisk, ok := merged["agents"].(map[string]any)
+			require.True(t, ok, "merged config on disk should have an agents section")
+			defaultsOnDisk, ok := agentsOnDisk["defaults"].(map[string]any)
+			require.True(t, ok, "merged config on disk should have agents.defaults")
+			assert.NotEmpty(t, defaultsOnDisk["models"],
+				"merged config on disk should have the operator-injected model catalog, "+
+					"proving merge.js actually merged operator.json into the PVC copy rather than just seeding it")
 		})
 
 		t.Run("should wire credential env var with correct Secret reference", func(t *testing.T) {
@@ -1428,6 +1469,22 @@ spec:
 			require.NoError(t, err, "failed to get init-plugins logs")
 			assert.Contains(t, pluginLogs, "anthropic-vertex-provider",
 				"init-plugins logs should mention the anthropic-vertex-provider plugin")
+
+			t.Log("verifying the vertex plugin actually landed on the PVC, not just in the logs")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "sh", "-c", "ls /home/node/.openclaw/extensions")
+			extLs, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to list the extensions directory on the pod")
+			assert.Contains(t, extLs, "anthropic-vertex-provider",
+				"extensions directory on the PVC should contain the installed vertex plugin")
+
+			t.Log("verifying the operator-managed plugin manifest on disk records the installed plugin")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "cat", "/home/node/.openclaw/extensions/.operator-managed")
+			manifestOnDisk, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to read the plugin install manifest from the pod")
+			assert.Contains(t, manifestOnDisk, "anthropic-vertex-provider",
+				"plugin install manifest on disk should record the installed plugin directory")
 		})
 
 		t.Run("should wire Slack dual-token credential with separate env vars per role", func(t *testing.T) {
@@ -2077,6 +2134,15 @@ spec:
 			require.NoError(t, err, "failed to get init-seed logs")
 			assert.Contains(t, seedLogs, "SOUL.md",
 				"init-seed logs should mention SOUL.md")
+
+			t.Log("verifying SOUL.md was actually seeded onto the PVC with the ConfigMap source's content " +
+				"(logs only prove a message was printed, not that the right bytes landed on disk)")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "cat", "/home/node/.openclaw/workspace/SOUL.md")
+			soulOnDisk, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to read seeded SOUL.md from the gateway container")
+			assert.Equal(t, "# Enterprise Soul\nYou are an enterprise assistant.", strings.TrimRight(soulOnDisk, "\n"),
+				"seeded SOUL.md content on disk should exactly match the ConfigMap source")
 		})
 
 		t.Run("should wire git source init container and volumes", func(t *testing.T) {
