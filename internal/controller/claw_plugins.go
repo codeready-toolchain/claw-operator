@@ -127,7 +127,56 @@ func requiredProviderPlugins(instance *clawv1alpha1.Claw) ([]string, error) {
 
 func generatePluginInstallScript(plugins []string) string {
 	var b strings.Builder
-	b.WriteString(`set -e
+
+	desiredPkgs := make([]string, 0, len(plugins))
+	seenPkgs := make(map[string]bool, len(plugins))
+	for _, p := range plugins {
+		pkg := pluginPackageName(p)
+		if !seenPkgs[pkg] {
+			seenPkgs[pkg] = true
+			desiredPkgs = append(desiredPkgs, pkg)
+		}
+	}
+	// Exported (not just assigned) because the node -e snippets below read it
+	// via process.env — a plain shell assignment is invisible to child processes.
+	fmt.Fprintf(&b, "set -e\nexport DESIRED_PKGS=%s\n", shellQuote(strings.Join(desiredPkgs, "\n")))
+
+	b.WriteString(`
+# Some plugins (e.g. the Vertex AI SDK provider plugins) are backed by a
+# scoped npm package that never materializes a directory under
+# ~/.openclaw/extensions — openclaw installs their code under
+# ~/.openclaw/npm/projects/<hash> instead and tracks the install record
+# purely in its internal registry (persisted in ~/.openclaw's sqlite state,
+# not a plain file we could diff). The $EXT-directory diff below can never
+# detect these as orphaned.
+#
+# REGISTRY_MANIFEST is our OWN record of exactly which plugin ids the
+# operator itself installed last time — never the live registry as a whole.
+# This matters because the registry can also contain plugins installed
+# through some other channel (e.g. a marketplace/ClawHub install done
+# directly against the running instance); we must never uninstall those.
+# Only ids we ourselves previously wrote to this file, and that are no
+# longer desired, get uninstalled — mirroring the same safety property the
+# $EXT/.operator-managed manifest below already provides for directory-based
+# plugins.
+REGISTRY_MANIFEST="/home/node/.openclaw/.operator-managed-plugins"
+if [ -f "$REGISTRY_MANIFEST" ]; then
+  node -e '
+const fs = require("fs");
+const desired = new Set((process.env.DESIRED_PKGS || "").split("\n").filter(Boolean));
+for (const line of fs.readFileSync(process.argv[1], "utf8").split("\n")) {
+  const tab = line.indexOf("\t");
+  if (tab < 0) continue;
+  const id = line.slice(0, tab);
+  const pkg = line.slice(tab + 1);
+  if (id && pkg && !desired.has(pkg)) console.log(id);
+}
+' "$REGISTRY_MANIFEST" | while IFS= read -r orphan_id; do
+    [ -n "$orphan_id" ] && openclaw plugins uninstall "$orphan_id" --force >/dev/null 2>&1
+    true
+  done
+fi
+
 EXT="/home/node/.openclaw/extensions"
 MANIFEST="$EXT/.operator-managed"
 if [ -f "$MANIFEST" ]; then
@@ -159,6 +208,34 @@ ls "$EXT" 2>/dev/null | sort > /tmp/before-plugins.txt
 		fmt.Fprintf(&b, "openclaw plugins install %s\n", shellQuote(pkg))
 	}
 	b.WriteString(`ls "$EXT" | sort | comm -13 /tmp/before-plugins.txt - > "$MANIFEST"
+
+# Rebuild REGISTRY_MANIFEST from the registry, but only keep records whose
+# package is one we ourselves just asked to have installed above — this is
+# what guarantees the manifest can never "adopt" a plugin the operator
+# didn't itself install, however it got into the registry. The file is
+# written by node itself (fs.writeFileSync) rather than via shell stdout
+# redirection, since the latter is not reliably flushed in all environments.
+openclaw plugins registry --json 2>/dev/null | node -e '
+const fs = require("fs");
+const desired = new Set((process.env.DESIRED_PKGS || "").split("\n").filter(Boolean));
+let data = "";
+process.stdin.on("data", (c) => { data += c; });
+process.stdin.on("end", () => {
+  let registry;
+  try { registry = JSON.parse(data); } catch { registry = {}; }
+  const records = (registry.persisted && registry.persisted.installRecords) || {};
+  const lines = [];
+  for (const [id, rec] of Object.entries(records)) {
+    const spec = rec.resolvedName || rec.spec || "";
+    const idx = spec.lastIndexOf("@");
+    const pkg = idx > 0 ? spec.slice(0, idx) : spec;
+    if (pkg && desired.has(pkg)) lines.push(id + "\t" + pkg);
+  }
+  try {
+    fs.writeFileSync(process.argv[1], lines.length ? lines.join("\n") + "\n" : "");
+  } catch {}
+});
+' "$REGISTRY_MANIFEST" 2>/dev/null || true
 `)
 	return b.String()
 }

@@ -1470,21 +1470,36 @@ spec:
 			assert.Contains(t, pluginLogs, "anthropic-vertex-provider",
 				"init-plugins logs should mention the anthropic-vertex-provider plugin")
 
+			// The Vertex AI SDK provider plugin is a scoped npm package that
+			// openclaw installs under ~/.openclaw/npm/projects (tracked
+			// purely in its internal registry), not as a directory under
+			// ~/.openclaw/extensions — so verify it there instead, plus in
+			// the operator's own install-tracking manifest and the CLI's
+			// live registry, rather than asserting on the (irrelevant)
+			// extensions directory.
 			t.Log("verifying the vertex plugin actually landed on the PVC, not just in the logs")
 			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
-				"-n", userNamespace, "--", "sh", "-c", "ls /home/node/.openclaw/extensions")
-			extLs, err := utils.Run(t, cmd)
-			require.NoError(t, err, "failed to list the extensions directory on the pod")
-			assert.Contains(t, extLs, "anthropic-vertex-provider",
-				"extensions directory on the PVC should contain the installed vertex plugin")
+				"-n", userNamespace, "--", "sh", "-c", "ls /home/node/.openclaw/npm/projects")
+			npmLs, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to list the npm projects directory on the pod")
+			assert.NotEmpty(t, strings.TrimSpace(npmLs),
+				"npm projects directory on the PVC should contain the installed vertex plugin's project")
 
-			t.Log("verifying the operator-managed plugin manifest on disk records the installed plugin")
+			t.Log("verifying the operator's own plugin-tracking manifest records the installed plugin")
 			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
-				"-n", userNamespace, "--", "cat", "/home/node/.openclaw/extensions/.operator-managed")
+				"-n", userNamespace, "--", "cat", "/home/node/.openclaw/.operator-managed-plugins")
 			manifestOnDisk, err := utils.Run(t, cmd)
-			require.NoError(t, err, "failed to read the plugin install manifest from the pod")
+			require.NoError(t, err, "failed to read the operator's plugin-tracking manifest from the pod")
 			assert.Contains(t, manifestOnDisk, "anthropic-vertex-provider",
-				"plugin install manifest on disk should record the installed plugin directory")
+				"operator plugin-tracking manifest should record the installed vertex plugin package")
+
+			t.Log("verifying the openclaw CLI's own registry records the installed plugin")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "openclaw", "plugins", "registry", "--json")
+			registryJSON, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to query the openclaw plugin registry from the pod")
+			assert.Contains(t, registryJSON, "anthropic-vertex-provider",
+				"openclaw's own plugin registry should record the installed vertex plugin")
 		})
 
 		t.Run("should wire Slack dual-token credential with separate env vars per role", func(t *testing.T) {

@@ -274,6 +274,12 @@ func runGitSyncScriptAllowFailure(t *testing.T, gitSources []clawv1alpha1.GitSou
 	combinedCA := filepath.Join(tmpDir, "combined-ca.crt")
 
 	script := generateGitSyncScript(gitSources)
+	require.Contains(t, script, "/etc/proxy-ca/ca.crt",
+		"generateGitSyncScript proxy CA anchor changed — update this test's path substitution")
+	require.Contains(t, script, "/tmp/combined-ca.crt",
+		"generateGitSyncScript combined CA anchor changed — update this test's path substitution")
+	require.Contains(t, script, "/git-sources/",
+		"generateGitSyncScript destination anchor changed — update this test's path substitution")
 	script = strings.ReplaceAll(script, "/etc/proxy-ca/ca.crt", fakeCA)
 	script = strings.ReplaceAll(script, "/tmp/combined-ca.crt", combinedCA)
 	script = strings.ReplaceAll(script, "/git-sources/", sourcesDir+"/")
