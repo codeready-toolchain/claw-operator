@@ -4,6 +4,7 @@
 resources:
 - bases/claw.sandbox.redhat.com_claws.yaml
 - bases/claw.sandbox.redhat.com_clawdevicepairingrequests.yaml
+- bases/claw.sandbox.redhat.com_clawoperatorconfigs.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.

@@ -1,0 +1,74 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: clawoperatorconfigs.claw.sandbox.redhat.com
+spec:
+  group: claw.sandbox.redhat.com
+  names:
+    kind: ClawOperatorConfig
+    listKind: ClawOperatorConfigList
+    plural: clawoperatorconfigs
+    singular: clawoperatorconfig
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ClawOperatorConfig is the Schema for the clawoperatorconfigs API. A single
+          instance named "cluster" must live in the operator's own runtime namespace
+          (resolved via the WATCH_NAMESPACE environment variable) — it is never
+          looked up in, or honored from, a tenant namespace. The name is enforced
+          at admission time by the XValidation rule above (ClawOperatorConfigSingletonName).
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ClawOperatorConfigSpec defines cluster-admin policy for the
+              claw-operator.
+            properties:
+              allowedConfigModes:
+                description: |-
+                  AllowedConfigModes restricts which spec.config.mergeMode values Claw CRs
+                  in this cluster may use. Empty/absent means all modes are allowed
+                  (fail-open) — this matches today's unrestricted behavior until an admin
+                  explicitly opts in to restricting it.
+                items:
+                  description: |-
+                    ConfigMode controls how operator.json is merged into the user's openclaw.json
+                    at pod start time. Not to be confused with SeedMode below, which governs
+                    per-file workspace seeding (spec.workspace.*.mode) — ConfigMode governs the
+                    whole openclaw.json file (spec.config.mergeMode).
+                  enum:
+                  - merge
+                  - overwrite
+                  - seedOnly
+                  type: string
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: ClawOperatorConfig must be named 'cluster'
+          rule: self.metadata.name == 'cluster'
+    served: true
+    storage: true

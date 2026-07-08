@@ -37,16 +37,25 @@ const (
 )
 
 // ConfigMode controls how operator.json is merged into the user's openclaw.json
-// at pod start time.
-// +kubebuilder:validation:Enum=merge;overwrite
+// at pod start time. Not to be confused with SeedMode below, which governs
+// per-file workspace seeding (spec.workspace.*.mode) — ConfigMode governs the
+// whole openclaw.json file (spec.config.mergeMode).
+// +kubebuilder:validation:Enum=merge;overwrite;seedOnly
 type ConfigMode string
 
 const (
 	ConfigModeMerge     ConfigMode = "merge"
 	ConfigModeOverwrite ConfigMode = "overwrite"
+	// ConfigModeSeedOnly seeds openclaw.json once on first boot, then leaves
+	// user/agent-owned keys untouched on subsequent restarts; a narrow,
+	// always-enforced subset of infrastructure/credential keys is still
+	// reasserted on every restart. See docs/adr/0021-seed-only-config-mode.md.
+	ConfigModeSeedOnly ConfigMode = "seedOnly"
 )
 
-// SeedMode controls how workspace files are seeded into the PVC.
+// SeedMode controls how workspace files are seeded into the PVC
+// (spec.workspace.*.mode) — a different, per-file mechanism from ConfigMode's
+// seedOnly value above, despite the similar naming.
 // +kubebuilder:validation:Enum=overwrite;seedIfMissing
 type SeedMode string
 
@@ -86,14 +95,16 @@ const (
 
 // Condition reasons for Claw status.
 const (
-	ConditionReasonReady            = "Ready"
-	ConditionReasonProvisioning     = "Provisioning"
-	ConditionReasonResolved         = "Resolved"
-	ConditionReasonValidationFailed = "ValidationFailed"
-	ConditionReasonConfigured       = "Configured"
-	ConditionReasonConfigFailed     = "ConfigFailed"
-	ConditionReasonIdle             = "Idle"
-	ConditionReasonIdledByRequest   = "IdledByRequest"
+	ConditionReasonReady                = "Ready"
+	ConditionReasonProvisioning         = "Provisioning"
+	ConditionReasonResolved             = "Resolved"
+	ConditionReasonValidationFailed     = "ValidationFailed"
+	ConditionReasonConfigured           = "Configured"
+	ConditionReasonConfigFailed         = "ConfigFailed"
+	ConditionReasonIdle                 = "Idle"
+	ConditionReasonIdledByRequest       = "IdledByRequest"
+	ConditionReasonIdledByPolicy        = "IdledByPolicy"
+	ConditionReasonConfigModeNotAllowed = "ConfigModeNotAllowed"
 )
 
 // SecretRefEntry references a specific key in a Secret.
@@ -369,9 +380,12 @@ type ConfigSpec struct {
 	// MergeMode controls how operator config is applied on pod start.
 	// "merge" (default) deep-merges operator settings into the existing
 	// user config, preserving user-owned keys. "overwrite" fully replaces
-	// the config on every pod start.
+	// the config on every pod start. "seedOnly" seeds the config once on
+	// first boot, then leaves it untouched except for a narrow,
+	// always-enforced infrastructure/credential subset. A cluster admin may
+	// restrict which modes are allowed via ClawOperatorConfig.
 	// +optional
-	// +kubebuilder:validation:Enum=merge;overwrite
+	// +kubebuilder:validation:Enum=merge;overwrite;seedOnly
 	// +kubebuilder:default=merge
 	MergeMode ConfigMode `json:"mergeMode,omitempty"`
 }

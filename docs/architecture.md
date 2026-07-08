@@ -37,6 +37,20 @@ Because deep-merge operates at the key level, operator-managed entries (e.g., `c
 
 In `overwrite` mode, the PVC config is ignored and `operator.json` is merged into the seed `openclaw.json` from the ConfigMap. User edits are wiped on every restart.
 
+### `seedOnly` mode
+
+A third `spec.config.mergeMode` value seeds `openclaw.json` once on first boot, then treats the file as belonging to the user/agent — only a narrow, always-enforced subset of infrastructure/credential sub-fields is reasserted on later restarts. See [ADR-0021](adr/0021-seed-only-config-mode.md) for the full two-bucket ownership model and rationale; not to be confused with the unrelated `SeedMode`/`seedIfMissing` value that governs per-file workspace seeding (`spec.workspace.*.mode`).
+
+| Owner | Sections | `seedOnly` restart behavior |
+|---|---|---|
+| Operator (sub-field only) | `gateway.*` infra/auth keys, Route-host entry in `allowedOrigins`, `tools.web.search.*`, `tools.web.fetch.enabled`, `agents.defaults.memorySearch.*`, `diagnostics.otel.{metrics,metricsEndpoint}` | Reasserted every restart, same as `merge`/`overwrite` |
+| Operator (sub-field only) | `models.providers.<name>.{baseUrl,apiKey,api}`, `channels.<name>.{enabled,botToken,token,appToken}`, `mcp.servers.<name>` (full entry, only for `envFrom`/`credentialRef`/URL-based servers) | Reasserted every restart; the rest of each entry is left untouched |
+| Operator → User (gap-fill) | New CR-declared provider/channel/MCP server, `agents.defaults.model.primary`/`.fallbacks` when absent | Added automatically the first time it's absent from the PVC file; never touched again once present |
+| User | Everything else in a declared entry (`dmPolicy`, `allowFrom`, a provider's local `.models`), `agents.list`, non-declared channels/MCP servers/plugins, `tools.*` beyond web search, `cron.*` | Frozen after first seed — never reset |
+| User (skill docs) | `PLATFORM.md`, `KUBERNETES.md`, `_skill_*` | `seedIfMissing` instead of the `merge`/`overwrite` modes' `copyAlways` — seeded once, edits/deletions persist |
+
+A cluster admin can restrict which `mergeMode` values are permitted via the `ClawOperatorConfig` singleton CRD (see ADR-0021). If a Claw requests a disallowed mode — whether it's brand new or already running — `Ready` reports `False` with reason `ConfigModeNotAllowed` and the instance is scaled to zero replicas (the same non-destructive mechanism `spec.idle` uses; Secrets/PVC/CR spec are untouched). Fixing the mode, or widening the policy, brings it straight back. Missing `ClawOperatorConfig` fails open (all modes allowed).
+
 ## Multi-Instance Support
 
 Resource names in the embedded Kustomize manifests use a `CLAW_INSTANCE_NAME` placeholder. At build time, the controller replaces this with the Claw CR name, so multiple Claw instances in the same namespace get distinct resource names. Instance labels (`claw.sandbox.redhat.com/instance`) are injected into all resource metadata, Deployment selectors, Service selectors, and NetworkPolicy selectors to ensure isolation between instances.

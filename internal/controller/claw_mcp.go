@@ -62,17 +62,41 @@ func (r *ClawResourceReconciler) validateMcpServerSecrets(ctx context.Context, i
 
 // injectMcpServers injects MCP server configuration for all entries in
 // spec.mcpServers. Always-win: operator overwrites mcp.servers unconditionally.
+//
+// Also records which server names need full-entry Bucket-A reassertion under
+// seedOnly mode (see docs/adr/0021-seed-only-config-mode.md) via a private
+// "_seedOnlyMeta" key: servers using envFrom/credentialRef, or reached over a
+// URL (proxy-routed, domain-allowlist-gated), can never be safely
+// hand-authored by a user — merge.js can't tell this from the entry's JSON
+// shape alone (a command+env entry looks the same whether or not env came
+// from envFrom), so it's flagged here instead. merge.js strips this key
+// before writing the final openclaw.json to the PVC; it must never reach the
+// user-facing file. Command-based servers with only inline env are Bucket B
+// — safe to hand-add/edit directly in the file, in any mode.
 func injectMcpServers(config map[string]any, instance *clawv1alpha1.Claw) {
 	if len(instance.Spec.McpServers) == 0 {
 		return
 	}
 
 	servers := make(map[string]any, len(instance.Spec.McpServers))
+	var bucketAServers []any
 	for name, spec := range instance.Spec.McpServers {
 		servers[name] = buildMcpServerConfig(spec)
+		if mcpServerIsBucketA(spec) {
+			bucketAServers = append(bucketAServers, name)
+		}
 	}
 
 	config["mcp"] = map[string]any{"servers": servers}
+	config["_seedOnlyMeta"] = map[string]any{"mcpBucketAServers": bucketAServers}
+}
+
+// mcpServerIsBucketA reports whether an MCP server entry needs full-entry
+// reassertion under seedOnly mode: any server reached via URL (proxy-routed)
+// or using envFrom/credentialRef (Secret- or proxy-backed) can never be a
+// genuine hand-edit candidate, in any mode.
+func mcpServerIsBucketA(spec clawv1alpha1.McpServerSpec) bool {
+	return spec.Command == "" || len(spec.EnvFrom) > 0 || spec.CredentialRef != ""
 }
 
 // buildMcpServerConfig builds the JSON-ready config for a single MCP server entry.

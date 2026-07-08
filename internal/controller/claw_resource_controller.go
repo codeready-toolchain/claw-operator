@@ -402,6 +402,10 @@ type ClawResourceReconciler struct {
 	GitSyncImage        string
 	OTelCollectorImage  string
 	ImagePullPolicy     string
+	// OperatorNamespace is the namespace the operator itself runs in (from the
+	// WATCH_NAMESPACE downward-API env var). The ClawOperatorConfig singleton
+	// is only ever looked up here, never in a tenant namespace.
+	OperatorNamespace string
 	// MetricsRefreshed is closed by Start() after the initial metrics refresh.
 	// Reconcile() waits on it so no reconciliation runs before metrics are populated.
 	MetricsRefreshed chan struct{}
@@ -412,7 +416,8 @@ type ClawResourceReconciler struct {
 // +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws,verbs=get;list;watch
 // +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=claws/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=claw.sandbox.redhat.com,resources=clawoperatorconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
@@ -447,6 +452,22 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		logger.Error(err, "Failed to get Claw")
 		return ctrl.Result{}, err
+	}
+
+	// Enforce cluster-admin policy on which spec.config.mergeMode values are
+	// allowed (ClawOperatorConfig). Fails open when no policy is configured.
+	// A denial doesn't just block a brand-new Claw's first reconcile — it
+	// actively scales an already-running instance to zero (handlePolicyIdle),
+	// so policy is enforceable fleet-wide, not only at creation time.
+	allowed, err := r.checkConfigModeAllowed(ctx, instance)
+	if err != nil {
+		logger.Error(err, "Failed to evaluate ClawOperatorConfig policy")
+		return ctrl.Result{}, err
+	}
+	if !allowed {
+		logger.Info("mergeMode not allowed by ClawOperatorConfig, idling instance",
+			"mode", effectiveConfigMode(instance))
+		return r.handlePolicyIdle(ctx, instance)
 	}
 
 	// Short-circuit when idled — scale deployments to zero and return
@@ -1580,8 +1601,44 @@ func (r *ClawResourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.findClawsReferencingSecret),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
+		Watches(
+			&clawv1alpha1.ClawOperatorConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.findAllClaws),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
 		Named("claw").
 		Complete(r)
+}
+
+// findAllClaws maps a ClawOperatorConfig change to every Claw CR in the
+// cluster, so tightening/loosening admin policy is reflected in each Claw's
+// Ready condition promptly instead of waiting for an unrelated reconcile
+// trigger (e.g. a CR edit or credential rotation). Only the singleton
+// ClawOperatorConfig actually consulted by checkConfigModeAllowed (name
+// ClawOperatorConfigSingletonName, in the operator's own namespace)
+// triggers this cluster-wide fan-out; any other ClawOperatorConfig object
+// (e.g. a stray one in a tenant namespace) is never looked up by the
+// reconciler and so is ignored here too.
+func (r *ClawResourceReconciler) findAllClaws(ctx context.Context, obj client.Object) []reconcile.Request {
+	if obj.GetName() != clawv1alpha1.ClawOperatorConfigSingletonName || obj.GetNamespace() != r.OperatorNamespace {
+		return nil
+	}
+
+	openClawList := &clawv1alpha1.ClawList{}
+	if err := r.List(ctx, openClawList); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(openClawList.Items))
+	for _, instance := range openClawList.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      instance.Name,
+				Namespace: instance.Namespace,
+			},
+		})
+	}
+	return requests
 }
 
 // findClawsReferencingSecret maps a Secret change to the Claw(s) that need

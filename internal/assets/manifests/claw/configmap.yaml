@@ -72,15 +72,227 @@ data:
       console.log(`[init-config] copied ${dest}`);
     }
 
+    // seedIfMissing copies src to dest only if dest doesn't already exist —
+    // used for skill docs under seedOnly mode, so a user/agent's edits or
+    // deletions of an operator-authored skill doc persist across restarts.
+    function seedIfMissing(src, dest) {
+      if (fs.existsSync(dest)) {
+        return;
+      }
+      const dir = path.dirname(dest);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.copyFileSync(src, dest);
+      console.log(`[init-config] seeded ${dest}`);
+    }
+
+    // getPath/setPath walk a dotted path (as an array of keys) through a
+    // plain-object tree, used by the seedOnly reassertion/gap-fill passes
+    // below to touch only specific sub-fields without disturbing siblings.
+    function getPath(obj, pathParts) {
+      let cur = obj;
+      for (const key of pathParts) {
+        if (cur === null || typeof cur !== "object") return undefined;
+        cur = cur[key];
+      }
+      return cur;
+    }
+
+    function setPath(obj, pathParts, value) {
+      let cur = obj;
+      for (let i = 0; i < pathParts.length - 1; i++) {
+        const key = pathParts[i];
+        if (typeof cur[key] !== "object" || cur[key] === null || Array.isArray(cur[key])) {
+          cur[key] = {};
+        }
+        cur = cur[key];
+      }
+      cur[pathParts[pathParts.length - 1]] = value;
+    }
+
+    function appendAllMissing(base, additions) {
+      const list = Array.isArray(base) ? base.slice() : [];
+      for (const item of Array.isArray(additions) ? additions : []) {
+        if (!list.includes(item)) list.push(item);
+      }
+      return list;
+    }
+
+    // Bucket-A sub-field allowlists for declared providers/channels — see
+    // docs/adr/0021-seed-only-config-mode.md's ownership-boundary table.
+    // Kept in sync by hand with protectedChannelKeys (claw_channels.go) and
+    // injectProviders (claw_resource_controller.go); both sides are covered
+    // by tests that would catch drift in practice.
+    const PROVIDER_BUCKET_A_KEYS = ["baseUrl", "apiKey", "api"];
+    const CHANNEL_BUCKET_A_KEYS = ["enabled", "botToken", "token", "appToken"];
+
+    // reassertInfrastructureKeys unconditionally overwrites the pure
+    // infrastructure/security subset from the freshly-computed operator.json
+    // onto the existing PVC file. These have no Bucket-B sub-fields at all,
+    // so a whole-path overwrite is safe and correct in every restart.
+    function reassertInfrastructureKeys(base, ops) {
+      const fixedPaths = [
+        ["gateway", "mode"],
+        ["gateway", "bind"],
+        ["gateway", "port"],
+        ["gateway", "controlUi", "enabled"],
+        ["gateway", "auth", "mode"],
+        ["gateway", "controlUi", "dangerouslyDisableDeviceAuth"],
+        ["gateway", "trustedProxies"],
+        ["tools", "web", "search", "enabled"],
+        ["tools", "web", "search", "provider"],
+        ["tools", "web", "fetch", "enabled"],
+        ["agents", "defaults", "memorySearch", "provider"],
+        ["agents", "defaults", "memorySearch", "enabled"],
+        ["diagnostics", "otel", "metrics"],
+        ["diagnostics", "otel", "metricsEndpoint"],
+      ];
+      for (const p of fixedPaths) {
+        const value = getPath(ops, p);
+        if (value !== undefined) {
+          setPath(base, p, value);
+        }
+      }
+
+      // gateway.controlUi.allowedOrigins: append-only. The Route host (and
+      // any spec.config.raw-declared origins, which are CR-owned, not
+      // PVC-owned) get appended if missing; any additional origin a
+      // user/agent added directly to the running file is left untouched.
+      const opsOrigins = getPath(ops, ["gateway", "controlUi", "allowedOrigins"]);
+      if (Array.isArray(opsOrigins) && opsOrigins.length > 0) {
+        const baseOrigins = getPath(base, ["gateway", "controlUi", "allowedOrigins"]);
+        setPath(base, ["gateway", "controlUi", "allowedOrigins"], appendAllMissing(baseOrigins, opsOrigins));
+      }
+    }
+
+    function isPlainObject(value) {
+      return typeof value === "object" && value !== null && !Array.isArray(value);
+    }
+
+    // hasOwn guards every declared-entry lookup below against dangerous
+    // names like "__proto__"/"constructor"/"prototype": the `in` operator
+    // (used previously) matches these via the prototype chain even when
+    // they're not real own entries, and reading/writing through them (e.g.
+    // base[name] = ops[name]) can reassign an object's own prototype or, if
+    // base[name] happens to resolve to Object.prototype itself, pollute it
+    // globally for the rest of this script's execution. Provider/channel/MCP
+    // server names are CR-author-controlled strings, so this is a real
+    // reachable input, not just theoretical.
+    function hasOwn(obj, name) {
+      return Object.prototype.hasOwnProperty.call(obj, name);
+    }
+
+    // reassertBucketAEntries overwrites only the allowlisted sub-fields of
+    // declared providers/channels (i.e. present in both ops and the
+    // existing PVC file). Everything else in each entry (Bucket B) is left
+    // completely untouched. Entries present only in the PVC file (not
+    // CR-declared) are never touched. If a declared entry's existing value
+    // is malformed (null, a scalar, or an array instead of an object) it's
+    // treated as broken and replaced wholesale with the declared entry,
+    // rather than silently skipped — a hand-corrupted Bucket-A entry (e.g. a
+    // provider with no baseUrl/apiKey) must not be left permanently
+    // unrepaired.
+    function reassertBucketAEntries(baseMap, opsMap, bucketAKeys) {
+      if (!baseMap) return;
+      for (const name of Object.keys(opsMap)) {
+        if (!hasOwn(baseMap, name)) continue;
+        if (!isPlainObject(baseMap[name])) {
+          baseMap[name] = opsMap[name];
+          continue;
+        }
+        for (const key of bucketAKeys) {
+          if (opsMap[name][key] !== undefined) {
+            baseMap[name][key] = opsMap[name][key];
+          }
+        }
+      }
+    }
+
+    // reassertBucketA applies reassertBucketAEntries to declared
+    // providers/channels, plus the analogous full-entry reassertion for MCP
+    // servers. mcpBucketAServers is a Set of MCP server names needing
+    // full-entry reassertion (see injectMcpServers's _seedOnlyMeta marker)
+    // — this can't be inferred from JSON shape alone (a command+env entry
+    // looks the same whether or not env came from envFrom).
+    function reassertBucketA(base, ops, mcpBucketAServers) {
+      reassertBucketAEntries(getPath(base, ["models", "providers"]), getPath(ops, ["models", "providers"]) || {}, PROVIDER_BUCKET_A_KEYS);
+      reassertBucketAEntries(base.channels, ops.channels || {}, CHANNEL_BUCKET_A_KEYS);
+
+      const opsMcpServers = getPath(ops, ["mcp", "servers"]) || {};
+      const baseMcpServers = getPath(base, ["mcp", "servers"]);
+      if (baseMcpServers) {
+        for (const name of Object.keys(opsMcpServers)) {
+          if (!hasOwn(baseMcpServers, name)) continue;
+          if (mcpBucketAServers.has(name)) {
+            baseMcpServers[name] = opsMcpServers[name];
+          }
+        }
+      }
+    }
+
+    // gapFillBucketB adds top-level keys present in operator.json's Bucket-B
+    // collections but absent from the existing PVC file — e.g. a brand-new
+    // CR-declared provider/channel/MCP server, or a newly catalog-eligible
+    // model. This is deliberately shallow: it must never recurse into an
+    // already-existing entry's fields, or it would silently reintroduce the
+    // exact Bucket-B-clobbering failure mode reassertBucketA is designed to
+    // avoid.
+    function gapFillBucketB(base, ops) {
+      const collections = [
+        ["models", "providers"],
+        ["channels"],
+        ["mcp", "servers"],
+        ["agents", "defaults", "models"],
+      ];
+      for (const collectionPath of collections) {
+        const opsCollection = getPath(ops, collectionPath);
+        if (!opsCollection || typeof opsCollection !== "object") continue;
+        let baseCollection = getPath(base, collectionPath);
+        if (!baseCollection || typeof baseCollection !== "object") {
+          baseCollection = {};
+          setPath(base, collectionPath, baseCollection);
+        }
+        for (const key of Object.keys(opsCollection)) {
+          if (!(key in baseCollection)) {
+            baseCollection[key] = opsCollection[key];
+          }
+        }
+      }
+
+      // agents.defaults.model.primary/.fallbacks: fill only if currently
+      // absent/empty — mirrors the merge-mode carve-out's fill-if-empty
+      // semantics (never touched once either has any value, catalog-derived
+      // or hand-picked).
+      const opsPrimary = getPath(ops, ["agents", "defaults", "model", "primary"]);
+      const basePrimary = getPath(base, ["agents", "defaults", "model", "primary"]);
+      if (!basePrimary && opsPrimary) {
+        setPath(base, ["agents", "defaults", "model", "primary"], opsPrimary);
+      }
+
+      const opsFallbacks = getPath(ops, ["agents", "defaults", "model", "fallbacks"]);
+      const baseFallbacks = getPath(base, ["agents", "defaults", "model", "fallbacks"]);
+      const baseFallbacksEmpty = !baseFallbacks || (Array.isArray(baseFallbacks) && baseFallbacks.length === 0);
+      const opsFallbacksNonEmpty = opsFallbacks && (!Array.isArray(opsFallbacks) || opsFallbacks.length > 0);
+      if (baseFallbacksEmpty && opsFallbacksNonEmpty) {
+        setPath(base, ["agents", "defaults", "model", "fallbacks"], opsFallbacks);
+      }
+    }
+
     // Ensure directories exist
     for (const sub of ["workspace", ".local", ".cache", ".config/codex"]) {
       fs.mkdirSync(path.join(pvcDir, sub), { recursive: true });
     }
 
-    // Merge or overwrite openclaw.json
+    // Merge, overwrite, or seed-only openclaw.json
     const ops = JSON.parse(fs.readFileSync(path.join(configDir, "operator.json"), "utf8"));
     const seed = JSON.parse(fs.readFileSync(path.join(configDir, "openclaw.json"), "utf8"));
     const pvcPath = path.join(pvcDir, "openclaw.json");
+
+    // _seedOnlyMeta is private plumbing for this script (see
+    // injectMcpServers's doc comment) — it must never reach the user-facing
+    // openclaw.json, in any mode, so it's stripped immediately after use.
+    const seedOnlyMeta = ops._seedOnlyMeta || {};
+    delete ops._seedOnlyMeta;
+    const mcpBucketAServers = new Set(seedOnlyMeta.mcpBucketAServers || []);
 
     if (mode === "merge" && fs.existsSync(pvcPath)) {
       let base = seed;
@@ -105,13 +317,29 @@ data:
       }
       fs.writeFileSync(pvcPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
       console.log("[init-config] merged operator.json into existing openclaw.json");
+    } else if (mode === "seedOnly" && fs.existsSync(pvcPath)) {
+      let base = seed;
+      try {
+        base = JSON.parse(fs.readFileSync(pvcPath, "utf8"));
+      } catch (err) {
+        console.warn("[init-config] existing openclaw.json is invalid JSON; falling back to seed");
+      }
+      reassertInfrastructureKeys(base, ops);
+      reassertBucketA(base, ops, mcpBucketAServers);
+      gapFillBucketB(base, ops);
+      fs.writeFileSync(pvcPath, JSON.stringify(base, null, 2), { mode: 0o600 });
+      console.log("[init-config] seedOnly: reasserted bucket-A keys and gap-filled new entries");
     } else {
       fs.writeFileSync(pvcPath, JSON.stringify(deepMerge(seed, ops), null, 2), { mode: 0o600 });
       console.log(`[init-config] wrote openclaw.json (mode=${mode}, first_run=${!fs.existsSync(pvcPath)})`);
     }
 
-    // Copy operator-managed skill files (always overwritten)
-    copyAlways(
+    // Skill docs: seed-once under seedOnly mode (user/agent edits or
+    // deletions persist), always-overwritten in every other mode.
+    const copySkillDoc = mode === "seedOnly" ? seedIfMissing : copyAlways;
+
+    // Copy operator-managed skill files
+    copySkillDoc(
       path.join(configDir, "PLATFORM.md"),
       path.join(workspaceDir, "skills", "platform", "SKILL.md")
     );
@@ -119,14 +347,14 @@ data:
     // Copy Kubernetes skill if present in ConfigMap
     const k8sSkill = path.join(configDir, "KUBERNETES.md");
     if (fs.existsSync(k8sSkill)) {
-      copyAlways(k8sSkill, path.join(workspaceDir, "skills", "kubernetes", "SKILL.md"));
+      copySkillDoc(k8sSkill, path.join(workspaceDir, "skills", "kubernetes", "SKILL.md"));
     }
 
     // Copy operator-managed skills (_skill_* keys)
     for (const f of fs.readdirSync(configDir)) {
       if (!f.startsWith("_skill_")) continue;
       const skillName = f.slice(7);
-      copyAlways(
+      copySkillDoc(
         path.join(configDir, f),
         path.join(workspaceDir, "skills", skillName, "SKILL.md")
       );
@@ -1166,6 +1394,17 @@ data:
     - `merge` (default) — deep-merge into existing PVC config, preserving runtime
       changes (primary model choice, plugin installs, UI settings)
     - `overwrite` — fully replace PVC config on every pod start (clean slate)
+    - `seedOnly` — seed `openclaw.json` once on first boot, then leave it
+      untouched on later restarts, except for a narrow, always-enforced
+      subset (gateway/auth wiring, and the credential/routing sub-fields of
+      declared providers/channels/MCP servers — not the whole entry). A new
+      provider/channel/MCP server added to the CR after seeding is added
+      automatically on the next restart; updating an already-existing
+      entry's non-credential content is not automatically synced. A cluster
+      admin may restrict which modes are allowed via `ClawOperatorConfig` —
+      if `seedOnly` is requested but not allowed, `Ready` reports `False`
+      with reason `ConfigModeNotAllowed`. Not to be confused with per-file
+      workspace seeding (`spec.workspace.*.mode: seedIfMissing`).
 
     ## `spec.config.raw` vs `openclaw config patch`
 
