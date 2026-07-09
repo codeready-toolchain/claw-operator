@@ -823,6 +823,40 @@ func appendNoProxySuffix(container map[string]any) {
 	_ = unstructured.SetNestedSlice(container, envVars, "env")
 }
 
+// configureClawDeploymentServiceAccount sets serviceAccountName and
+// automountServiceAccountToken on the gateway Deployment's pod template
+// when spec.serviceAccountName is set. No-op when the field is empty.
+func configureClawDeploymentServiceAccount(
+	objects []*unstructured.Unstructured,
+	instance *clawv1alpha1.Claw,
+) error {
+	if instance.Spec.ServiceAccountName == "" {
+		return nil
+	}
+
+	gatewayName := getClawDeploymentName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+		if err := unstructured.SetNestedField(
+			obj.Object,
+			instance.Spec.ServiceAccountName,
+			"spec", "template", "spec", "serviceAccountName",
+		); err != nil {
+			return fmt.Errorf("failed to set serviceAccountName: %w", err)
+		}
+		if err := unstructured.SetNestedField(
+			obj.Object, true,
+			"spec", "template", "spec", "automountServiceAccountToken",
+		); err != nil {
+			return fmt.Errorf("failed to set automountServiceAccountToken: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("claw deployment not found in manifests")
+}
+
 // inClusterBypassEnabled returns true if spec.network.inClusterBypass is explicitly true.
 func inClusterBypassEnabled(instance *clawv1alpha1.Claw) bool {
 	return instance.Spec.Network != nil &&

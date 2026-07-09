@@ -1963,6 +1963,214 @@ func TestEnableServiceLinks(t *testing.T) {
 	})
 }
 
+// --- Service account tests ---
+
+const testServiceAccountName = "my-sa"
+
+func TestConfigureClawDeploymentServiceAccount(t *testing.T) {
+	makeDeployment := func() []*unstructured.Unstructured {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"automountServiceAccountToken": false,
+					"containers": []any{
+						map[string]any{
+							"name": ClawGatewayContainerName,
+						},
+					},
+				},
+			},
+		}
+		return []*unstructured.Unstructured{dep}
+	}
+
+	t.Run("should set serviceAccountName and enable token mounting", func(t *testing.T) {
+		objects := makeDeployment()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.ServiceAccountName = "my-cloud-sa"
+
+		require.NoError(t, configureClawDeploymentServiceAccount(objects, instance))
+
+		saName, found, err := unstructured.NestedString(
+			objects[0].Object, "spec", "template", "spec", "serviceAccountName")
+		require.NoError(t, err)
+		assert.True(t, found, "serviceAccountName should be set")
+		assert.Equal(t, "my-cloud-sa", saName)
+
+		autoMount, found, err := unstructured.NestedBool(
+			objects[0].Object, "spec", "template", "spec", "automountServiceAccountToken")
+		require.NoError(t, err)
+		assert.True(t, found, "automountServiceAccountToken should be set")
+		assert.True(t, autoMount, "automountServiceAccountToken should be true")
+	})
+
+	t.Run("should be no-op when serviceAccountName is empty", func(t *testing.T) {
+		objects := makeDeployment()
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+
+		require.NoError(t, configureClawDeploymentServiceAccount(objects, instance))
+
+		_, found, _ := unstructured.NestedString(
+			objects[0].Object, "spec", "template", "spec", "serviceAccountName")
+		assert.False(t, found, "serviceAccountName should not be set")
+
+		autoMount, _, _ := unstructured.NestedBool(
+			objects[0].Object, "spec", "template", "spec", "automountServiceAccountToken")
+		assert.False(t, autoMount, "automountServiceAccountToken should remain false")
+	})
+
+	t.Run("should return error when deployment is missing", func(t *testing.T) {
+		objects := []*unstructured.Unstructured{}
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.ServiceAccountName = testServiceAccountName
+
+		err := configureClawDeploymentServiceAccount(objects, instance)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "claw deployment not found")
+	})
+
+	t.Run("should only modify gateway deployment, not proxy", func(t *testing.T) {
+		gatewayDep := &unstructured.Unstructured{}
+		gatewayDep.SetKind(DeploymentKind)
+		gatewayDep.SetName(getClawDeploymentName(testInstanceName))
+		gatewayDep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"automountServiceAccountToken": false,
+					"containers": []any{
+						map[string]any{"name": ClawGatewayContainerName},
+					},
+				},
+			},
+		}
+
+		proxyDep := &unstructured.Unstructured{}
+		proxyDep.SetKind(DeploymentKind)
+		proxyDep.SetName(getProxyDeploymentName(testInstanceName))
+		proxyDep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"automountServiceAccountToken": false,
+					"containers": []any{
+						map[string]any{"name": "proxy"},
+					},
+				},
+			},
+		}
+
+		objects := []*unstructured.Unstructured{gatewayDep, proxyDep}
+		instance := &clawv1alpha1.Claw{}
+		instance.Name = testInstanceName
+		instance.Spec.ServiceAccountName = testServiceAccountName
+
+		require.NoError(t, configureClawDeploymentServiceAccount(objects, instance))
+
+		proxySA, found, _ := unstructured.NestedString(
+			proxyDep.Object, "spec", "template", "spec", "serviceAccountName")
+		assert.False(t, found, "proxy should not have serviceAccountName set")
+		assert.Empty(t, proxySA)
+
+		proxyAutoMount, _, _ := unstructured.NestedBool(
+			proxyDep.Object, "spec", "template", "spec", "automountServiceAccountToken")
+		assert.False(t, proxyAutoMount, "proxy automountServiceAccountToken should remain false")
+	})
+}
+
+func TestServiceAccountIntegration(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("should set serviceAccountName on gateway pod when specified", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials:        testCredentials(),
+				ServiceAccountName: "workload-identity-sa",
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name: getClawDeploymentName(testInstanceName), Namespace: namespace,
+			}, deployment) == nil
+		}, "gateway deployment should be created")
+
+		assert.Equal(t, "workload-identity-sa", deployment.Spec.Template.Spec.ServiceAccountName,
+			"gateway pod should use the custom SA")
+		require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken,
+			"automountServiceAccountToken should be set")
+		assert.True(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken,
+			"automountServiceAccountToken should be true when SA is specified")
+	})
+
+	t.Run("should not set serviceAccountName when omitted", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		createClawInstance(t, ctx, testInstanceName, namespace)
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name: getClawDeploymentName(testInstanceName), Namespace: namespace,
+			}, deployment) == nil
+		}, "gateway deployment should be created")
+
+		assert.NotEqual(t, "workload-identity-sa", deployment.Spec.Template.Spec.ServiceAccountName,
+			"gateway pod should not have a custom SA when omitted")
+		require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken,
+			"automountServiceAccountToken should be set")
+		assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken,
+			"automountServiceAccountToken should be false when SA is not specified")
+	})
+
+	t.Run("proxy pod should not be affected by serviceAccountName", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials:        testCredentials(),
+				ServiceAccountName: "workload-identity-sa",
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		proxyDeploy := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name: getProxyDeploymentName(testInstanceName), Namespace: namespace,
+			}, proxyDeploy) == nil
+		}, "proxy deployment should be created")
+
+		assert.NotEqual(t, "workload-identity-sa", proxyDeploy.Spec.Template.Spec.ServiceAccountName,
+			"proxy pod should not have the gateway's custom SA")
+	})
+}
+
 // --- Image field tests ---
 
 func TestOpenClawImage(t *testing.T) {

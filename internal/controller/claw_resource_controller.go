@@ -943,6 +943,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if err := configureGatewayNoProxy(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure gateway NO_PROXY: %w", err)
 	}
+	if err := configureClawDeploymentServiceAccount(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure service account: %w", err)
+	}
 	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
 		return fmt.Errorf("failed to configure image pull policy: %w", err)
 	}
