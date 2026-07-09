@@ -767,6 +767,14 @@ spec:
                 items:
                   type: string
                 type: array
+              serviceAccountName:
+                description: |-
+                  ServiceAccountName sets the Kubernetes ServiceAccount on the gateway
+                  pod. When set, automountServiceAccountToken is enabled so the SA token
+                  is projected into the pod for Workload Identity (AWS IRSA, GCP WI,
+                  Azure WI). When omitted, the default ServiceAccount is used with no
+                  token mounted. The SA must be pre-created by the cluster admin.
+                type: string
               skills:
                 additionalProperties:
                   type: string

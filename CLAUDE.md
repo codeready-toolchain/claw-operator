@@ -5,7 +5,7 @@
 Kubernetes operator (Go, Kubebuilder/Operator SDK) that manages OpenClaw instances on OpenShift/Kubernetes. Detailed architecture reference in `docs/architecture.md`.
 
 **CRDs** (API group `claw.sandbox.redhat.com/v1alpha1`):
-- `Claw` — Main CRD. Spec: `config` (ConfigSpec: raw RawExtension, mergeMode merge/overwrite/seedOnly), `credentials` ([]CredentialSpec), `auth` (AuthSpec: mode token/password, passwordSecretRef, disableDevicePairing). Status: `conditions`, `url`, `gatewayTokenSecretRef`
+- `Claw` — Main CRD. Spec: `config` (ConfigSpec: raw RawExtension, mergeMode merge/overwrite/seedOnly), `credentials` ([]CredentialSpec), `auth` (AuthSpec: mode token/password, passwordSecretRef, disableDevicePairing), `serviceAccountName` (string, optional — sets gateway pod SA for Workload Identity). Status: `conditions`, `url`, `gatewayTokenSecretRef`
 - `ClawDevicePairingRequest` — Device pairing. Spec: `requestID`, `selector` (LabelSelector). Controller matches exactly one pod
 - `ClawOperatorConfig` — Cluster-admin policy singleton (name `cluster`, in the operator's own namespace). Spec: `allowedConfigModes` ([]ConfigMode, empty = unrestricted). Gates which `mergeMode` values `Claw` CRs may use; see [ADR-0021](docs/adr/0021-seed-only-config-mode.md)
 

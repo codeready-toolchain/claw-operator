@@ -686,6 +686,14 @@ type ClawSpec struct {
 	// +optional
 	Network *NetworkSpec `json:"network,omitempty"`
 
+	// ServiceAccountName sets the Kubernetes ServiceAccount on the gateway
+	// pod. When set, automountServiceAccountToken is enabled so the SA token
+	// is projected into the pod for Workload Identity (AWS IRSA, GCP WI,
+	// Azure WI). When omitted, the default ServiceAccount is used with no
+	// token mounted. The SA must be pre-created by the cluster admin.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
 	// Plugins lists OpenClaw plugins to install via an init container before
 	// the gateway starts. Each entry is a package name (e.g. "@openclaw/matrix").
 	// The operator runs `openclaw plugins install <pkg>` for each entry.

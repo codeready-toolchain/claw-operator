@@ -1617,6 +1617,58 @@ spec:
 
 > **Warning:** If `inClusterBypass` is `true` and an in-cluster MCP server has `credentialRef`, the operator sets a warning condition — credentials cannot be injected when traffic bypasses the proxy.
 
+## Service Account / Workload Identity
+
+The `spec.serviceAccountName` field assigns a custom Kubernetes ServiceAccount to the gateway pod, enabling cloud Workload Identity for services that use request-level signing (AWS S3, GCS). The proxy's header injection model cannot support these APIs because they sign every request cryptographically — changing any header after signing invalidates the signature.
+
+When `serviceAccountName` is set, the operator also enables `automountServiceAccountToken` so the projected SA token is available inside the pod. When omitted, the default behavior is preserved (default SA, no token mounted).
+
+> **Security:** The SA token gives the agent access to whatever RBAC or cloud IAM role the SA carries. Create narrowly-scoped SAs with minimal permissions. Short-lived auto-rotating Workload Identity tokens are strictly better than static access keys configured inside the container.
+
+### AWS (EKS / ROSA) — IRSA
+
+**1. Create a ServiceAccount with the IRSA annotation:**
+
+```sh
+oc create sa claw-s3-access -n $NS
+oc annotate sa claw-s3-access -n $NS \
+  eks.amazonaws.com/role-arn=arn:aws:iam::123456789012:role/claw-s3-role
+```
+
+**2. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  serviceAccountName: claw-s3-access
+  credentials: []  # your existing LLM credentials
+EOF
+```
+
+The agent can now use `rclone` with `env_auth=true` or the AWS SDK — the projected SA token is exchanged for temporary STS credentials automatically.
+
+### GCP (GKE) — Workload Identity
+
+```sh
+oc create sa claw-gcs-access -n $NS
+oc annotate sa claw-gcs-access -n $NS \
+  iam.gke.io/gcp-service-account=claw-gcs@YOUR_PROJECT.iam.gserviceaccount.com
+```
+
+Then set `serviceAccountName: claw-gcs-access` in the Claw CR.
+
+### Azure (AKS) — Workload Identity
+
+> **Not yet supported.** Azure Workload Identity requires an `azure.workload.identity/use: "true"` label on the pod template for its mutating webhook to inject the projected token and `AZURE_*` env vars. The operator does not currently inject this label. AWS IRSA and GCP WI work with `serviceAccountName` alone; Azure support will be added in a future release.
+
+### Scope
+
+The SA is set only on the gateway Deployment (where the agent runs), not on the proxy Deployment. The operator does not create, validate, or manage the SA itself — that is the cluster admin's responsibility. If the SA does not exist, the pod stays Pending with a standard Kubernetes event message.
+
 ## Plugins
 
 The operator supports declarative plugin installation. List plugins in `spec.plugins` and the operator runs an init container that installs them on the PVC before the gateway starts.
