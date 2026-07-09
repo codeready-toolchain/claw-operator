@@ -2032,7 +2032,8 @@ func TestConfigureClawDeploymentServiceAccount(t *testing.T) {
 
 		err := configureClawDeploymentServiceAccount(objects, instance)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "claw deployment not found")
+		assert.Contains(t, err.Error(), "gateway deployment")
+		assert.Contains(t, err.Error(), "not found in manifests")
 	})
 
 	t.Run("should only modify gateway deployment, not proxy", func(t *testing.T) {
@@ -2071,6 +2072,18 @@ func TestConfigureClawDeploymentServiceAccount(t *testing.T) {
 
 		require.NoError(t, configureClawDeploymentServiceAccount(objects, instance))
 
+		gatewaySA, found, err := unstructured.NestedString(
+			gatewayDep.Object, "spec", "template", "spec", "serviceAccountName")
+		require.NoError(t, err)
+		assert.True(t, found, "gateway should have serviceAccountName set")
+		assert.Equal(t, testServiceAccountName, gatewaySA)
+
+		gatewayAutoMount, found, err := unstructured.NestedBool(
+			gatewayDep.Object, "spec", "template", "spec", "automountServiceAccountToken")
+		require.NoError(t, err)
+		assert.True(t, found, "gateway should have automountServiceAccountToken set")
+		assert.True(t, gatewayAutoMount, "gateway automountServiceAccountToken should be true")
+
 		proxySA, found, _ := unstructured.NestedString(
 			proxyDep.Object, "spec", "template", "spec", "serviceAccountName")
 		assert.False(t, found, "proxy should not have serviceAccountName set")
@@ -2083,8 +2096,6 @@ func TestConfigureClawDeploymentServiceAccount(t *testing.T) {
 }
 
 func TestServiceAccountIntegration(t *testing.T) {
-	ctx := context.Background()
-
 	t.Run("should set serviceAccountName on gateway pod when specified", func(t *testing.T) {
 		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
 
@@ -2133,6 +2144,7 @@ func TestServiceAccountIntegration(t *testing.T) {
 			}, deployment) == nil
 		}, "gateway deployment should be created")
 
+		// The API server defaults serviceAccountName to "default" — assert.Empty would fail.
 		assert.NotEqual(t, "workload-identity-sa", deployment.Spec.Template.Spec.ServiceAccountName,
 			"gateway pod should not have a custom SA when omitted")
 		require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken,
@@ -2168,6 +2180,69 @@ func TestServiceAccountIntegration(t *testing.T) {
 
 		assert.NotEqual(t, "workload-identity-sa", proxyDeploy.Spec.Template.Spec.ServiceAccountName,
 			"proxy pod should not have the gateway's custom SA")
+		require.NotNil(t, proxyDeploy.Spec.Template.Spec.AutomountServiceAccountToken,
+			"proxy automountServiceAccountToken should be set")
+		assert.False(t, *proxyDeploy.Spec.Template.Spec.AutomountServiceAccountToken,
+			"proxy automountServiceAccountToken should remain false")
+	})
+
+	t.Run("should update deployment when serviceAccountName changes", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials:        testCredentials(),
+				ServiceAccountName: "first-sa",
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name: getClawDeploymentName(testInstanceName), Namespace: namespace,
+			}, deployment) == nil
+		}, "gateway deployment should be created")
+
+		assert.Equal(t, "first-sa", deployment.Spec.Template.Spec.ServiceAccountName)
+
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, instance))
+		instance.Spec.ServiceAccountName = "second-sa"
+		require.NoError(t, k8sClient.Update(ctx, instance))
+
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: getClawDeploymentName(testInstanceName), Namespace: namespace,
+		}, deployment))
+		assert.Equal(t, "second-sa", deployment.Spec.Template.Spec.ServiceAccountName,
+			"gateway should use updated SA after reconcile")
+
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, instance))
+		instance.Spec.ServiceAccountName = ""
+		require.NoError(t, k8sClient.Update(ctx, instance))
+
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: getClawDeploymentName(testInstanceName), Namespace: namespace,
+		}, deployment))
+		assert.NotEqual(t, "second-sa", deployment.Spec.Template.Spec.ServiceAccountName,
+			"gateway should revert SA after clearing the field")
+		require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
+		assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken,
+			"automountServiceAccountToken should revert to false")
 	})
 }
 

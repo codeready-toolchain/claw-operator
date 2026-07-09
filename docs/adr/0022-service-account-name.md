@@ -1,12 +1,12 @@
 # ADR-0022: Gateway ServiceAccount for Workload Identity
 
-**Status:** Implemented
+**Status:** Accepted
 **Date:** 2026-07-09
 
 ## Overview
 
-Agents need to exchange data with cloud storage services (S3, GCS, Azure
-Blob) for backup/restore, document import/export, and dataset access.
+Agents need to exchange data with cloud storage services (S3, GCS) for
+backup/restore, document import/export, and dataset access.
 The proxy's credential injection model cannot support this because cloud
 storage APIs use request-level signing (AWS SigV4, GCP signed requests)
 rather than simple header injection — the proxy would need to strip the
@@ -23,10 +23,13 @@ gateway pod.
 
 Kubernetes Workload Identity solves this at the platform level: the pod
 gets short-lived, auto-rotating credentials via a projected
-ServiceAccount token, with no static secrets. All three major cloud
-platforms use the same mechanism — annotate a ServiceAccount, assign it
-to the pod, and the cloud SDK picks up temporary credentials from the
-projected token.
+ServiceAccount token, with no static secrets. AWS IRSA and GCP Workload
+Identity work with SA annotations alone — annotate a ServiceAccount,
+assign it to the pod, and the cloud SDK picks up temporary credentials
+from the projected token. Azure Workload Identity additionally requires
+a pod-level label (`azure.workload.identity/use: "true"`) for its
+mutating webhook; this is not yet supported and will be added in a
+follow-up.
 
 ## Decisions
 
@@ -65,3 +68,7 @@ with minimal permissions.
 - `internal/controller/claw_resource_controller.go`: called after
   `configureGatewayNoProxy` in the Phase 3 deployment mutation sequence.
 - No proxy changes, no new conditions, no migration needed.
+- **Azure deferred:** Azure Workload Identity requires the operator to
+  inject `azure.workload.identity/use: "true"` as a pod-template label,
+  which this change does not implement. AWS IRSA and GCP WI work with
+  `serviceAccountName` + `automountServiceAccountToken` alone.

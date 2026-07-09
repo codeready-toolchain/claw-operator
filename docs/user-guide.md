@@ -1619,7 +1619,7 @@ spec:
 
 ## Service Account / Workload Identity
 
-The `spec.serviceAccountName` field assigns a custom Kubernetes ServiceAccount to the gateway pod, enabling cloud Workload Identity for services that use request-level signing (AWS S3, GCS, Azure Blob). The proxy's header injection model cannot support these APIs because they sign every request cryptographically — changing any header after signing invalidates the signature.
+The `spec.serviceAccountName` field assigns a custom Kubernetes ServiceAccount to the gateway pod, enabling cloud Workload Identity for services that use request-level signing (AWS S3, GCS). The proxy's header injection model cannot support these APIs because they sign every request cryptographically — changing any header after signing invalidates the signature.
 
 When `serviceAccountName` is set, the operator also enables `automountServiceAccountToken` so the projected SA token is available inside the pod. When omitted, the default behavior is preserved (default SA, no token mounted).
 
@@ -1645,12 +1645,7 @@ metadata:
   name: instance
 spec:
   serviceAccountName: claw-s3-access
-  credentials:
-    - name: gemini
-      provider: google
-      secretRef:
-        - name: gemini-api-key
-          key: api-key
+  credentials: []  # your existing LLM credentials
 EOF
 ```
 
@@ -1668,15 +1663,7 @@ Then set `serviceAccountName: claw-gcs-access` in the Claw CR.
 
 ### Azure (AKS) — Workload Identity
 
-```sh
-oc create sa claw-blob-access -n $NS
-oc annotate sa claw-blob-access -n $NS \
-  azure.workload.identity/client-id=YOUR_CLIENT_ID
-oc label sa claw-blob-access -n $NS \
-  azure.workload.identity/use=true
-```
-
-Then set `serviceAccountName: claw-blob-access` in the Claw CR.
+> **Not yet supported.** Azure Workload Identity requires an `azure.workload.identity/use: "true"` label on the pod template for its mutating webhook to inject the projected token and `AZURE_*` env vars. The operator does not currently inject this label. AWS IRSA and GCP WI work with `serviceAccountName` alone; Azure support will be added in a future release.
 
 ### Scope
 

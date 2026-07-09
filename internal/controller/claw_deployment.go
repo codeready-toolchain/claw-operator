@@ -854,7 +854,7 @@ func configureClawDeploymentServiceAccount(
 		}
 		return nil
 	}
-	return fmt.Errorf("claw deployment not found in manifests")
+	return fmt.Errorf("gateway deployment %s not found in manifests", gatewayName)
 }
 
 // inClusterBypassEnabled returns true if spec.network.inClusterBypass is explicitly true.
