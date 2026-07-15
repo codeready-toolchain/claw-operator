@@ -106,21 +106,11 @@ var knownProviders = map[string]providerDefaults{
 		VertexAPI:    "anthropic-messages",
 		VertexPlugin: "@openclaw/anthropic-vertex-provider",
 		Models: []modelEntry{
+			// First entry becomes agents.defaults.model.primary when unset.
+			// OpenClaw 2026.7.1 defaults Anthropic API-key installs to Sonnet 5
+			// and includes it in supportsClaudeAdaptiveThinking().
+			{Name: "claude-sonnet-5", Alias: "Claude Sonnet 5"},
 			{Name: "claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
-			// claude-sonnet-5 is a real, currently-shipping Anthropic model, but
-			// OpenClaw's Anthropic thinking-profile resolver doesn't recognize it
-			// yet: supportsClaudeAdaptiveThinking() in
-			// refs/openclaw/packages/llm-core/src/model-contracts/anthropic.ts only
-			// allowlists claude-{fable-5,mythos-preview,opus-4-(6|7|8),sonnet-4-6}
-			// for adaptive-only thinking. Anthropic's Sonnet 5 API requires adaptive
-			// thinking and rejects manual thinking config with a 400 error, so
-			// without a matching entry OpenClaw would fall back to sending a manual
-			// thinking level (e.g. "medium") and every request would fail. Re-enable
-			// once a future OpenClaw release adds sonnet-5 to that allowlist (or
-			// otherwise ships native support) -- check refs/openclaw CHANGELOG.md /
-			// the anthropic plugin manifest for "sonnet-5" during the next
-			// check-openclaw-release pass.
-			// {Name: "claude-sonnet-5", Alias: "Claude Sonnet 5"},
 			{Name: "claude-opus-4-8", Alias: "Claude Opus 4.8"},
 			{Name: "claude-opus-4-7", Alias: "Claude Opus 4.7"},
 			{Name: "claude-opus-4-6", Alias: "Claude Opus 4.6"},
@@ -135,6 +125,8 @@ var knownProviders = map[string]providerDefaults{
 		Companions:       []string{"openai-codex"},
 		EmbeddingAdapter: "openai",
 		Models: []modelEntry{
+			// OpenClaw 2026.7.1 OPENAI_DEFAULT_MODEL is openai/gpt-5.6.
+			{Name: "gpt-5.6", Alias: "GPT-5.6"},
 			{Name: "gpt-5.5", Alias: "GPT-5.5"},
 			{Name: "gpt-5.4", Alias: "GPT-5.4"},
 			{Name: "gpt-5.4-mini", Alias: "GPT-5.4 Mini"},
@@ -158,8 +150,8 @@ var knownProviders = map[string]providerDefaults{
 		Domain:   "openrouter.ai",
 		BasePath: "/api/v1",
 		Models: []modelEntry{
-			{Name: "openai/gpt-5.5", Alias: "GPT-5.5"},
-			{Name: "anthropic/claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
+			{Name: "openai/gpt-5.6", Alias: "GPT-5.6"},
+			{Name: "anthropic/claude-sonnet-5", Alias: "Claude Sonnet 5"},
 			{Name: "google/gemini-3.5-flash", Alias: "Gemini 3.5 Flash"},
 		},
 	},

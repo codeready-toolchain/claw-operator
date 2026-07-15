@@ -177,7 +177,7 @@ func TestProviderModelCatalog(t *testing.T) {
 	t.Run("returns models for openrouter", func(t *testing.T) {
 		models := providerModelCatalog("openrouter")
 		require.NotEmpty(t, models)
-		assert.Equal(t, "openai/gpt-5.5", models[0].Name)
+		assert.Equal(t, "openai/gpt-5.6", models[0].Name)
 	})
 
 	t.Run("returns nil for unknown provider", func(t *testing.T) {
