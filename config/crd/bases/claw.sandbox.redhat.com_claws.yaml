@@ -901,10 +901,17 @@ spec:
                           description: |-
                             Mode controls seeding behavior for all items in this source.
                             Individual items can override this. Default: overwrite.
+                            Ignored when ReadOnly is true.
                           enum:
                           - overwrite
                           - seedIfMissing
                           type: string
+                        readOnly:
+                          description: |-
+                            ReadOnly mounts all items directly into the workspace via
+                            read-only Kubernetes volume mounts instead of seeding them onto the PVC.
+                            The OpenClaw process cannot modify or delete these files at runtime.
+                          type: boolean
                       required:
                       - configMapRef
                       - items
@@ -957,10 +964,17 @@ spec:
                           description: |-
                             Mode controls seeding behavior for all items in this source.
                             Individual items can override this. Default: overwrite.
+                            Ignored when ReadOnly is true.
                           enum:
                           - overwrite
                           - seedIfMissing
                           type: string
+                        readOnly:
+                          description: |-
+                            ReadOnly mounts all items directly into the workspace via
+                            read-only Kubernetes volume mounts instead of seeding them onto the PVC.
+                            The OpenClaw process cannot modify or delete these files at runtime.
+                          type: boolean
                         ref:
                           description: |-
                             Ref is the Git reference to check out: branch name, tag, or commit SHA.
@@ -1009,7 +1023,9 @@ spec:
                           description: Content is the inline file content.
                           type: string
                         mode:
-                          description: 'Mode controls seeding behavior. Default: overwrite.'
+                          description: |-
+                            Mode controls seeding behavior. Default: overwrite.
+                            Ignored when ReadOnly is true.
                           enum:
                           - overwrite
                           - seedIfMissing
@@ -1019,6 +1035,12 @@ spec:
                             "SOUL.md", "docs/guide.md").
                           minLength: 1
                           type: string
+                        readOnly:
+                          description: |-
+                            ReadOnly mounts this file directly into the workspace via a
+                            read-only Kubernetes volume mount instead of seeding it onto the PVC.
+                            The OpenClaw process cannot modify or delete the file at runtime.
+                          type: boolean
                       required:
                       - content
                       - path

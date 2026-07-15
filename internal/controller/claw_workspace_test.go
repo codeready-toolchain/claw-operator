@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -588,6 +589,95 @@ func TestGenerateSeedManifest(t *testing.T) {
 		assert.True(t, targets["custom-soul.md"])
 		assert.True(t, targets["TOOLS.md"])
 		assert.True(t, targets["AGENTS.md"], "builtin AGENTS.md should be present")
+	})
+
+	t.Run("should skip read-only inline sources", func(t *testing.T) {
+		entries := generateSeedManifest(&clawv1alpha1.WorkspaceSpec{
+			InlineSources: []clawv1alpha1.InlineSource{
+				{Path: "writable.md", Content: "w"},
+				{Path: "readonly.md", Content: "r", ReadOnly: true},
+			},
+		})
+		targets := map[string]bool{}
+		for _, e := range entries {
+			targets[e.Target] = true
+		}
+		assert.True(t, targets["writable.md"], "writable inline source should be in manifest")
+		assert.False(t, targets["readonly.md"], "read-only inline source should be excluded")
+	})
+
+	t.Run("should skip read-only configMap sources", func(t *testing.T) {
+		entries := generateSeedManifest(&clawv1alpha1.WorkspaceSpec{
+			ConfigMapSources: []clawv1alpha1.ConfigMapSource{
+				{
+					ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "writable-cm"},
+					Items:        []clawv1alpha1.ConfigMapItem{{Key: "a", Path: "a.md"}},
+				},
+				{
+					ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "readonly-cm"},
+					ReadOnly:     true,
+					Items:        []clawv1alpha1.ConfigMapItem{{Key: "b", Path: "b.md"}},
+				},
+			},
+		})
+		targets := map[string]bool{}
+		for _, e := range entries {
+			targets[e.Target] = true
+		}
+		assert.True(t, targets["a.md"], "writable configMap item should be in manifest")
+		assert.False(t, targets["b.md"], "read-only configMap item should be excluded")
+	})
+
+	t.Run("should skip read-only git sources", func(t *testing.T) {
+		entries := generateSeedManifest(&clawv1alpha1.WorkspaceSpec{
+			GitSources: []clawv1alpha1.GitSource{
+				{
+					URL:   "https://example.com/writable.git",
+					Items: []clawv1alpha1.GitItem{{RepoPath: "a.md", Path: "a.md"}},
+				},
+				{
+					URL:      "https://example.com/readonly.git",
+					ReadOnly: true,
+					Items:    []clawv1alpha1.GitItem{{RepoPath: "b.md", Path: "b.md"}},
+				},
+			},
+		})
+		targets := map[string]bool{}
+		for _, e := range entries {
+			targets[e.Target] = true
+		}
+		assert.True(t, targets["a.md"], "writable git item should be in manifest")
+		assert.False(t, targets["b.md"], "read-only git item should be excluded")
+	})
+
+	t.Run("should skip all read-only sources in mixed spec", func(t *testing.T) {
+		entries := generateSeedManifest(&clawv1alpha1.WorkspaceSpec{
+			InlineSources: []clawv1alpha1.InlineSource{
+				{Path: "inline-rw.md", Content: "w"},
+				{Path: "inline-ro.md", Content: "r", ReadOnly: true},
+			},
+			ConfigMapSources: []clawv1alpha1.ConfigMapSource{
+				{
+					ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "cm-ro"},
+					ReadOnly:     true,
+					Items:        []clawv1alpha1.ConfigMapItem{{Key: "k", Path: "cm-ro.md"}},
+				},
+			},
+			GitSources: []clawv1alpha1.GitSource{
+				{
+					URL:   "https://example.com/rw.git",
+					Items: []clawv1alpha1.GitItem{{RepoPath: "g.md", Path: "git-rw.md"}},
+				},
+			},
+		})
+		targets := map[string]bool{}
+		for _, e := range entries {
+			targets[e.Target] = true
+		}
+		assert.True(t, targets["inline-rw.md"])
+		assert.False(t, targets["inline-ro.md"])
+		assert.False(t, targets["cm-ro.md"])
+		assert.True(t, targets["git-rw.md"])
 	})
 
 	t.Run("should use correct git source index for multiple git sources", func(t *testing.T) {
@@ -1578,6 +1668,213 @@ func TestInjectSeedInitContainer(t *testing.T) {
 	})
 }
 
+// --- injectReadOnlyWorkspaceMounts tests ---
+
+func TestInjectReadOnlyWorkspaceMounts(t *testing.T) {
+	t.Run("should be no-op when workspace is nil", func(t *testing.T) {
+		dep := makeTestDeployment()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec:       clawv1alpha1.ClawSpec{},
+		}
+		err := injectReadOnlyWorkspaceMounts([]*unstructured.Unstructured{dep}, instance)
+		require.NoError(t, err)
+	})
+
+	t.Run("should be no-op when no sources are read-only", func(t *testing.T) {
+		dep := makeTestDeployment()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec: clawv1alpha1.ClawSpec{
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					InlineSources: []clawv1alpha1.InlineSource{
+						{Path: "SOUL.md", Content: "soul"},
+					},
+				},
+			},
+		}
+		err := injectReadOnlyWorkspaceMounts([]*unstructured.Unstructured{dep}, instance)
+		require.NoError(t, err)
+
+		containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+		gateway := containers[0].(map[string]any)
+		mounts, _, _ := unstructured.NestedSlice(gateway, "volumeMounts")
+		assert.Empty(t, mounts, "no mounts should be added when nothing is read-only")
+	})
+
+	t.Run("should mount read-only inline source from config volume", func(t *testing.T) {
+		dep := makeTestDeployment()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec: clawv1alpha1.ClawSpec{
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					InlineSources: []clawv1alpha1.InlineSource{
+						{Path: "docs/POLICY.md", Content: "policy", ReadOnly: true},
+					},
+				},
+			},
+		}
+		err := injectReadOnlyWorkspaceMounts([]*unstructured.Unstructured{dep}, instance)
+		require.NoError(t, err)
+
+		containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+		gateway := containers[0].(map[string]any)
+		mounts, _, _ := unstructured.NestedSlice(gateway, "volumeMounts")
+		require.Len(t, mounts, 1)
+
+		m := mounts[0].(map[string]any)
+		assert.Equal(t, "config", m["name"])
+		assert.Equal(t, "/home/node/.openclaw/workspace/docs/POLICY.md", m["mountPath"])
+		assert.Equal(t, "_ws_docs--POLICY.md", m["subPath"])
+		assert.Equal(t, true, m["readOnly"])
+	})
+
+	t.Run("should mount read-only configMap source items", func(t *testing.T) {
+		dep := makeTestDeployment()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec: clawv1alpha1.ClawSpec{
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					ConfigMapSources: []clawv1alpha1.ConfigMapSource{
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "compliance-docs"},
+							ReadOnly:     true,
+							Items: []clawv1alpha1.ConfigMapItem{
+								{Key: "rules.md", Path: "docs/rules.md"},
+								{Key: "policy.md", Path: "docs/policy.md"},
+							},
+						},
+					},
+				},
+			},
+		}
+		err := injectReadOnlyWorkspaceMounts([]*unstructured.Unstructured{dep}, instance)
+		require.NoError(t, err)
+
+		containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+		gateway := containers[0].(map[string]any)
+		mounts, _, _ := unstructured.NestedSlice(gateway, "volumeMounts")
+		require.Len(t, mounts, 2)
+
+		m0 := mounts[0].(map[string]any)
+		assert.Equal(t, "ws-cm-compliance-docs", m0["name"])
+		assert.Equal(t, "/home/node/.openclaw/workspace/docs/rules.md", m0["mountPath"])
+		assert.Equal(t, "rules.md", m0["subPath"])
+		assert.Equal(t, true, m0["readOnly"])
+
+		m1 := mounts[1].(map[string]any)
+		assert.Equal(t, "ws-cm-compliance-docs", m1["name"])
+		assert.Equal(t, "/home/node/.openclaw/workspace/docs/policy.md", m1["mountPath"])
+		assert.Equal(t, "policy.md", m1["subPath"])
+		assert.Equal(t, true, m1["readOnly"])
+	})
+
+	t.Run("should mount read-only git source items", func(t *testing.T) {
+		dep := makeTestDeployment()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec: clawv1alpha1.ClawSpec{
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					GitSources: []clawv1alpha1.GitSource{
+						{
+							URL:      "https://example.com/repo.git",
+							ReadOnly: true,
+							Items: []clawv1alpha1.GitItem{
+								{RepoPath: "policies/guide.md", Path: "guide.md"},
+							},
+						},
+					},
+				},
+			},
+		}
+		err := injectReadOnlyWorkspaceMounts([]*unstructured.Unstructured{dep}, instance)
+		require.NoError(t, err)
+
+		containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+		gateway := containers[0].(map[string]any)
+		mounts, _, _ := unstructured.NestedSlice(gateway, "volumeMounts")
+		require.Len(t, mounts, 1)
+
+		m := mounts[0].(map[string]any)
+		assert.Equal(t, "ws-git-0", m["name"])
+		assert.Equal(t, "/home/node/.openclaw/workspace/guide.md", m["mountPath"])
+		assert.Equal(t, "policies/guide.md", m["subPath"])
+		assert.Equal(t, true, m["readOnly"])
+	})
+
+	t.Run("should use correct git source index with mixed read-only", func(t *testing.T) {
+		dep := makeTestDeployment()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec: clawv1alpha1.ClawSpec{
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					GitSources: []clawv1alpha1.GitSource{
+						{
+							URL:   "https://example.com/writable.git",
+							Items: []clawv1alpha1.GitItem{{RepoPath: "a.md", Path: "a.md"}},
+						},
+						{
+							URL:      "https://example.com/readonly.git",
+							ReadOnly: true,
+							Items:    []clawv1alpha1.GitItem{{RepoPath: "b.md", Path: "b.md"}},
+						},
+					},
+				},
+			},
+		}
+		err := injectReadOnlyWorkspaceMounts([]*unstructured.Unstructured{dep}, instance)
+		require.NoError(t, err)
+
+		containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+		gateway := containers[0].(map[string]any)
+		mounts, _, _ := unstructured.NestedSlice(gateway, "volumeMounts")
+		require.Len(t, mounts, 1)
+
+		m := mounts[0].(map[string]any)
+		assert.Equal(t, "ws-git-1", m["name"], "should use index 1, not 0")
+	})
+
+	t.Run("should handle mixed read-only and writable sources", func(t *testing.T) {
+		dep := makeTestDeployment()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec: clawv1alpha1.ClawSpec{
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					InlineSources: []clawv1alpha1.InlineSource{
+						{Path: "writable.md", Content: "w"},
+						{Path: "readonly.md", Content: "r", ReadOnly: true},
+					},
+					ConfigMapSources: []clawv1alpha1.ConfigMapSource{
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "rw-cm"},
+							Items:        []clawv1alpha1.ConfigMapItem{{Key: "k", Path: "rw.md"}},
+						},
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "ro-cm"},
+							ReadOnly:     true,
+							Items:        []clawv1alpha1.ConfigMapItem{{Key: "k", Path: "ro.md"}},
+						},
+					},
+				},
+			},
+		}
+		err := injectReadOnlyWorkspaceMounts([]*unstructured.Unstructured{dep}, instance)
+		require.NoError(t, err)
+
+		containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+		gateway := containers[0].(map[string]any)
+		mounts, _, _ := unstructured.NestedSlice(gateway, "volumeMounts")
+		require.Len(t, mounts, 2, "should only mount read-only sources")
+
+		mountPaths := make([]string, len(mounts))
+		for i, m := range mounts {
+			mountPaths[i] = m.(map[string]any)["mountPath"].(string)
+		}
+		assert.Contains(t, mountPaths, "/home/node/.openclaw/workspace/readonly.md")
+		assert.Contains(t, mountPaths, "/home/node/.openclaw/workspace/ro.md")
+	})
+}
+
 // --- Integration tests ---
 
 func TestWorkspaceIntegration(t *testing.T) {
@@ -1972,5 +2269,331 @@ func TestWorkspaceIntegration(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "SOUL.md")
 		assert.Contains(t, err.Error(), "inline source")
+	})
+
+	t.Run("read-only inline source should mount directly on gateway and be excluded from seed manifest", func(t *testing.T) {
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					InlineSources: []clawv1alpha1.InlineSource{
+						{Path: "POLICY.md", Content: "# Do not modify", ReadOnly: true},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		// Verify seed manifest excludes the read-only entry
+		var cm corev1.ConfigMap
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getConfigMapName(testInstanceName),
+			Namespace: namespace,
+		}, &cm))
+
+		var manifest []seedManifestEntry
+		require.NoError(t, json.Unmarshal([]byte(cm.Data[seedManifestKey]), &manifest))
+		for _, e := range manifest {
+			assert.NotEqual(t, "POLICY.md", e.Target, "read-only file should not appear in seed manifest")
+		}
+
+		// Verify the _ws_ key is still in the ConfigMap (needed for the volume mount)
+		assert.Equal(t, "# Do not modify", cm.Data["_ws_POLICY.md"],
+			"inline content should still be injected into ConfigMap for the volume mount")
+
+		// Verify gateway deployment has a read-only volumeMount
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+
+		var gatewayContainer *corev1.Container
+		for i := range deployment.Spec.Template.Spec.Containers {
+			if deployment.Spec.Template.Spec.Containers[i].Name == ClawGatewayContainerName {
+				gatewayContainer = &deployment.Spec.Template.Spec.Containers[i]
+				break
+			}
+		}
+		require.NotNil(t, gatewayContainer, "gateway container should exist")
+
+		var roMount *corev1.VolumeMount
+		for i := range gatewayContainer.VolumeMounts {
+			if gatewayContainer.VolumeMounts[i].MountPath == "/home/node/.openclaw/workspace/POLICY.md" {
+				roMount = &gatewayContainer.VolumeMounts[i]
+				break
+			}
+		}
+		require.NotNil(t, roMount, "read-only volumeMount for POLICY.md should exist on gateway")
+		assert.Equal(t, "config", roMount.Name, "should mount from config volume")
+		assert.Equal(t, "_ws_POLICY.md", roMount.SubPath, "subPath should be the encoded key")
+		assert.True(t, roMount.ReadOnly, "mount must be read-only")
+	})
+
+	t.Run("read-only configMap source should mount directly on gateway and be excluded from seed manifest", func(t *testing.T) {
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		wsCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "ro-compliance", Namespace: namespace},
+			Data:       map[string]string{"rules.md": "# Compliance Rules"},
+		}
+		require.NoError(t, k8sClient.Create(ctx, wsCM))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					ConfigMapSources: []clawv1alpha1.ConfigMapSource{
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "ro-compliance"},
+							ReadOnly:     true,
+							Items: []clawv1alpha1.ConfigMapItem{
+								{Key: "rules.md", Path: "docs/rules.md"},
+							},
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+		t.Cleanup(func() {
+			_ = k8sClient.Delete(ctx, wsCM)
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		// Verify seed manifest excludes the read-only entry
+		var cm corev1.ConfigMap
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getConfigMapName(testInstanceName),
+			Namespace: namespace,
+		}, &cm))
+
+		var manifest []seedManifestEntry
+		require.NoError(t, json.Unmarshal([]byte(cm.Data[seedManifestKey]), &manifest))
+		for _, e := range manifest {
+			assert.NotEqual(t, "docs/rules.md", e.Target, "read-only file should not appear in seed manifest")
+		}
+
+		// Verify gateway deployment has a read-only volumeMount
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+
+		var gatewayContainer *corev1.Container
+		for i := range deployment.Spec.Template.Spec.Containers {
+			if deployment.Spec.Template.Spec.Containers[i].Name == ClawGatewayContainerName {
+				gatewayContainer = &deployment.Spec.Template.Spec.Containers[i]
+				break
+			}
+		}
+		require.NotNil(t, gatewayContainer, "gateway container should exist")
+
+		var roMount *corev1.VolumeMount
+		for i := range gatewayContainer.VolumeMounts {
+			if gatewayContainer.VolumeMounts[i].MountPath == "/home/node/.openclaw/workspace/docs/rules.md" {
+				roMount = &gatewayContainer.VolumeMounts[i]
+				break
+			}
+		}
+		require.NotNil(t, roMount, "read-only volumeMount for docs/rules.md should exist on gateway")
+		assert.Equal(t, "ws-cm-ro-compliance", roMount.Name, "should mount from the ConfigMap volume")
+		assert.Equal(t, "rules.md", roMount.SubPath, "subPath should be the ConfigMap key")
+		assert.True(t, roMount.ReadOnly, "mount must be read-only")
+	})
+
+	t.Run("read-only git source should mount directly on gateway and be excluded from seed manifest", func(t *testing.T) {
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					GitSources: []clawv1alpha1.GitSource{
+						{
+							URL:      "https://git.example.com/team/policies.git",
+							Ref:      "main",
+							ReadOnly: true,
+							Items: []clawv1alpha1.GitItem{
+								{RepoPath: "policies/guide.md", Path: "guide.md"},
+							},
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		// Verify seed manifest excludes the read-only entry
+		var cm corev1.ConfigMap
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getConfigMapName(testInstanceName),
+			Namespace: namespace,
+		}, &cm))
+
+		var manifest []seedManifestEntry
+		require.NoError(t, json.Unmarshal([]byte(cm.Data[seedManifestKey]), &manifest))
+		for _, e := range manifest {
+			assert.NotEqual(t, "guide.md", e.Target, "read-only file should not appear in seed manifest")
+		}
+
+		// Verify gateway deployment has a read-only volumeMount
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+
+		var gatewayContainer *corev1.Container
+		for i := range deployment.Spec.Template.Spec.Containers {
+			if deployment.Spec.Template.Spec.Containers[i].Name == ClawGatewayContainerName {
+				gatewayContainer = &deployment.Spec.Template.Spec.Containers[i]
+				break
+			}
+		}
+		require.NotNil(t, gatewayContainer, "gateway container should exist")
+
+		var roMount *corev1.VolumeMount
+		for i := range gatewayContainer.VolumeMounts {
+			if gatewayContainer.VolumeMounts[i].MountPath == "/home/node/.openclaw/workspace/guide.md" {
+				roMount = &gatewayContainer.VolumeMounts[i]
+				break
+			}
+		}
+		require.NotNil(t, roMount, "read-only volumeMount for guide.md should exist on gateway")
+		assert.Equal(t, "ws-git-0", roMount.Name, "should mount from git emptyDir volume")
+		assert.Equal(t, "policies/guide.md", roMount.SubPath, "subPath should be the repo path")
+		assert.True(t, roMount.ReadOnly, "mount must be read-only")
+	})
+
+	t.Run("mixed read-only and writable sources should only mount read-only files on gateway", func(t *testing.T) {
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		wsCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "mixed-cm", Namespace: namespace},
+			Data:       map[string]string{"policy.md": "# Policy"},
+		}
+		require.NoError(t, k8sClient.Create(ctx, wsCM))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: testCredentials(),
+				Workspace: &clawv1alpha1.WorkspaceSpec{
+					InlineSources: []clawv1alpha1.InlineSource{
+						{Path: "SOUL.md", Content: "# Soul (writable)"},
+						{Path: "RULES.md", Content: "# Rules (read-only)", ReadOnly: true},
+					},
+					ConfigMapSources: []clawv1alpha1.ConfigMapSource{
+						{
+							ConfigMapRef: clawv1alpha1.ConfigMapRef{Name: "mixed-cm"},
+							ReadOnly:     true,
+							Items: []clawv1alpha1.ConfigMapItem{
+								{Key: "policy.md", Path: "docs/policy.md"},
+							},
+						},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+		t.Cleanup(func() {
+			_ = k8sClient.Delete(ctx, wsCM)
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		// Verify seed manifest contains writable but not read-only entries
+		var cm corev1.ConfigMap
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name:      getConfigMapName(testInstanceName),
+			Namespace: namespace,
+		}, &cm))
+
+		var manifest []seedManifestEntry
+		require.NoError(t, json.Unmarshal([]byte(cm.Data[seedManifestKey]), &manifest))
+		manifestTargets := map[string]bool{}
+		for _, e := range manifest {
+			manifestTargets[e.Target] = true
+		}
+		assert.True(t, manifestTargets["SOUL.md"], "writable inline source should be in seed manifest")
+		assert.False(t, manifestTargets["RULES.md"], "read-only inline source should NOT be in seed manifest")
+		assert.False(t, manifestTargets["docs/policy.md"], "read-only configMap item should NOT be in seed manifest")
+
+		// Verify gateway deployment has read-only mounts only for read-only sources
+		deployment := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name:      getClawDeploymentName(testInstanceName),
+				Namespace: namespace,
+			}, deployment) == nil
+		}, "Deployment should be created")
+
+		var gatewayContainer *corev1.Container
+		for i := range deployment.Spec.Template.Spec.Containers {
+			if deployment.Spec.Template.Spec.Containers[i].Name == ClawGatewayContainerName {
+				gatewayContainer = &deployment.Spec.Template.Spec.Containers[i]
+				break
+			}
+		}
+		require.NotNil(t, gatewayContainer, "gateway container should exist")
+
+		mountsByPath := map[string]corev1.VolumeMount{}
+		for _, vm := range gatewayContainer.VolumeMounts {
+			mountsByPath[vm.MountPath] = vm
+		}
+
+		// Read-only inline source should have a read-only mount
+		rulesMount, ok := mountsByPath["/home/node/.openclaw/workspace/RULES.md"]
+		require.True(t, ok, "read-only RULES.md should have a volumeMount")
+		assert.True(t, rulesMount.ReadOnly, "RULES.md mount must be read-only")
+		assert.Equal(t, "config", rulesMount.Name)
+
+		// Read-only configMap source should have a read-only mount
+		policyMount, ok := mountsByPath["/home/node/.openclaw/workspace/docs/policy.md"]
+		require.True(t, ok, "read-only docs/policy.md should have a volumeMount")
+		assert.True(t, policyMount.ReadOnly, "docs/policy.md mount must be read-only")
+		assert.Equal(t, "ws-cm-mixed-cm", policyMount.Name)
+
+		// Writable inline source should NOT have a direct workspace mount
+		_, hasSoulMount := mountsByPath["/home/node/.openclaw/workspace/SOUL.md"]
+		assert.False(t, hasSoulMount, "writable SOUL.md should NOT have a direct workspace volumeMount (it's seeded via PVC)")
 	})
 }
