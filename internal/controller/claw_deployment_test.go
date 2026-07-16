@@ -173,7 +173,7 @@ func TestConfigureClawDeploymentForAnthropicVertex(t *testing.T) {
 		container := containers[0].(map[string]any)
 		envVars := container["env"].([]any)
 
-		var adcEnv, projectEnv map[string]any
+		var adcEnv, projectEnv, nodeOptsEnv map[string]any
 		for _, e := range envVars {
 			env := e.(map[string]any)
 			switch env["name"] {
@@ -181,6 +181,10 @@ func TestConfigureClawDeploymentForAnthropicVertex(t *testing.T) {
 				adcEnv = env
 			case "ANTHROPIC_VERTEX_PROJECT_ID":
 				projectEnv = env
+			case "NODE_OPTIONS":
+				nodeOptsEnv = env
+			case "GOOGLE_CLOUD_LOCATION", "CLOUD_ML_REGION":
+				t.Errorf("unexpected env %q on Anthropic Vertex path; region comes from provider baseUrl", env["name"])
 			}
 		}
 
@@ -189,6 +193,9 @@ func TestConfigureClawDeploymentForAnthropicVertex(t *testing.T) {
 
 		require.NotNil(t, projectEnv, "ANTHROPIC_VERTEX_PROJECT_ID should be set")
 		assert.Equal(t, "my-project", projectEnv["value"])
+
+		require.NotNil(t, nodeOptsEnv, "NODE_OPTIONS should preload GoogleAuth stub")
+		assert.Equal(t, googleAuthProxyStubRequire, nodeOptsEnv["value"])
 
 		volumeMounts := container["volumeMounts"].([]any)
 		require.Len(t, volumeMounts, 1)
@@ -1847,6 +1854,8 @@ func TestApplyVertexADCConfigMap(t *testing.T) {
 
 		assert.Contains(t, cm.Data["adc.json"], "authorized_user")
 		assert.Contains(t, cm.Data["adc.json"], "proxy-managed-token")
+		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], "google-auth-library")
+		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], vertexProxyVendedToken)
 
 		require.Len(t, cm.OwnerReferences, 1, "should have owner reference")
 		assert.Equal(t, instance.Name, cm.OwnerReferences[0].Name)

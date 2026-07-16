@@ -85,9 +85,116 @@ func hasVertexSDKCredentials(credentials []resolvedCredential) bool {
 	return false
 }
 
+// vertexProxyVendedToken is the dummy bearer returned by the MITM proxy's
+// oauth2 token-vending path and by the gateway GoogleAuth stub preload. The
+// proxy strips client Authorization headers and injects a real SA token on
+// AI Platform requests.
+const vertexProxyVendedToken = "claw-proxy-vended-token"
+
+// vertexGoogleAuthProxyStubJS is loaded via NODE_OPTIONS=--require when the
+// Anthropic Vertex SDK is in use. @anthropic-ai/vertex-sdk@0.19+ acquires ADC
+// tokens through google-auth-library/gaxios, which sits outside OpenClaw's
+// undici proxy stack. Under NetworkPolicy (gateway egress = proxy+DNS only),
+// that oauth2 refresh fails as "Failed to acquire Google OAuth credentials."
+//
+// The Vertex SDK loads google-auth-library via ESM, which bypasses
+// Module.prototype.require, so this stub also hooks Module._load and patches
+// UserRefreshClient refresh/header methods. When OPENCLAW_PROXY_ACTIVE=1 it
+// returns a cached dummy bearer; the MITM proxy still injects the real SA
+// token on AI Platform egress.
+const vertexGoogleAuthProxyStubJS = `'use strict';
+(function () {
+  if (process.env.OPENCLAW_PROXY_ACTIVE !== '1') {
+    return;
+  }
+  const Module = require('module');
+  const patched = new WeakSet();
+  const token = '` + vertexProxyVendedToken + `';
+
+  function dummyCreds() {
+    return {
+      access_token: token,
+      token_type: 'Bearer',
+      expiry_date: Date.now() + 12 * 60 * 60 * 1000,
+    };
+  }
+
+  function makeStubClient(gal) {
+    const client = new gal.UserRefreshClient();
+    client.setCredentials(dummyCreds());
+    return client;
+  }
+
+  function isGoogleAuthLibrary(exports) {
+    return (
+      exports &&
+      typeof exports === 'object' &&
+      typeof exports.GoogleAuth === 'function' &&
+      typeof exports.UserRefreshClient === 'function'
+    );
+  }
+
+  function patchGoogleAuth(gal) {
+    if (!isGoogleAuthLibrary(gal) || patched.has(gal)) {
+      return gal;
+    }
+    patched.add(gal);
+
+    const originalGetClient = gal.GoogleAuth.prototype.getClient;
+    gal.GoogleAuth.prototype.getClient = async function getClient(...args) {
+      if (process.env.OPENCLAW_PROXY_ACTIVE === '1') {
+        return makeStubClient(gal);
+      }
+      return originalGetClient.apply(this, args);
+    };
+
+    // ESM import of google-auth-library bypasses Module.prototype.require, so
+    // also neutralize refresh on UserRefreshClient (the ADC-backed path).
+    const proto = gal.UserRefreshClient.prototype;
+    proto.refreshAccessToken = async function refreshAccessToken() {
+      const next = dummyCreds();
+      this.setCredentials(next);
+      return { credentials: next };
+    };
+    proto.refreshTokenNoCache = async function refreshTokenNoCache() {
+      const next = dummyCreds();
+      this.credentials = next;
+      return next;
+    };
+    const originalGetRequestHeaders = proto.getRequestHeaders;
+    proto.getRequestHeaders = async function getRequestHeaders(...args) {
+      if (process.env.OPENCLAW_PROXY_ACTIVE === '1') {
+        this.setCredentials(dummyCreds());
+      }
+      return originalGetRequestHeaders.apply(this, args);
+    };
+    return gal;
+  }
+
+  const originalLoad = Module._load;
+  Module._load = function (request, parent, isMain) {
+    const result = originalLoad.apply(this, arguments);
+    if (isGoogleAuthLibrary(result)) {
+      return patchGoogleAuth(result);
+    }
+    return result;
+  };
+
+  const originalRequire = Module.prototype.require;
+  Module.prototype.require = function requirePatched(id) {
+    const result = originalRequire.apply(this, arguments);
+    if (isGoogleAuthLibrary(result)) {
+      return patchGoogleAuth(result);
+    }
+    return result;
+  };
+})();
+`
+
 // applyVertexADCConfigMap creates or updates the stub ADC ConfigMap used by the
-// OpenClaw pod's Vertex SDK to bootstrap GCP token refresh. The stub contains
-// dummy credentials — the MITM proxy replaces tokens with real ones.
+// OpenClaw pod's Vertex SDK. It contains dummy ADC JSON (legacy refresh path)
+// plus a NODE_OPTIONS preload that supplies a cached dummy token when the
+// MITM proxy is active — the proxy replaces Authorization with a real SA token.
 func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) error {
 	configMapName := getVertexADCConfigMapName(instance.Name)
 	if !hasVertexSDKCredentials(resolvedCreds) {
@@ -107,7 +214,8 @@ func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, in
 	cm.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
 	setInstanceLabel(cm, instance.Name)
 	cm.Data = map[string]string{
-		"adc.json": `{"type":"authorized_user","client_id":"stub.apps.googleusercontent.com","client_secret":"stub","refresh_token":"proxy-managed-token"}`,
+		"adc.json":                  `{"type":"authorized_user","client_id":"stub.apps.googleusercontent.com","client_secret":"stub","refresh_token":"proxy-managed-token"}`,
+		"google-auth-proxy-stub.js": vertexGoogleAuthProxyStubJS,
 	}
 
 	if err := controllerutil.SetControllerReference(instance, cm, r.Scheme); err != nil {
@@ -200,8 +308,9 @@ func configureClawDeploymentForGCPVertex(objects []*unstructured.Unstructured, c
 
 // configureClawDeploymentForAnthropicVertexSDK adds Vertex AI environment variables and the stub
 // ADC volume mount to the claw (gateway) deployment when any credential uses the
-// native Vertex SDK (GCP + non-Google provider). The stub ADC allows google-auth-library
-// to bootstrap token refresh, which the MITM proxy intercepts with real credentials.
+// native Vertex SDK (GCP + non-Google provider). A NODE_OPTIONS preload supplies a
+// cached dummy GoogleAuth token under OPENCLAW_PROXY_ACTIVE; the MITM proxy injects
+// the real SA credential on AI Platform egress.
 func configureClawDeploymentForAnthropicVertexSDK(objects []*unstructured.Unstructured, credentials []resolvedCredential, instanceName string) error {
 	var vertexCreds []clawv1alpha1.CredentialSpec
 	for _, rc := range credentials {
@@ -252,9 +361,12 @@ func configureClawDeploymentForAnthropicVertexSDK(objects []*unstructured.Unstru
 			"name":  "GOOGLE_APPLICATION_CREDENTIALS",
 			"value": "/etc/vertex-adc/adc.json",
 		})
+		envVars = appendGoogleAuthProxyStubNodeOptions(envVars)
 
 		for _, cred := range vertexCreds {
 			if cred.Provider == "anthropic" && cred.GCP != nil {
+				// Region comes from models.providers.anthropic-vertex.baseUrl
+				// (set from cred.GCP.Location); the plugin prefers that over env.
 				envVars = append(envVars, map[string]any{
 					"name":  "ANTHROPIC_VERTEX_PROJECT_ID",
 					"value": cred.GCP.Project,
@@ -292,6 +404,37 @@ func configureClawDeploymentForAnthropicVertexSDK(objects []*unstructured.Unstru
 		return nil
 	}
 	return fmt.Errorf("claw deployment not found in manifests")
+}
+
+const googleAuthProxyStubRequire = "--require /etc/vertex-adc/google-auth-proxy-stub.js"
+
+// appendGoogleAuthProxyStubNodeOptions adds or extends NODE_OPTIONS so the
+// GoogleAuth preload runs before any application code loads google-auth-library.
+func appendGoogleAuthProxyStubNodeOptions(envVars []any) []any {
+	for i, e := range envVars {
+		env, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		if env["name"] != "NODE_OPTIONS" {
+			continue
+		}
+		existing, _ := env["value"].(string)
+		if strings.Contains(existing, googleAuthProxyStubRequire) {
+			return envVars
+		}
+		if existing == "" {
+			env["value"] = googleAuthProxyStubRequire
+		} else {
+			env["value"] = existing + " " + googleAuthProxyStubRequire
+		}
+		envVars[i] = env
+		return envVars
+	}
+	return append(envVars, map[string]any{
+		"name":  "NODE_OPTIONS",
+		"value": googleAuthProxyStubRequire,
+	})
 }
 
 // configureClawDeploymentForKubernetes mounts the sanitized kubeconfig ConfigMap,

@@ -634,9 +634,13 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
-		assert.Equal(t, "anthropic-vertex/"+providerModelCatalog("anthropic")[0].Name, model["primary"])
+		assert.Equal(t, "anthropic-vertex/"+anthropicVertexPreferredPrimary, model["primary"],
+			"Vertex Anthropic primary should follow upstream Vertex default, not API-key catalog order")
 		fallbacks, ok := model["fallbacks"].([]any)
 		require.True(t, ok, "fallbacks should be set for vertex credentials")
+		require.NotEmpty(t, fallbacks)
+		assert.Equal(t, "anthropic-vertex/claude-sonnet-5", fallbacks[0],
+			"API-key primary should remain available as a Vertex fallback")
 		for _, f := range fallbacks {
 			assert.Contains(t, f.(string), "anthropic-vertex/",
 				"vertex fallbacks must use the provider-vertex prefix")

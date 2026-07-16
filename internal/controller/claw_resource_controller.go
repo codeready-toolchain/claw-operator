@@ -1342,6 +1342,9 @@ func injectModelCatalog(config map[string]any, instance *clawv1alpha1.Claw) {
 		if len(catalog) == 0 {
 			continue
 		}
+		if usesVertexSDK(cred) {
+			catalog = preferVertexCatalogPrimary(logicalProvider, catalog)
+		}
 
 		for _, m := range catalog {
 			key := providerKey + "/" + m.Name

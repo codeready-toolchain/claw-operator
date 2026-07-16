@@ -106,9 +106,11 @@ var knownProviders = map[string]providerDefaults{
 		VertexAPI:    "anthropic-messages",
 		VertexPlugin: "@openclaw/anthropic-vertex-provider",
 		Models: []modelEntry{
-			// First entry becomes agents.defaults.model.primary when unset.
-			// OpenClaw 2026.7.1 defaults Anthropic API-key installs to Sonnet 5
-			// and includes it in supportsClaudeAdaptiveThinking().
+			// First entry becomes agents.defaults.model.primary for API-key
+			// Anthropic when unset. Vertex Anthropic is reordered in
+			// preferVertexCatalogPrimary to claude-sonnet-4-6 (upstream
+			// @openclaw/anthropic-vertex-provider default); Sonnet 5 still
+			// 404s on many Vertex projects.
 			{Name: "claude-sonnet-5", Alias: "Claude Sonnet 5"},
 			{Name: "claude-sonnet-4-6", Alias: "Claude Sonnet 4.6"},
 			{Name: "claude-opus-4-8", Alias: "Claude Opus 4.8"},
