@@ -230,6 +230,53 @@ func TestConfigureClawDeploymentForAnthropicVertex(t *testing.T) {
 		envVars := container["env"].([]any)
 		assert.Len(t, envVars, 1, "should only have original HOME env var")
 	})
+
+	t.Run("mixed providers still configure Vertex ADC path only", func(t *testing.T) {
+		objects := makeDeployment()
+		credentials := []clawv1alpha1.CredentialSpec{
+			{
+				Name:     "anthropic-vertex",
+				Type:     clawv1alpha1.CredentialTypeGCP,
+				Provider: "anthropic",
+				Domain:   ".googleapis.com",
+				GCP: &clawv1alpha1.GCPConfig{
+					Project:  "my-project",
+					Location: "us-east5",
+				},
+			},
+			{
+				Name:     "openai",
+				Type:     clawv1alpha1.CredentialTypeAPIKey,
+				Provider: "openai",
+				Domain:   "api.openai.com",
+			},
+		}
+
+		require.NoError(t, configureClawDeploymentForAnthropicVertexSDK(objects, toResolved(credentials), testInstanceName))
+
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		container := containers[0].(map[string]any)
+		envVars := container["env"].([]any)
+
+		var adcEnv, nodeOptsEnv, openaiKeyEnv map[string]any
+		for _, e := range envVars {
+			env := e.(map[string]any)
+			switch env["name"] {
+			case "GOOGLE_APPLICATION_CREDENTIALS":
+				adcEnv = env
+			case "NODE_OPTIONS":
+				nodeOptsEnv = env
+			case "OPENAI_API_KEY":
+				openaiKeyEnv = env
+			}
+		}
+
+		require.NotNil(t, adcEnv, "Vertex ADC env should be present alongside openai")
+		require.NotNil(t, nodeOptsEnv, "GoogleAuth stub preload should be present alongside openai")
+		assert.Equal(t, googleAuthProxyStubRequire, nodeOptsEnv["value"])
+		assert.Nil(t, openaiKeyEnv,
+			"Anthropic Vertex helper must not inject openai env; openai stays on the credential/proxy path")
+	})
 }
 
 // --- GCP Vertex deployment configuration tests ---
@@ -1855,8 +1902,11 @@ func TestApplyVertexADCConfigMap(t *testing.T) {
 		assert.Contains(t, cm.Data["adc.json"], "authorized_user")
 		assert.Contains(t, cm.Data["adc.json"], "proxy-managed-token")
 		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], "refreshTokenNoCache")
-		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], "UserRefreshClient")
+		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], "claw.vertexProxyADC")
+		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], "isVertexProxyADCClient")
 		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], vertexProxyVendedToken)
+		assert.NotContains(t, cm.Data["google-auth-proxy-stub.js"], "UserRefreshClient.prototype",
+			"stub must not mutate UserRefreshClient.prototype process-wide")
 
 		require.Len(t, cm.OwnerReferences, 1, "should have owner reference")
 		assert.Equal(t, instance.Name, cm.OwnerReferences[0].Name)
@@ -1886,6 +1936,55 @@ func TestApplyVertexADCConfigMap(t *testing.T) {
 		cmName := getVertexADCConfigMapName(testInstanceName)
 		err := k8sClient.Get(ctx, client.ObjectKey{Name: cmName, Namespace: namespace}, cm)
 		assert.True(t, apierrors.IsNotFound(err), "Vertex ADC ConfigMap should not exist for non-Vertex credentials")
+	})
+
+	t.Run("creates ADC ConfigMap for mixed Vertex + openai credentials", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+		ctx := context.Background()
+
+		secret := createTestAPIKeySecret(aiModelSecret, namespace, aiModelSecretKey, aiModelSecretValue)
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{
+						Name:     "vertex-cred",
+						Type:     clawv1alpha1.CredentialTypeGCP,
+						Provider: "anthropic",
+						SecretRef: []clawv1alpha1.SecretRefEntry{
+							{Name: aiModelSecret, Key: aiModelSecretKey},
+						},
+						Domain: ".googleapis.com",
+						GCP: &clawv1alpha1.GCPConfig{
+							Project:  "test-project",
+							Location: "us-central1",
+						},
+					},
+					{
+						Name:     "openai",
+						Type:     clawv1alpha1.CredentialTypeBearer,
+						Provider: "openai",
+						SecretRef: []clawv1alpha1.SecretRefEntry{
+							{Name: aiModelSecret, Key: aiModelSecretKey},
+						},
+						Domain: "api.openai.com",
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		require.NoError(t, reconciler.applyVertexADCConfigMap(ctx, instance, toResolved(instance.Spec.Credentials)))
+
+		cm := &corev1.ConfigMap{}
+		err := k8sClient.Get(ctx, client.ObjectKey{
+			Name: getVertexADCConfigMapName(testInstanceName), Namespace: namespace,
+		}, cm)
+		require.NoError(t, err, "Vertex ADC ConfigMap should exist when Vertex is present among mixed providers")
+		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], "isVertexProxyADCClient")
 	})
 
 	t.Run("cleans up orphaned ConfigMap when creds change to non-Vertex", func(t *testing.T) {
