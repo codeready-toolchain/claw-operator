@@ -89,6 +89,11 @@ func hasVertexSDKCredentials(credentials []resolvedCredential) bool {
 // proxy strips client Authorization and injects a real SA token on AI Platform.
 const vertexProxyVendedToken = "claw-proxy-vended-token"
 
+const (
+	envNodeOptions         = "NODE_OPTIONS"
+	envGoogleCloudLocation = "GOOGLE_CLOUD_LOCATION"
+)
+
 // vertexGoogleAuthProxyStubJS is loaded via NODE_OPTIONS=--require when the
 // Anthropic Vertex SDK is in use. OpenClaw's node-domexception→nolyfill override
 // breaks gaxios 7's default `import('node-fetch')`, so oauth2 refresh never
@@ -323,7 +328,7 @@ func configureClawDeploymentForGCPVertex(objects []*unstructured.Unstructured, c
 		envVars, _, _ := unstructured.NestedSlice(container, "env")
 		envVars = append(envVars,
 			map[string]any{"name": "GOOGLE_CLOUD_PROJECT", "value": googleCred.GCP.Project},
-			map[string]any{"name": "GOOGLE_CLOUD_LOCATION", "value": googleCred.GCP.Location},
+			map[string]any{"name": envGoogleCloudLocation, "value": googleCred.GCP.Location},
 		)
 
 		if err := unstructured.SetNestedSlice(container, envVars, "env"); err != nil {
@@ -456,7 +461,7 @@ func appendGoogleAuthProxyStubNodeOptions(envVars []any) []any {
 		if !ok {
 			continue
 		}
-		if env["name"] != "NODE_OPTIONS" {
+		if env["name"] != envNodeOptions {
 			continue
 		}
 		existing, _ := env["value"].(string)
@@ -472,7 +477,7 @@ func appendGoogleAuthProxyStubNodeOptions(envVars []any) []any {
 		return envVars
 	}
 	return append(envVars, map[string]any{
-		"name":  "NODE_OPTIONS",
+		"name":  envNodeOptions,
 		"value": googleAuthProxyStubRequire,
 	})
 }

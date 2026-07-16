@@ -181,9 +181,9 @@ func TestConfigureClawDeploymentForAnthropicVertex(t *testing.T) {
 				adcEnv = env
 			case "ANTHROPIC_VERTEX_PROJECT_ID":
 				projectEnv = env
-			case "NODE_OPTIONS":
+			case envNodeOptions:
 				nodeOptsEnv = env
-			case "GOOGLE_CLOUD_LOCATION", "CLOUD_ML_REGION":
+			case envGoogleCloudLocation, "CLOUD_ML_REGION":
 				t.Errorf("unexpected env %q on Anthropic Vertex path; region comes from provider baseUrl", env["name"])
 			}
 		}
@@ -264,7 +264,7 @@ func TestConfigureClawDeploymentForAnthropicVertex(t *testing.T) {
 			switch env["name"] {
 			case "GOOGLE_APPLICATION_CREDENTIALS":
 				adcEnv = env
-			case "NODE_OPTIONS":
+			case envNodeOptions:
 				nodeOptsEnv = env
 			case "OPENAI_API_KEY":
 				openaiKeyEnv = env
@@ -330,7 +330,7 @@ func TestConfigureClawDeploymentForGCPVertex(t *testing.T) {
 			switch env["name"] {
 			case "GOOGLE_CLOUD_PROJECT":
 				projectEnv = env
-			case "GOOGLE_CLOUD_LOCATION":
+			case envGoogleCloudLocation:
 				locationEnv = env
 			}
 		}
@@ -366,7 +366,7 @@ func TestConfigureClawDeploymentForGCPVertex(t *testing.T) {
 		var locationEnv map[string]any
 		for _, e := range envVars {
 			env := e.(map[string]any)
-			if env["name"] == "GOOGLE_CLOUD_LOCATION" {
+			if env["name"] == envGoogleCloudLocation {
 				locationEnv = env
 			}
 		}
