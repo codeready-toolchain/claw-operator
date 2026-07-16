@@ -85,23 +85,18 @@ func hasVertexSDKCredentials(credentials []resolvedCredential) bool {
 	return false
 }
 
-// vertexProxyVendedToken is the dummy bearer returned by the MITM proxy's
-// oauth2 token-vending path and by the gateway GoogleAuth stub preload. The
-// proxy strips client Authorization headers and injects a real SA token on
-// AI Platform requests.
+// vertexProxyVendedToken matches the MITM proxy oauth2 dummy bearer. The
+// proxy strips client Authorization and injects a real SA token on AI Platform.
 const vertexProxyVendedToken = "claw-proxy-vended-token"
 
 // vertexGoogleAuthProxyStubJS is loaded via NODE_OPTIONS=--require when the
-// Anthropic Vertex SDK is in use. @anthropic-ai/vertex-sdk@0.19+ acquires ADC
-// tokens through google-auth-library/gaxios, which sits outside OpenClaw's
-// undici proxy stack. Under NetworkPolicy (gateway egress = proxy+DNS only),
-// that oauth2 refresh fails as "Failed to acquire Google OAuth credentials."
-//
-// The Vertex SDK loads google-auth-library via ESM, which bypasses
-// Module.prototype.require, so this stub also hooks Module._load and patches
-// UserRefreshClient refresh/header methods. When OPENCLAW_PROXY_ACTIVE=1 it
-// returns a cached dummy bearer; the MITM proxy still injects the real SA
-// token on AI Platform egress.
+// Anthropic Vertex SDK is in use. OpenClaw's node-domexception→nolyfill override
+// breaks gaxios 7's default `import('node-fetch')`, so oauth2 refresh never
+// runs. Until anthropic-vertex injects a native-fetch GoogleAuth transporter
+// (as googlechat does), this preload short-circuits GoogleAuth to a cached
+// dummy bearer under OPENCLAW_PROXY_ACTIVE; the MITM proxy still injects the
+// real SA token on AI Platform egress. Module._load is hooked because the
+// Vertex SDK loads google-auth-library via ESM.
 const vertexGoogleAuthProxyStubJS = `'use strict';
 (function () {
   if (process.env.OPENCLAW_PROXY_ACTIVE !== '1') {
@@ -148,8 +143,6 @@ const vertexGoogleAuthProxyStubJS = `'use strict';
       return originalGetClient.apply(this, args);
     };
 
-    // ESM import of google-auth-library bypasses Module.prototype.require, so
-    // also neutralize refresh on UserRefreshClient (the ADC-backed path).
     const proto = gal.UserRefreshClient.prototype;
     proto.refreshAccessToken = async function refreshAccessToken() {
       const next = dummyCreds();
@@ -192,9 +185,10 @@ const vertexGoogleAuthProxyStubJS = `'use strict';
 `
 
 // applyVertexADCConfigMap creates or updates the stub ADC ConfigMap used by the
-// OpenClaw pod's Vertex SDK. It contains dummy ADC JSON (legacy refresh path)
-// plus a NODE_OPTIONS preload that supplies a cached dummy token when the
-// MITM proxy is active — the proxy replaces Authorization with a real SA token.
+// OpenClaw pod's Vertex SDK. It contains dummy ADC JSON plus a NODE_OPTIONS
+// preload that supplies a cached dummy GoogleAuth token under
+// OPENCLAW_PROXY_ACTIVE — the MITM proxy replaces Authorization with a real SA
+// token on AI Platform egress.
 func (r *ClawResourceReconciler) applyVertexADCConfigMap(ctx context.Context, instance *clawv1alpha1.Claw, resolvedCreds []resolvedCredential) error {
 	configMapName := getVertexADCConfigMapName(instance.Name)
 	if !hasVertexSDKCredentials(resolvedCreds) {

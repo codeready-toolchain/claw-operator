@@ -1854,7 +1854,8 @@ func TestApplyVertexADCConfigMap(t *testing.T) {
 
 		assert.Contains(t, cm.Data["adc.json"], "authorized_user")
 		assert.Contains(t, cm.Data["adc.json"], "proxy-managed-token")
-		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], "google-auth-library")
+		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], "refreshTokenNoCache")
+		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], "UserRefreshClient")
 		assert.Contains(t, cm.Data["google-auth-proxy-stub.js"], vertexProxyVendedToken)
 
 		require.Len(t, cm.OwnerReferences, 1, "should have owner reference")
