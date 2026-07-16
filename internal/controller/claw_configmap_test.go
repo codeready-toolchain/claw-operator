@@ -640,7 +640,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		require.True(t, ok, "fallbacks should be set for vertex credentials")
 		require.NotEmpty(t, fallbacks)
 		assert.Equal(t, "anthropic-vertex/claude-sonnet-5", fallbacks[0],
-			"API-key primary should remain available as a Vertex fallback")
+			"API-key primary remains available as a Vertex fallback after reorder")
 		for _, f := range fallbacks {
 			assert.Contains(t, f.(string), "anthropic-vertex/",
 				"vertex fallbacks must use the provider-vertex prefix")

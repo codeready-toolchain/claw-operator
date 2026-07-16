@@ -28,8 +28,8 @@ func providerModelCatalog(provider string) []modelEntry {
 }
 
 // anthropicVertexPreferredPrimary matches ANTHROPIC_VERTEX_DEFAULT_MODEL_ID in
-// @openclaw/anthropic-vertex-provider. Claude Sonnet 5 is catalogued for API-key
-// Anthropic, but many Vertex projects still 404 it.
+// @openclaw/anthropic-vertex-provider. Claude Sonnet 5 remains in the shared
+// catalog (and Vertex fallbacks); Vertex only reorders primary to this model.
 const anthropicVertexPreferredPrimary = "claude-sonnet-4-6"
 
 // preferVertexCatalogPrimary reorders a provider catalog for Vertex so the
