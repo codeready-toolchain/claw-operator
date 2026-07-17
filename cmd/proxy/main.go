@@ -78,8 +78,9 @@ func main() {
 	}
 
 	httpSrv := &http.Server{
-		Addr:    *listenAddr,
-		Handler: proxySrv.Handler(),
+		Addr:              *listenAddr,
+		Handler:           proxySrv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
