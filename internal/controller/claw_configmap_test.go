@@ -419,7 +419,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		expectedCount := len(providerModelCatalog("google")) + len(providerModelCatalog("anthropic"))
 		assert.Len(t, models, expectedCount)
 		assert.Contains(t, models, "google/gemini-3.5-flash")
-		assert.Contains(t, models, "anthropic/claude-sonnet-4-6")
+		assert.Contains(t, models, "anthropic/claude-sonnet-5")
 	})
 
 	t.Run("vertex credential emits provider-vertex prefix", func(t *testing.T) {
@@ -434,8 +434,8 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-		assert.Contains(t, models, "anthropic-vertex/claude-sonnet-4-6")
-		assert.NotContains(t, models, "anthropic/claude-sonnet-4-6")
+		assert.Contains(t, models, "anthropic-vertex/claude-sonnet-5")
+		assert.NotContains(t, models, "anthropic/claude-sonnet-5")
 	})
 
 	t.Run("both direct and vertex anthropic coexist", func(t *testing.T) {
@@ -451,8 +451,8 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
-		assert.Contains(t, models, "anthropic/claude-sonnet-4-6")
-		assert.Contains(t, models, "anthropic-vertex/claude-sonnet-4-6")
+		assert.Contains(t, models, "anthropic/claude-sonnet-5")
+		assert.Contains(t, models, "anthropic-vertex/claude-sonnet-5")
 		expectedCount := len(providerModelCatalog("anthropic")) * 2
 		assert.Len(t, models, expectedCount)
 	})
@@ -480,17 +480,17 @@ func TestInjectModelCatalog(t *testing.T) {
 
 		models := config["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
 		assert.Len(t, models, len(providerModelCatalog("openrouter")))
-		assert.Contains(t, models, "openrouter/openai/gpt-5.5")
-		assert.Contains(t, models, "openrouter/anthropic/claude-sonnet-4-6")
+		assert.Contains(t, models, "openrouter/openai/gpt-5.6")
+		assert.Contains(t, models, "openrouter/anthropic/claude-sonnet-5")
 		assert.Contains(t, models, "openrouter/google/gemini-3.5-flash")
-		entry := models["openrouter/openai/gpt-5.5"].(map[string]any)
-		assert.Equal(t, "GPT-5.5", entry["alias"])
+		entry := models["openrouter/openai/gpt-5.6"].(map[string]any)
+		assert.Equal(t, "GPT-5.6", entry["alias"])
 
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
-		assert.Equal(t, "openrouter/openai/gpt-5.5", model["primary"])
+		assert.Equal(t, "openrouter/openai/gpt-5.6", model["primary"])
 		fallbacks := model["fallbacks"].([]any)
 		require.Len(t, fallbacks, 2)
-		assert.Equal(t, "openrouter/anthropic/claude-sonnet-4-6", fallbacks[0])
+		assert.Equal(t, "openrouter/anthropic/claude-sonnet-5", fallbacks[0])
 		assert.Equal(t, "openrouter/google/gemini-3.5-flash", fallbacks[1])
 	})
 
@@ -504,7 +504,7 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
-		assert.Equal(t, "anthropic/claude-sonnet-4-6", model["primary"])
+		assert.Equal(t, "anthropic/claude-sonnet-5", model["primary"])
 	})
 
 	t.Run("no providers means no models or primary", func(t *testing.T) {
@@ -634,9 +634,13 @@ func TestInjectModelCatalog(t *testing.T) {
 		injectModelCatalog(config, testClawWithCredentials(credentials))
 
 		model := config["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
-		assert.Equal(t, "anthropic-vertex/"+providerModelCatalog("anthropic")[0].Name, model["primary"])
+		assert.Equal(t, "anthropic-vertex/"+anthropicVertexPreferredPrimary, model["primary"],
+			"Vertex Anthropic primary should follow upstream Vertex default, not API-key catalog order")
 		fallbacks, ok := model["fallbacks"].([]any)
 		require.True(t, ok, "fallbacks should be set for vertex credentials")
+		require.NotEmpty(t, fallbacks)
+		assert.Equal(t, "anthropic-vertex/claude-sonnet-5", fallbacks[0],
+			"API-key primary remains available as a Vertex fallback after reorder")
 		for _, f := range fallbacks {
 			assert.Contains(t, f.(string), "anthropic-vertex/",
 				"vertex fallbacks must use the provider-vertex prefix")

@@ -67,7 +67,7 @@ const (
 	DefaultGitSyncImage         = "alpine/git:2.47.2"
 	ClawConfigModeEnvVar        = "CLAW_CONFIG_MODE"
 	DefaultKubectlImage         = "quay.io/openshift/origin-cli:4.21"
-	DefaultOpenClawImage        = "ghcr.io/openclaw/openclaw:2026.6.11"
+	DefaultOpenClawImage        = "ghcr.io/openclaw/openclaw:2026.7.1"
 	// OpenClaw JSON config keys shared across enrichment functions
 	configKeyGateway   = "gateway"
 	configKeyControlUI = "controlUi"
@@ -1341,6 +1341,9 @@ func injectModelCatalog(config map[string]any, instance *clawv1alpha1.Claw) {
 		catalog := providerModelCatalog(logicalProvider)
 		if len(catalog) == 0 {
 			continue
+		}
+		if usesVertexSDK(cred) {
+			catalog = preferVertexCatalogPrimary(logicalProvider, catalog)
 		}
 
 		for _, m := range catalog {
