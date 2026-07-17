@@ -292,7 +292,7 @@ func TestGeneratePluginInstallScriptExecution(t *testing.T) {
 
 	t.Run("leaves an operator-managed registry-tracked plugin alone when it is still desired", func(t *testing.T) {
 		liveRegistry := []string{"anthropic-vertex\t@openclaw/anthropic-vertex-provider"}
-		result := runPluginInstallScript(t, []string{"@openclaw/anthropic-vertex-provider@2026.6.11"}, nil, nil, false,
+		result := runPluginInstallScript(t, []string{"@openclaw/anthropic-vertex-provider@2026.7.1"}, nil, nil, false,
 			liveRegistry, liveRegistry)
 
 		registryContent, err := os.ReadFile(result.registryPath)
