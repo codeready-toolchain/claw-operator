@@ -302,7 +302,7 @@ func TestConfigurePluginsInitContainer(t *testing.T) {
 		assert.Equal(t, "100m", requests["cpu"])
 
 		limits := resources["limits"].(map[string]any)
-		assert.Equal(t, "512Mi", limits["memory"])
+		assert.Equal(t, "1Gi", limits["memory"])
 		assert.Equal(t, "500m", limits["cpu"])
 	})
 
