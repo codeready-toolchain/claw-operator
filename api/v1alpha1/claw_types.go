@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -716,6 +717,32 @@ type ClawSpec struct {
 	// +optional
 	// +kubebuilder:default=false
 	Idle bool `json:"idle,omitempty"`
+
+	// Resources overrides the compute resources for the gateway container.
+	// Only the keys set here are applied; the rest keep the manifest defaults
+	// (requests 768Mi/100m, limits 4Gi/2). Raise the memory limit when the
+	// agent runs context-heavy turns: synthesis over a large corpus can exceed
+	// the 4Gi default and is OOMKilled by the cgroup, which surfaces as a
+	// silent SIGKILL rather than an error the agent can report.
+	// +optional
+	Resources *GatewayResourcesSpec `json:"resources,omitempty"`
+}
+
+// GatewayResourcesSpec overrides the compute resources of the gateway
+// container. It deliberately exposes only requests and limits rather than
+// embedding corev1.ResourceRequirements, whose claims field (dynamic resource
+// allocation) the operator does not implement — surfacing it in the CRD would
+// let users set a field that is silently ignored.
+type GatewayResourcesSpec struct {
+	// Requests is the minimum compute resources required by the gateway
+	// container. Keys set here override the manifest defaults individually.
+	// +optional
+	Requests corev1.ResourceList `json:"requests,omitempty"`
+
+	// Limits is the maximum compute resources allowed for the gateway
+	// container. Keys set here override the manifest defaults individually.
+	// +optional
+	Limits corev1.ResourceList `json:"limits,omitempty"`
 }
 
 // ClawStatus defines the observed state of Claw

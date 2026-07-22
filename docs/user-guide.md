@@ -1669,6 +1669,34 @@ Then set `serviceAccountName: claw-gcs-access` in the Claw CR.
 
 The SA is set only on the gateway Deployment (where the agent runs), not on the proxy Deployment. The operator does not create, validate, or manage the SA itself — that is the cluster admin's responsibility. If the SA does not exist, the pod stays Pending with a standard Kubernetes event message.
 
+## Gateway Compute Resources
+
+The gateway container ships with requests of 768Mi/100m and limits of 4Gi/2. `spec.resources` overrides those per key:
+
+```yaml
+spec:
+  resources:
+    limits:
+      memory: 8Gi
+```
+
+Keys merge over the manifest defaults rather than replacing the block, so the example above raises the memory limit while keeping the default CPU limit and both requests. Set any combination of `requests` and `limits`:
+
+```yaml
+spec:
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 8Gi
+      cpu: "4"
+```
+
+Raise the memory limit when the agent runs context-heavy turns. Synthesis over a large corpus can exceed the 4Gi default, and because the cgroup SIGKILLs the process there is no error for the agent to report — the turn simply dies (exit 137).
+
+> **Scope.** `spec.resources` applies only to the gateway container. The proxy and the init containers keep their own values. Changing it rewrites the Deployment, and the gateway uses the `Recreate` strategy, so the pod restarts rather than rolling.
+
 ## Plugins
 
 The operator supports declarative plugin installation. List plugins in `spec.plugins` and the operator runs an init container that installs them on the PVC before the gateway starts.
