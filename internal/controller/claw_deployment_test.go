@@ -2509,6 +2509,56 @@ func TestConfigureGatewayResources(t *testing.T) {
 		assert.Equal(t, "100m", requests["cpu"], "requests untouched")
 	})
 
+	// Every requests/limits key is overridable on its own, not just memory:
+	// each case sets exactly one and asserts the other three keep their
+	// manifest defaults.
+	t.Run("each key can be overridden independently", func(t *testing.T) {
+		defaults := map[string]map[string]string{
+			"requests": {"memory": "768Mi", "cpu": "100m"},
+			"limits":   {"memory": "4Gi", "cpu": "2"},
+		}
+		cases := []struct {
+			name     string
+			section  string
+			key      corev1.ResourceName
+			override string
+		}{
+			{"requests memory", "requests", corev1.ResourceMemory, "2Gi"},
+			{"requests cpu", "requests", corev1.ResourceCPU, "500m"},
+			{"limits memory", "limits", corev1.ResourceMemory, "8Gi"},
+			{"limits cpu", "limits", corev1.ResourceCPU, "4"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				list := corev1.ResourceList{tc.key: resource.MustParse(tc.override)}
+				spec := &clawv1alpha1.GatewayResourcesSpec{}
+				if tc.section == "requests" {
+					spec.Requests = list
+				} else {
+					spec.Limits = list
+				}
+				objects := makeDeployment()
+				instance := &clawv1alpha1.Claw{
+					ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+					Spec:       clawv1alpha1.ClawSpec{Resources: spec},
+				}
+				require.NoError(t, configureGatewayResources(objects, instance))
+
+				res := gatewayResources(objects)
+				for section, keys := range defaults {
+					for key, def := range keys {
+						want := def
+						if section == tc.section && key == string(tc.key) {
+							want = tc.override
+						}
+						assert.Equal(t, want, res[section].(map[string]any)[key],
+							"%s.%s", section, key)
+					}
+				}
+			})
+		}
+	})
+
 	t.Run("requests and limits can both be overridden", func(t *testing.T) {
 		objects := makeDeployment()
 		instance := &clawv1alpha1.Claw{

@@ -770,11 +770,16 @@ spec:
               resources:
                 description: |-
                   Resources overrides the compute resources for the gateway container.
-                  Only the keys set here are applied; the rest keep the manifest defaults
-                  (requests 768Mi/100m, limits 4Gi/2). Raise the memory limit when the
-                  agent runs context-heavy turns: synthesis over a large corpus can exceed
-                  the 4Gi default and is OOMKilled by the cgroup, which surfaces as a
-                  silent SIGKILL rather than an error the agent can report.
+                  Each requests/limits key is applied on its own; keys left unset keep the
+                  manifest defaults (requests 768Mi/100m, limits 4Gi/2), so raising one
+                  value never forces the other three to be restated.
+
+                  The memory limit is the one most likely to need raising: context-heavy
+                  turns that synthesize over a large corpus can exceed the 4Gi default and
+                  are OOMKilled by the cgroup, which surfaces as a silent SIGKILL rather
+                  than an error the agent can report. CPU is worth raising on busy
+                  instances, where throttling at the 2-core limit shows up as slow turns
+                  rather than failures.
                 properties:
                   limits:
                     additionalProperties:

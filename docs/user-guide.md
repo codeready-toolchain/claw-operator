@@ -1680,7 +1680,7 @@ spec:
       memory: 8Gi
 ```
 
-Keys merge over the manifest defaults rather than replacing the block, so the example above raises the memory limit while keeping the default CPU limit and both requests. Set any combination of `requests` and `limits`:
+Keys merge over the manifest defaults rather than replacing the block, so the example above raises the memory limit while keeping the default CPU limit and both requests. All four keys behave the same way — `requests.memory`, `requests.cpu`, `limits.memory`, and `limits.cpu` can each be set on their own, in any combination:
 
 ```yaml
 spec:
@@ -1693,7 +1693,15 @@ spec:
       cpu: "4"
 ```
 
-Raise the memory limit when the agent runs context-heavy turns. Synthesis over a large corpus can exceed the 4Gi default, and because the cgroup SIGKILLs the process there is no error for the agent to report — the turn simply dies (exit 137).
+Which key to reach for:
+
+| Key | Raise it when | Symptom if too low |
+|---|---|---|
+| `limits.memory` | The agent runs context-heavy turns; synthesis over a large corpus exceeds 4Gi | The cgroup SIGKILLs the process, so there is no error for the agent to report — the turn simply dies (exit 137) |
+| `limits.cpu` | The instance is busy or runs parallel tool calls | CFS throttling at the 2-core limit, which reads as slow turns rather than failures |
+| `requests.memory` / `requests.cpu` | The instance must be guaranteed capacity on a contended node | Scheduling onto a node that cannot actually sustain the workload; eviction under node pressure |
+
+Requests are what the scheduler reserves; limits are the ceiling the kernel enforces. Raising a limit without its request leaves the instance burstable rather than guaranteed, which is usually what you want for an interactive agent.
 
 > **Scope.** `spec.resources` applies only to the gateway container. The proxy and the init containers keep their own values. Changing it rewrites the Deployment, and the gateway uses the `Recreate` strategy, so the pod restarts rather than rolling.
 
