@@ -127,8 +127,13 @@ var knownProviders = map[string]providerDefaults{
 		Companions:       []string{"openai-codex"},
 		EmbeddingAdapter: "openai",
 		Models: []modelEntry{
-			// OpenClaw 2026.7.1 OPENAI_DEFAULT_MODEL is openai/gpt-5.6.
+			// OpenClaw 2026.7.1 OPENAI_DEFAULT_MODEL is openai/gpt-5.6
+			// (direct-API alias for Sol). Exact Sol/Terra/Luna ids are also
+			// in the bundled OpenAI plugin catalog for account-scoped access.
 			{Name: "gpt-5.6", Alias: "GPT-5.6"},
+			{Name: "gpt-5.6-sol", Alias: "GPT-5.6 Sol"},
+			{Name: "gpt-5.6-terra", Alias: "GPT-5.6 Terra"},
+			{Name: "gpt-5.6-luna", Alias: "GPT-5.6 Luna"},
 			{Name: "gpt-5.5", Alias: "GPT-5.5"},
 			{Name: "gpt-5.4", Alias: "GPT-5.4"},
 			{Name: "gpt-5.4-mini", Alias: "GPT-5.4 Mini"},
@@ -143,8 +148,9 @@ var knownProviders = map[string]providerDefaults{
 		BasePath: "/v1",
 		API:      "openai-responses",
 		Models: []modelEntry{
+			// OpenClaw 2026.7.1 XAI_DEFAULT_MODEL_ID is grok-4.3. Grok 4.5
+			// exists on OpenClaw main but is not in the 2026.7.1 catalog.
 			{Name: "grok-4.3", Alias: "Grok 4.3"},
-			{Name: "grok-4.20", Alias: "Grok 4.20"},
 		},
 	},
 	"openrouter": {
