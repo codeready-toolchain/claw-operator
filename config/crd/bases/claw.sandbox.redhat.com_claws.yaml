@@ -767,6 +767,43 @@ spec:
                 items:
                   type: string
                 type: array
+              resources:
+                description: |-
+                  Resources overrides the compute resources for the gateway container.
+                  Each requests/limits key is applied on its own; keys left unset keep the
+                  manifest defaults (requests 768Mi/100m, limits 4Gi/2), so raising one
+                  value never forces the other three to be restated.
+
+                  The memory limit is the one most likely to need raising: context-heavy
+                  turns that synthesize over a large corpus can exceed the 4Gi default and
+                  are OOMKilled by the cgroup, which surfaces as a silent SIGKILL rather
+                  than an error the agent can report. CPU is worth raising on busy
+                  instances, where throttling at the 2-core limit shows up as slow turns
+                  rather than failures.
+                properties:
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits is the maximum compute resources allowed for the gateway
+                      container. Keys set here override the manifest defaults individually.
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests is the minimum compute resources required by the gateway
+                      container. Keys set here override the manifest defaults individually.
+                    type: object
+                type: object
               serviceAccountName:
                 description: |-
                   ServiceAccountName sets the Kubernetes ServiceAccount on the gateway

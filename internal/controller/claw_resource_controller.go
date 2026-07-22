@@ -946,6 +946,9 @@ func (r *ClawResourceReconciler) configureDeployments(
 	if err := configureClawDeploymentServiceAccount(objects, instance); err != nil {
 		return fmt.Errorf("failed to configure service account: %w", err)
 	}
+	if err := configureGatewayResources(objects, instance); err != nil {
+		return fmt.Errorf("failed to configure gateway resources: %w", err)
+	}
 	if err := configureImagePullPolicy(objects, r.ImagePullPolicy); err != nil {
 		return fmt.Errorf("failed to configure image pull policy: %w", err)
 	}
