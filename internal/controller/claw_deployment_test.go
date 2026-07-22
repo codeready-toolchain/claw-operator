@@ -26,6 +26,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/ptr"
@@ -2445,5 +2446,147 @@ func TestOpenClawImage(t *testing.T) {
 			Name: testInstanceName, Namespace: namespace,
 		}, instance))
 		assert.Equal(t, DefaultOpenClawImage, instance.Status.Image)
+	})
+}
+
+// --- Gateway resource override tests ---
+
+func TestConfigureGatewayResources(t *testing.T) {
+	makeDeployment := func() []*unstructured.Unstructured {
+		dep := &unstructured.Unstructured{}
+		dep.SetKind(DeploymentKind)
+		dep.SetName(getClawDeploymentName(testInstanceName))
+		dep.Object["spec"] = map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name": ClawGatewayContainerName,
+							"resources": map[string]any{
+								"requests": map[string]any{"memory": "768Mi", "cpu": "100m"},
+								"limits":   map[string]any{"memory": "4Gi", "cpu": "2"},
+							},
+						},
+					},
+				},
+			},
+		}
+		return []*unstructured.Unstructured{dep}
+	}
+
+	gatewayResources := func(objects []*unstructured.Unstructured) map[string]any {
+		containers, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "template", "spec", "containers")
+		res, _, _ := unstructured.NestedMap(containers[0].(map[string]any), "resources")
+		return res
+	}
+
+	t.Run("no override leaves manifest defaults untouched", func(t *testing.T) {
+		objects := makeDeployment()
+		instance := &clawv1alpha1.Claw{ObjectMeta: metav1.ObjectMeta{Name: testInstanceName}}
+		require.NoError(t, configureGatewayResources(objects, instance))
+		res := gatewayResources(objects)
+		assert.Equal(t, "4Gi", res["limits"].(map[string]any)["memory"])
+		assert.Equal(t, "768Mi", res["requests"].(map[string]any)["memory"])
+	})
+
+	t.Run("memory limit override merges per-key and keeps defaults", func(t *testing.T) {
+		objects := makeDeployment()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec: clawv1alpha1.ClawSpec{
+				Resources: &clawv1alpha1.GatewayResourcesSpec{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")},
+				},
+			},
+		}
+		require.NoError(t, configureGatewayResources(objects, instance))
+		res := gatewayResources(objects)
+		limits := res["limits"].(map[string]any)
+		requests := res["requests"].(map[string]any)
+		assert.Equal(t, "8Gi", limits["memory"], "memory limit raised")
+		assert.Equal(t, "2", limits["cpu"], "cpu limit keeps its default")
+		assert.Equal(t, "768Mi", requests["memory"], "requests untouched")
+		assert.Equal(t, "100m", requests["cpu"], "requests untouched")
+	})
+
+	// Every requests/limits key is overridable on its own, not just memory:
+	// each case sets exactly one and asserts the other three keep their
+	// manifest defaults.
+	t.Run("each key can be overridden independently", func(t *testing.T) {
+		defaults := map[string]map[string]string{
+			"requests": {"memory": "768Mi", "cpu": "100m"},
+			"limits":   {"memory": "4Gi", "cpu": "2"},
+		}
+		cases := []struct {
+			name     string
+			section  string
+			key      corev1.ResourceName
+			override string
+		}{
+			{"requests memory", "requests", corev1.ResourceMemory, "2Gi"},
+			{"requests cpu", "requests", corev1.ResourceCPU, "500m"},
+			{"limits memory", "limits", corev1.ResourceMemory, "8Gi"},
+			{"limits cpu", "limits", corev1.ResourceCPU, "4"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				list := corev1.ResourceList{tc.key: resource.MustParse(tc.override)}
+				spec := &clawv1alpha1.GatewayResourcesSpec{}
+				if tc.section == "requests" {
+					spec.Requests = list
+				} else {
+					spec.Limits = list
+				}
+				objects := makeDeployment()
+				instance := &clawv1alpha1.Claw{
+					ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+					Spec:       clawv1alpha1.ClawSpec{Resources: spec},
+				}
+				require.NoError(t, configureGatewayResources(objects, instance))
+
+				res := gatewayResources(objects)
+				for section, keys := range defaults {
+					for key, def := range keys {
+						want := def
+						if section == tc.section && key == string(tc.key) {
+							want = tc.override
+						}
+						assert.Equal(t, want, res[section].(map[string]any)[key],
+							"%s.%s", section, key)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("requests and limits can both be overridden", func(t *testing.T) {
+		objects := makeDeployment()
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec: clawv1alpha1.ClawSpec{
+				Resources: &clawv1alpha1.GatewayResourcesSpec{
+					Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("2Gi")},
+					Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")},
+				},
+			},
+		}
+		require.NoError(t, configureGatewayResources(objects, instance))
+		res := gatewayResources(objects)
+		assert.Equal(t, "2Gi", res["requests"].(map[string]any)["memory"])
+		assert.Equal(t, "8Gi", res["limits"].(map[string]any)["memory"])
+	})
+
+	t.Run("override with no matching deployment errors", func(t *testing.T) {
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName},
+			Spec: clawv1alpha1.ClawSpec{
+				Resources: &clawv1alpha1.GatewayResourcesSpec{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")},
+				},
+			},
+		}
+		err := configureGatewayResources([]*unstructured.Unstructured{}, instance)
+		require.Error(t, err, "a requested override that lands nowhere must not report success")
+		assert.Contains(t, err.Error(), "not found in manifests")
 	})
 }

@@ -1045,6 +1045,83 @@ func configureClawDeploymentServiceAccount(
 	return fmt.Errorf("gateway deployment %s not found in manifests", gatewayName)
 }
 
+// configureGatewayResources applies spec.resources to the gateway container.
+// It merges per-key over the manifest defaults rather than replacing the whole
+// block, so setting only limits.memory keeps the default CPU limit and both
+// default requests. No-op when spec.resources is unset.
+func configureGatewayResources(
+	objects []*unstructured.Unstructured,
+	instance *clawv1alpha1.Claw,
+) error {
+	if instance.Spec.Resources == nil {
+		return nil
+	}
+	overrides := map[string]corev1.ResourceList{
+		"requests": instance.Spec.Resources.Requests,
+		"limits":   instance.Spec.Resources.Limits,
+	}
+
+	gatewayName := getClawDeploymentName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from claw deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in claw deployment")
+		}
+
+		patched := false
+		for i, c := range containers {
+			container, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(container, "name"); name != ClawGatewayContainerName {
+				continue
+			}
+
+			resources, _, _ := unstructured.NestedMap(container, "resources")
+			if resources == nil {
+				resources = map[string]any{}
+			}
+			for section, list := range overrides {
+				if len(list) == 0 {
+					continue
+				}
+				existing, _, _ := unstructured.NestedMap(resources, section)
+				if existing == nil {
+					existing = map[string]any{}
+				}
+				for name, qty := range list {
+					existing[string(name)] = qty.String()
+				}
+				resources[section] = existing
+			}
+			if err := unstructured.SetNestedMap(container, resources, "resources"); err != nil {
+				return fmt.Errorf("failed to set gateway resources: %w", err)
+			}
+			containers[i] = container
+			patched = true
+			break
+		}
+		if !patched {
+			return fmt.Errorf("container %q not found in claw deployment", ClawGatewayContainerName)
+		}
+		if err := unstructured.SetNestedSlice(
+			obj.Object, containers, "spec", "template", "spec", "containers",
+		); err != nil {
+			return fmt.Errorf("failed to set containers on claw deployment: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("gateway deployment %s not found in manifests", gatewayName)
+}
+
 // inClusterBypassEnabled returns true if spec.network.inClusterBypass is explicitly true.
 func inClusterBypassEnabled(instance *clawv1alpha1.Claw) bool {
 	return instance.Spec.Network != nil &&
