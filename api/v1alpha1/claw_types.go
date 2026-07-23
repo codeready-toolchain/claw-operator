@@ -409,8 +409,15 @@ type InlineSource struct {
 	Content string `json:"content"`
 
 	// Mode controls seeding behavior. Default: overwrite.
+	// Ignored when ReadOnly is true.
 	// +optional
 	Mode SeedMode `json:"mode,omitempty"`
+
+	// ReadOnly mounts this file directly into the workspace via a
+	// read-only Kubernetes volume mount instead of seeding it onto the PVC.
+	// The OpenClaw process cannot modify or delete the file at runtime.
+	// +optional
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // ConfigMapRef references a ConfigMap in the same namespace.
@@ -451,8 +458,15 @@ type ConfigMapSource struct {
 
 	// Mode controls seeding behavior for all items in this source.
 	// Individual items can override this. Default: overwrite.
+	// Ignored when ReadOnly is true.
 	// +optional
 	Mode SeedMode `json:"mode,omitempty"`
+
+	// ReadOnly mounts all items directly into the workspace via
+	// read-only Kubernetes volume mounts instead of seeding them onto the PVC.
+	// The OpenClaw process cannot modify or delete these files at runtime.
+	// +optional
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // GitItem maps a file in a Git repository to a workspace path.
@@ -497,8 +511,15 @@ type GitSource struct {
 
 	// Mode controls seeding behavior for all items in this source.
 	// Individual items can override this. Default: overwrite.
+	// Ignored when ReadOnly is true.
 	// +optional
 	Mode SeedMode `json:"mode,omitempty"`
+
+	// ReadOnly mounts all items directly into the workspace via
+	// read-only Kubernetes volume mounts instead of seeding them onto the PVC.
+	// The OpenClaw process cannot modify or delete these files at runtime.
+	// +optional
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // WorkspaceSpec configures workspace file seeding.
