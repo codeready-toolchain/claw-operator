@@ -302,7 +302,7 @@ func configurePluginsInitContainer(
 			},
 			"resources": map[string]any{
 				"requests": map[string]any{"memory": "128Mi", "cpu": "100m"},
-				"limits":   map[string]any{"memory": "512Mi", "cpu": "500m"},
+				"limits":   map[string]any{"memory": "1Gi", "cpu": "500m"},
 			},
 			"securityContext": map[string]any{
 				"allowPrivilegeEscalation": false,
