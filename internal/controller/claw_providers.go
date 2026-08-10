@@ -165,16 +165,35 @@ var knownProviders = map[string]providerDefaults{
 	},
 }
 
+// releaseImageVariantSuffixes are platform/packaging suffixes OpenClaw appends
+// to release image tags (e.g. "2026.7.1-slim-arm64"). They never appear in npm
+// plugin package versions and must be dropped when deriving one from the other.
+var releaseImageVariantSuffixes = map[string]bool{
+	"slim":    true,
+	"arm64":   true,
+	"amd64":   true,
+	"browser": true,
+}
+
 // imagePluginVersion extracts the OpenClaw release version from a container
 // image tag for use as an npm package version suffix.
 //
-//	"ghcr.io/openclaw/openclaw:2026.7.1-2"             → "2026.7.1-2"
-//	"ghcr.io/openclaw/openclaw:2026.7.1-2-slim-arm64"  → "2026.7.1-2"
-//	"ghcr.io/openclaw/openclaw:slim"                    → ""  (latest)
-//	"ghcr.io/openclaw/openclaw:latest"                  → ""  (latest)
-//	"ghcr.io/openclaw/openclaw"                         → "2026.7.1-2"  (or whatever is derived from default image)
-//	"ghcr.io/openclaw/openclaw@sha256:abc"            → "sha256:abc" (must be a valid digest)
-//	"ghcr.io/openclaw/openclaw@sha256:invalid"        → error
+// Release tags may carry a numeric rebuild suffix (e.g. the "-2" in
+// "2026.7.1-2") when the image is rebuilt without a source version bump —
+// npm plugin packages are published under the base release version only, so
+// the rebuild number is dropped along with platform/packaging suffixes.
+// Pre-release suffixes such as "-beta.5" are real, separately published npm
+// versions and are preserved.
+//
+//	"ghcr.io/openclaw/openclaw:2026.7.1"                 → "2026.7.1"
+//	"ghcr.io/openclaw/openclaw:2026.7.1-2"                → "2026.7.1"  (rebuild, same npm version)
+//	"ghcr.io/openclaw/openclaw:2026.7.1-2-slim-arm64"     → "2026.7.1"
+//	"ghcr.io/openclaw/openclaw:2026.7.2-beta.5-slim"      → "2026.7.2-beta.5"
+//	"ghcr.io/openclaw/openclaw:slim"                      → ""  (latest)
+//	"ghcr.io/openclaw/openclaw:latest"                    → ""  (latest)
+//	"ghcr.io/openclaw/openclaw"                           → "2026.7.1"  (or whatever is derived from default image)
+//	"ghcr.io/openclaw/openclaw@sha256:abc"                → "sha256:abc" (must be a valid digest)
+//	"ghcr.io/openclaw/openclaw@sha256:invalid"            → error
 func imagePluginVersion(image string) (string, error) {
 	if image == "" {
 		image = DefaultOpenClawImage
@@ -187,10 +206,30 @@ func imagePluginVersion(image string) (string, error) {
 	if identifier == "latest" || identifier == "slim" {
 		return "", nil
 	}
-	if version, _, ok := strings.Cut(identifier, "-slim"); ok {
-		return version, nil
+	parts := strings.Split(identifier, "-")
+	kept := []string{parts[0]}
+	for _, part := range parts[1:] {
+		if releaseImageVariantSuffixes[part] || isDigitsOnly(part) {
+			continue
+		}
+		kept = append(kept, part)
 	}
-	return identifier, nil
+	return strings.Join(kept, "-"), nil
+}
+
+// isDigitsOnly reports whether s is a non-empty string of ASCII digits, used
+// to identify OpenClaw's numeric release-rebuild tag suffix (e.g. the "2" in
+// "2026.7.1-2").
+func isDigitsOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // usesVertexSDK returns true when a credential should use the native Vertex AI SDK

@@ -801,7 +801,10 @@ func TestImagePluginVersion(t *testing.T) {
 		{"custom registry", "my-registry.io/custom/openclaw:v1.2.3", "v1.2.3", false},
 		{"valid digest", "ghcr.io/openclaw/openclaw@sha256:94a00394bc5a8ef503fb59db0a7d0ae9e1110866e8aee8ba40cd864cea69ea1a", "sha256:94a00394bc5a8ef503fb59db0a7d0ae9e1110866e8aee8ba40cd864cea69ea1a", false},
 		{"invalid digest", "ghcr.io/openclaw/openclaw@sha256:invalid", "", true},
-		{"empty string", "", "2026.7.1-2", false}, // default image version
+		{"empty string", "", "2026.7.1", false}, // default image version
+		{"release rebuild suffix", "ghcr.io/openclaw/openclaw:2026.7.1-2", "2026.7.1", false},
+		{"release rebuild suffix with variant", "ghcr.io/openclaw/openclaw:2026.7.1-2-slim-arm64", "2026.7.1", false},
+		{"beta with variant preserved", "ghcr.io/openclaw/openclaw:2026.7.2-beta.5-slim", "2026.7.2-beta.5", false},
 		{"port in registry no tag", "localhost:5000/openclaw", "", false},
 		{"port in registry with tag", "localhost:5000/openclaw:v1", "v1", false},
 	}
