@@ -108,6 +108,24 @@ func WithConfigMapSources(configMapSources ...v1alpha1.ConfigMapSource) ClawSpec
 	}
 }
 
+func WithInlineSources(inlineSources ...v1alpha1.InlineSource) ClawSpecOption {
+	return func(spec *v1alpha1.ClawSpec) {
+		if spec.Workspace == nil {
+			spec.Workspace = &v1alpha1.WorkspaceSpec{}
+		}
+		spec.Workspace.InlineSources = inlineSources
+	}
+}
+
+func WithSkipBootstrap() ClawSpecOption {
+	return func(spec *v1alpha1.ClawSpec) {
+		if spec.Workspace == nil {
+			spec.Workspace = &v1alpha1.WorkspaceSpec{}
+		}
+		spec.Workspace.SkipBootstrap = true
+	}
+}
+
 func newClawYAML(t *testing.T, opts ...ClawSpecOption) []byte {
 	t.Helper()
 	claw := &v1alpha1.Claw{
@@ -2326,6 +2344,295 @@ spec:
 				"init-git-sync should come after wait-for-proxy")
 			assert.Greater(t, seedIdx, gitSyncIdx,
 				"init-seed should come after init-git-sync")
+		})
+
+		t.Run("should mount read-only inline source as immutable file in workspace", func(t *testing.T) {
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value")
+
+			t.Log("applying Claw CR with read-only inline source")
+			crFile := filepath.Join("/tmp", "claw-e2e-ro-inline.yaml")
+			clawYAML := newClawYAML(t,
+				WithGeminiCredentials("gemini-api-key", "api-key"),
+				WithSkipBootstrap(),
+				WithInlineSources(
+					v1alpha1.InlineSource{
+						Path:     "POLICY.md",
+						Content:  "# Immutable Policy\nDo not modify.",
+						ReadOnly: true,
+					},
+					v1alpha1.InlineSource{
+						Path:    "SOUL.md",
+						Content: "# Writable Soul\nFeel free to edit.",
+					},
+				))
+			err := os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for Claw Ready condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw Ready did not become True")
+
+			t.Log("waiting for gateway pod Running")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+						"-o", "jsonpath={.items[0].status.phase}", "-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == podPhaseRunning, nil
+				})
+			require.NoError(t, err, "Gateway pod did not reach Running")
+
+			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+				"-o", "jsonpath={.items[0].metadata.name}", "-n", userNamespace)
+			podName, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+
+			t.Log("verifying read-only POLICY.md has correct content")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "cat", "/home/node/.openclaw/workspace/POLICY.md")
+			content, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to read POLICY.md")
+			assert.Equal(t, "# Immutable Policy\nDo not modify.", strings.TrimRight(content, "\n"))
+
+			t.Log("verifying POLICY.md is NOT writable (write attempt should fail with read-only filesystem error)")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "sh", "-c",
+				"echo 'tampered' > /home/node/.openclaw/workspace/POLICY.md 2>&1 || echo 'WRITE_FAILED'")
+			writeOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Contains(t, writeOutput, "WRITE_FAILED",
+				"writing to read-only POLICY.md should fail")
+
+			t.Log("verifying writable SOUL.md IS writable")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "sh", "-c",
+				"echo 'modified' > /home/node/.openclaw/workspace/SOUL.md && cat /home/node/.openclaw/workspace/SOUL.md")
+			writableOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Contains(t, writableOutput, "modified",
+				"writable SOUL.md should be modifiable")
+
+			t.Log("verifying seed manifest excludes read-only entry but includes writable entry")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
+				"-o", "jsonpath={.data._seed_manifest\\.json}", "-n", userNamespace)
+			manifestJSON, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.NotContains(t, manifestJSON, `"target":"POLICY.md"`,
+				"read-only file should not appear in seed manifest")
+			assert.Contains(t, manifestJSON, "SOUL.md",
+				"writable file should appear in seed manifest")
+		})
+
+		t.Run("should mount read-only ConfigMap source as immutable file in workspace", func(t *testing.T) {
+			const wsConfigMapName = "e2e-ro-configmap"
+
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "configmap", wsConfigMapName, "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating workspace source ConfigMap")
+			cmd := exec.Command("kubectl", "create", "configmap", wsConfigMapName,
+				"--from-literal=compliance.md=# Compliance Rules\nThese rules are mandatory.",
+				"-n", userNamespace)
+			_, err := utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to create workspace source ConfigMap")
+
+			t.Log("creating the credential Secret")
+			cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value")
+
+			t.Log("applying Claw CR with read-only configMapSource")
+			crFile := filepath.Join("/tmp", "claw-e2e-ro-configmap.yaml")
+			clawYAML := newClawYAML(t,
+				WithGeminiCredentials("gemini-api-key", "api-key"),
+				WithSkipBootstrap(),
+				WithConfigMapSources(v1alpha1.ConfigMapSource{
+					ConfigMapRef: v1alpha1.ConfigMapRef{Name: wsConfigMapName},
+					ReadOnly:     true,
+					Items: []v1alpha1.ConfigMapItem{
+						{Key: "compliance.md", Path: "docs/compliance.md"},
+					},
+				}))
+			err = os.WriteFile(crFile, clawYAML, os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for Claw Ready condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, extendedTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw Ready did not become True")
+
+			t.Log("waiting for gateway pod Running")
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+						"-o", "jsonpath={.items[0].status.phase}", "-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == podPhaseRunning, nil
+				})
+			require.NoError(t, err, "Gateway pod did not reach Running")
+
+			cmd = exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+				"-o", "jsonpath={.items[0].metadata.name}", "-n", userNamespace)
+			podName, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+
+			t.Log("verifying read-only docs/compliance.md has correct content")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "cat", "/home/node/.openclaw/workspace/docs/compliance.md")
+			content, err := utils.Run(t, cmd)
+			require.NoError(t, err, "failed to read docs/compliance.md")
+			assert.Equal(t, "# Compliance Rules\nThese rules are mandatory.",
+				strings.TrimRight(content, "\n"))
+
+			t.Log("verifying docs/compliance.md is NOT writable")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "sh", "-c",
+				"echo 'tampered' > /home/node/.openclaw/workspace/docs/compliance.md 2>&1 || echo 'WRITE_FAILED'")
+			writeOutput, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Contains(t, writeOutput, "WRITE_FAILED",
+				"writing to read-only docs/compliance.md should fail")
+
+			t.Log("verifying content is unchanged after write attempt")
+			cmd = exec.Command("kubectl", "exec", podName, "-c", controller.ClawGatewayContainerName,
+				"-n", userNamespace, "--", "cat", "/home/node/.openclaw/workspace/docs/compliance.md")
+			contentAfter, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Equal(t, "# Compliance Rules\nThese rules are mandatory.",
+				strings.TrimRight(contentAfter, "\n"),
+				"content should remain unchanged after failed write attempt")
+		})
+
+		t.Run("should mount read-only git source as immutable file in workspace", func(t *testing.T) {
+			require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+
+			t.Cleanup(func() {
+				collectDebugInfo(t)
+				cmd := exec.Command("kubectl", "delete", "claw", "instance", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				cmd = exec.Command("kubectl", "delete", "secret", "gemini-api-key", "-n", userNamespace)
+				_, _ = utils.Run(t, cmd)
+				require.NoError(t, waitForPVCDeletion(t), "PVC deletion timed out")
+			})
+
+			t.Log("creating the credential Secret")
+			cmd := exec.Command("kubectl", "delete", "secret", "gemini-api-key",
+				"-n", userNamespace, "--ignore-not-found")
+			_, _ = utils.Run(t, cmd)
+			createLabeledSecret(t, "gemini-api-key",
+				"--from-literal=api-key=test-api-key-value")
+
+			t.Log("applying Claw CR with read-only gitSource")
+			crYAML := `apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: gemini
+      provider: google
+      secretRef:
+        - name: gemini-api-key
+          key: api-key
+  workspace:
+    skipBootstrap: true
+    gitSources:
+      - url: https://git.example.com/team/policies.git
+        ref: main
+        readOnly: true
+        items:
+          - repoPath: "policies/guide.md"
+            path: "guide.md"
+`
+			crFile := filepath.Join("/tmp", "claw-e2e-ro-git.yaml")
+			err := os.WriteFile(crFile, []byte(crYAML), os.FileMode(0o644))
+			require.NoError(t, err)
+			cmd = exec.Command("kubectl", "apply", "-f", crFile, "-n", userNamespace)
+			_, err = utils.Run(t, cmd)
+			require.NoError(t, err, "Failed to apply Claw CR")
+
+			t.Log("waiting for Claw ProxyConfigured condition")
+			ctx := context.Background()
+			err = wait.PollUntilContextTimeout(ctx, pollInterval, defaultTimeout, true,
+				func(ctx context.Context) (bool, error) {
+					cmd := exec.Command("kubectl", "get", "claw", "instance",
+						"-o", "jsonpath={.status.conditions[?(@.type=='ProxyConfigured')].status}",
+						"-n", userNamespace)
+					output, err := utils.Run(t, cmd)
+					return err == nil && output == conditionTrue, nil
+				})
+			require.NoError(t, err, "Claw ProxyConfigured did not become True")
+
+			t.Log("verifying gateway deployment has read-only volumeMount for guide.md")
+			// Use a JSONPath filter to find the volumeMount targeting the workspace path
+			allMountsJP := fmt.Sprintf(
+				"jsonpath={.spec.template.spec.containers[?(@.name=='%s')].volumeMounts}",
+				controller.ClawGatewayContainerName)
+			cmd = exec.Command("kubectl", "get", "deployment", clawInstanceName,
+				"-o", allMountsJP, "-n", userNamespace)
+			mountsJSON, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.Contains(t, mountsJSON, "/home/node/.openclaw/workspace/guide.md",
+				"gateway should have a volumeMount at the workspace path for guide.md")
+			assert.Contains(t, mountsJSON, "ws-git-0",
+				"the mount should reference the git emptyDir volume")
+
+			t.Log("verifying seed manifest excludes read-only git entry")
+			cmd = exec.Command("kubectl", "get", "configmap", configMapName,
+				"-o", "jsonpath={.data._seed_manifest\\.json}", "-n", userNamespace)
+			manifestJSON, err := utils.Run(t, cmd)
+			require.NoError(t, err)
+			assert.NotContains(t, manifestJSON, `"target":"guide.md"`,
+				"read-only git file should not appear in seed manifest")
 		})
 	})
 }

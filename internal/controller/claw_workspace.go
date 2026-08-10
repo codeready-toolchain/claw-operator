@@ -42,6 +42,7 @@ const (
 	gitSourceMountFn       = "/git-sources/"
 	commitSHALength        = 40
 	configMountPath        = "/config/"
+	workspaceMountPath     = "/home/node/.openclaw/workspace/"
 )
 
 // seedManifestEntry describes a single file to seed into the workspace.
@@ -226,6 +227,9 @@ func generateSeedManifest(ws *clawv1alpha1.WorkspaceSpec) []seedManifestEntry {
 	}
 
 	for _, src := range ws.InlineSources {
+		if src.ReadOnly {
+			continue
+		}
 		entries = append(entries, seedManifestEntry{
 			Source: configMountPath + workspaceKeyPrefix + encodeWorkspacePath(src.Path),
 			Target: src.Path,
@@ -234,6 +238,9 @@ func generateSeedManifest(ws *clawv1alpha1.WorkspaceSpec) []seedManifestEntry {
 	}
 
 	for _, cms := range ws.ConfigMapSources {
+		if cms.ReadOnly {
+			continue
+		}
 		volName := configMapSourceVolumeName(cms.ConfigMapRef.Name)
 		for _, item := range cms.Items {
 			entries = append(entries, seedManifestEntry{
@@ -245,6 +252,9 @@ func generateSeedManifest(ws *clawv1alpha1.WorkspaceSpec) []seedManifestEntry {
 	}
 
 	for i, gs := range ws.GitSources {
+		if gs.ReadOnly {
+			continue
+		}
 		for _, item := range gs.Items {
 			entries = append(entries, seedManifestEntry{
 				Source: fmt.Sprintf("%s%d/%s", gitSourceMountFn, i, item.RepoPath),
@@ -707,6 +717,100 @@ func injectSeedInitContainer(
 		return nil
 	}
 	return fmt.Errorf("claw deployment not found in manifests")
+}
+
+// injectReadOnlyWorkspaceMounts adds per-item read-only volumeMounts to the
+// gateway container for all workspace sources that have ReadOnly set to true.
+// Instead of seeding these files onto the PVC, they are mounted directly from
+// the source volume (config, ws-cm-*, ws-git-*), giving OS-level EROFS
+// enforcement that the OpenClaw process cannot circumvent.
+func injectReadOnlyWorkspaceMounts(objects []*unstructured.Unstructured, instance *clawv1alpha1.Claw) error {
+	ws := instance.Spec.Workspace
+	if ws == nil {
+		return nil
+	}
+
+	var mounts []any
+
+	for _, src := range ws.InlineSources {
+		if !src.ReadOnly {
+			continue
+		}
+		mounts = append(mounts, map[string]any{
+			"name":      "config",
+			"mountPath": workspaceMountPath + src.Path,
+			"subPath":   workspaceKeyPrefix + encodeWorkspacePath(src.Path),
+			"readOnly":  true,
+		})
+	}
+
+	for _, cms := range ws.ConfigMapSources {
+		if !cms.ReadOnly {
+			continue
+		}
+		volName := configMapSourceVolumeName(cms.ConfigMapRef.Name)
+		for _, item := range cms.Items {
+			mounts = append(mounts, map[string]any{
+				"name":      volName,
+				"mountPath": workspaceMountPath + item.Path,
+				"subPath":   item.Key,
+				"readOnly":  true,
+			})
+		}
+	}
+
+	for i, gs := range ws.GitSources {
+		if !gs.ReadOnly {
+			continue
+		}
+		volName := gitSourceVolumeName(i)
+		for _, item := range gs.Items {
+			mounts = append(mounts, map[string]any{
+				"name":      volName,
+				"mountPath": workspaceMountPath + item.Path,
+				"subPath":   item.RepoPath,
+				"readOnly":  true,
+			})
+		}
+	}
+
+	if len(mounts) == 0 {
+		return nil
+	}
+
+	gatewayName := getClawDeploymentName(instance.Name)
+	for _, obj := range objects {
+		if obj.GetKind() != DeploymentKind || obj.GetName() != gatewayName {
+			continue
+		}
+
+		containers, found, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+		if err != nil {
+			return fmt.Errorf("failed to get containers from gateway deployment: %w", err)
+		}
+		if !found {
+			return fmt.Errorf("containers field not found in gateway deployment")
+		}
+
+		for i, c := range containers {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _, _ := unstructured.NestedString(cm, "name"); name != ClawGatewayContainerName {
+				continue
+			}
+			volumeMounts, _, _ := unstructured.NestedSlice(cm, "volumeMounts")
+			volumeMounts = append(volumeMounts, mounts...)
+			if err := unstructured.SetNestedSlice(cm, volumeMounts, "volumeMounts"); err != nil {
+				return fmt.Errorf("failed to set volumeMounts on gateway container: %w", err)
+			}
+			containers[i] = cm
+			return unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers")
+		}
+		return fmt.Errorf("container %q not found in gateway deployment", ClawGatewayContainerName)
+	}
+	return fmt.Errorf("gateway deployment %s not found in manifests", gatewayName)
 }
 
 // injectSkillFiles validates skill names and writes _skill_ prefixed keys

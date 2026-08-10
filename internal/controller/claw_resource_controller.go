@@ -886,6 +886,9 @@ func (r *ClawResourceReconciler) enrichWorkspaceSources(
 	if err := injectSeedInitContainer(objects, instance, gatewayImage); err != nil {
 		return fmt.Errorf("failed to inject seed init container: %w", err)
 	}
+	if err := injectReadOnlyWorkspaceMounts(objects, instance); err != nil {
+		return fmt.Errorf("failed to inject read-only workspace mounts: %w", err)
+	}
 	return nil
 }
 
