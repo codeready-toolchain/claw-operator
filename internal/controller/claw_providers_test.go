@@ -93,9 +93,10 @@ func TestKnownProvidersConsistency(t *testing.T) {
 			}
 		}
 		notOnVertex := map[string]bool{
-			"openai":     true,
-			"xai":        true,
-			"openrouter": true,
+			"openai":       true,
+			"openai-oauth": true,
+			"xai":          true,
+			"openrouter":   true,
 		}
 
 		for provider, defaults := range knownProviders {

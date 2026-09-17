@@ -10,7 +10,7 @@ export NS=my-claw-namespace
 
 ## LLM Providers
 
-For known providers (`google`, `anthropic`, `openai`, `xai`, `openrouter`), the operator automatically infers `type`, `domain`, and auth headers — you only need `name`, `provider`, and `secretRef`. You can still override any inferred field if needed (e.g., routing through a custom proxy or using a different credential type).
+For known providers (`google`, `anthropic`, `openai`, `openai-oauth`, `xai`, `openrouter`), the operator automatically infers `type`, `domain`, and auth headers — you only need `name`, `provider`, and `secretRef`. You can still override any inferred field if needed (e.g., routing through a custom proxy or using a different credential type).
 
 The `provider` field also accepts arbitrary strings for custom/self-hosted providers — see [Custom / Self-Hosted Providers](#custom--self-hosted-providers) below. For the best experience with custom endpoints, use `spec.customProviders` which provides full control over `baseUrl`, wire format, and model registration.
 
@@ -113,6 +113,46 @@ EOF
 ```
 
 > **GPT-5.x models:** OpenClaw routes newer GPT models (gpt-5.5, gpt-5.4, gpt-5.4-mini) through an internal provider called `openai-codex`. The operator handles this automatically — when you configure an `openai` credential, a companion `openai-codex` provider entry is created with the same endpoint and credentials. No additional configuration is needed.
+
+### Codex OAuth (ChatGPT Subscription)
+
+Uses Codex models via your ChatGPT Plus/Pro/Team subscription. Instead of a pay-per-use API key, this uses OAuth refresh tokens from the Codex CLI.
+
+**1. Authenticate with the Codex CLI** (one-time, on your workstation):
+
+```sh
+codex login --device-auth
+```
+
+**2. Create the Secret:**
+
+```sh
+oc create secret generic codex-auth \
+  --from-file=auth.json=$HOME/.codex/auth.json \
+  -n $NS
+```
+
+**3. Apply the Claw CR:**
+
+```sh
+oc apply -n $NS -f - <<EOF
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+spec:
+  credentials:
+    - name: codex
+      provider: openai-oauth
+      secretRef:
+        - name: codex-auth
+          key: auth.json
+EOF
+```
+
+The operator infers `type: codexOAuth` and `domain: chatgpt.com`. The proxy auto-refreshes OAuth tokens and injects `Authorization`, `chatgpt-account-id`, `originator`, and `OpenAI-Beta` headers. The gateway never sees real tokens — only a synthetic placeholder JWT.
+
+> **Coexistence with OpenAI API keys:** The `openai-oauth` provider is fully independent from `openai`. You can use both simultaneously — Codex OAuth for subscription models (GPT-5.5, GPT-5.4 Mini) and OpenAI API key for platform features like embeddings.
 
 ### xAI (Grok)
 

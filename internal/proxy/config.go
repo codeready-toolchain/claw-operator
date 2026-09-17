@@ -27,23 +27,24 @@ import (
 
 // Route is a single route entry in the proxy config JSON.
 type Route struct {
-	Domain         string            `json:"domain"`
-	Injector       string            `json:"injector"`
-	Header         string            `json:"header,omitempty"`
-	ValuePrefix    string            `json:"valuePrefix,omitempty"`
-	EnvVar         string            `json:"envVar,omitempty"`
-	SAFilePath     string            `json:"saFilePath,omitempty"`
-	GCPProject     string            `json:"gcpProject,omitempty"`
-	GCPLocation    string            `json:"gcpLocation,omitempty"`
-	PathPrefix     string            `json:"pathPrefix,omitempty"`
-	Upstream       string            `json:"upstream,omitempty"`
-	ClientID       string            `json:"clientID,omitempty"`
-	TokenURL       string            `json:"tokenURL,omitempty"`
-	Scopes         []string          `json:"scopes,omitempty"`
-	DefaultHeaders map[string]string `json:"defaultHeaders,omitempty"`
-	KubeconfigPath string            `json:"kubeconfigPath,omitempty"`
-	CACert         string            `json:"caCert,omitempty"`
-	AllowedPaths   []string          `json:"allowedPaths,omitempty"`
+	Domain            string            `json:"domain"`
+	Injector          string            `json:"injector"`
+	Header            string            `json:"header,omitempty"`
+	ValuePrefix       string            `json:"valuePrefix,omitempty"`
+	EnvVar            string            `json:"envVar,omitempty"`
+	SAFilePath        string            `json:"saFilePath,omitempty"`
+	GCPProject        string            `json:"gcpProject,omitempty"`
+	GCPLocation       string            `json:"gcpLocation,omitempty"`
+	PathPrefix        string            `json:"pathPrefix,omitempty"`
+	Upstream          string            `json:"upstream,omitempty"`
+	ClientID          string            `json:"clientID,omitempty"`
+	TokenURL          string            `json:"tokenURL,omitempty"`
+	Scopes            []string          `json:"scopes,omitempty"`
+	DefaultHeaders    map[string]string `json:"defaultHeaders,omitempty"`
+	KubeconfigPath    string            `json:"kubeconfigPath,omitempty"`
+	CACert            string            `json:"caCert,omitempty"`
+	AllowedPaths      []string          `json:"allowedPaths,omitempty"`
+	CodexAuthFilePath string            `json:"codexAuthFilePath,omitempty"`
 
 	injector     Injector     `json:"-"`
 	bodyRewriter BodyRewriter `json:"-"`
