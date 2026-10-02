@@ -146,6 +146,79 @@ func newClawYAML(t *testing.T, opts ...ClawSpecOption) []byte {
 	return y
 }
 
+// logClawInstancePodLogs prints logs from every container on claw instance pods
+// (label app=claw), including init containers. A restarted container's previous
+// logs are included too. OpenClaw crash output is often only in that instance.
+func logClawInstancePodLogs(t *testing.T) {
+	t.Helper()
+
+	t.Log("Fetching claw instance pod logs")
+	cmd := exec.Command("kubectl", "get", "pods", "-l", "app=claw",
+		"-n", userNamespace,
+		"-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
+	output, err := utils.Run(t, cmd)
+	if err != nil {
+		t.Logf("Failed to list claw instance pods: %s", err)
+		return
+	}
+
+	podNames := utils.GetNonEmptyLines(output)
+	if len(podNames) == 0 {
+		t.Log("No claw instance pods found")
+		return
+	}
+
+	containerJSONPath := `jsonpath={range .spec.initContainers[*]}{.name}{"\n"}{end}` +
+		`{range .spec.containers[*]}{.name}{"\n"}{end}` +
+		`{range .spec.ephemeralContainers[*]}{.name}{"\n"}{end}`
+
+	for _, podName := range podNames {
+		cmd = exec.Command("kubectl", "get", "pod", podName, "-n", userNamespace, "-o", containerJSONPath)
+		output, err = utils.Run(t, cmd)
+		if err != nil {
+			t.Logf("Failed to list containers for claw pod %s: %s", podName, err)
+			continue
+		}
+
+		containers := utils.GetNonEmptyLines(output)
+		if len(containers) == 0 {
+			t.Logf("Claw pod %s has no containers", podName)
+			continue
+		}
+
+		for _, container := range containers {
+			for _, previous := range []bool{false, true} {
+				args := []string{
+					"logs", podName,
+					"-n", userNamespace,
+					"-c", container,
+					"--timestamps",
+					"--prefix",
+				}
+				label := "logs"
+				if previous {
+					args = append(args, "--previous")
+					label = "previous logs"
+				}
+
+				cmd = exec.Command("kubectl", args...)
+				logs, logsErr := utils.Run(t, cmd)
+				if logsErr != nil {
+					// A container that has not restarted has no previous logs.
+					if !previous {
+						t.Logf("Failed to get claw pod %s container %s logs: %s", podName, container, logsErr)
+					}
+					continue
+				}
+				if strings.TrimSpace(logs) == "" {
+					continue
+				}
+				t.Logf("Claw pod %s container %s %s:\n%s", podName, container, label, logs)
+			}
+		}
+	}
+}
+
 func TestManager(t *testing.T) { //nolint:gocyclo
 	var controllerPodName string
 
@@ -295,6 +368,7 @@ func TestManager(t *testing.T) { //nolint:gocyclo
 			t.Logf("Failed to get Proxy logs: %s", err)
 		}
 
+		logClawInstancePodLogs(t)
 	}
 
 	t.Log("waiting for the controller-manager pod to be running")
