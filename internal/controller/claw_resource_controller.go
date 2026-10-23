@@ -430,7 +430,9 @@ type ClawResourceReconciler struct {
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile manages the complete lifecycle of resources for Claw instances
-func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) { //nolint:gocyclo
+//
+//nolint:gocyclo
+func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	if r.MetricsRefreshed != nil {
 		select {
 		case <-r.MetricsRefreshed:
@@ -598,7 +600,7 @@ func (r *ClawResourceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if routeHost == "" {
 			// Route exists but status not yet populated - requeue
 			logger.Info("Route exists but status not populated, requeuing")
-			return ctrl.Result{Requeue: true, RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 
 	} else {
