@@ -1,28 +1,25 @@
 module github.com/codeready-toolchain/claw-operator
 
-go 1.25.9
-
-require (
-	// using latest commit from 'github.com/openshift/api branch release-4.21'
-	github.com/openshift/api v0.0.0-20260304172252-b0658d22beea
-	github.com/stretchr/testify v1.11.1
-	k8s.io/api v0.34.6
-	k8s.io/apiextensions-apiserver v0.34.6
-	k8s.io/apimachinery v0.34.6
-	k8s.io/client-go v0.34.6
-	sigs.k8s.io/controller-runtime v0.22.5
-	sigs.k8s.io/kustomize/api v0.21.1
-	sigs.k8s.io/kustomize/kyaml v0.21.1
-	sigs.k8s.io/yaml v1.6.0
-)
+go 1.27.3
 
 require (
 	github.com/elazarl/goproxy v1.8.3
 	github.com/google/go-containerregistry v0.21.7
+	// using latest commit from 'github.com/openshift/api branch release-4.21'
+	github.com/openshift/api v0.0.0-20260304172252-b0658d22beea
 	github.com/prometheus/client_golang v1.22.0
+	github.com/stretchr/testify v1.11.1
 	golang.org/x/oauth2 v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
+	k8s.io/api v0.34.6
+	k8s.io/apiextensions-apiserver v0.34.6
+	k8s.io/apimachinery v0.34.6
+	k8s.io/client-go v0.34.6
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
+	sigs.k8s.io/controller-runtime v0.22.5
+	sigs.k8s.io/kustomize/api v0.21.1
+	sigs.k8s.io/kustomize/kyaml v0.21.1
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
