@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -991,5 +993,277 @@ func TestFindClawsReferencingSecret(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: aiModelSecret, Namespace: namespace},
 		})
 		require.Len(t, requests, 1, "should return exactly one request, not duplicate")
+	})
+}
+
+// --- Codex OAuth credential tests ---
+
+func TestCodexOAuthCredentialValidation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("should resolve codexOAuth credential with valid auth.json", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		authJSON := `{"auth_mode":"chatgpt","tokens":{"access_token":"eyJ...","refresh_token":"v1.abc","account_id":"acct_test123"}}`
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "codex-auth", Namespace: namespace},
+			Data:       map[string][]byte{"auth.json": []byte(authJSON)},
+		}
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{
+						Name:      "codex",
+						Type:      clawv1alpha1.CredentialTypeCodexOAuth,
+						Provider:  "openai-oauth",
+						SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "codex-auth", Key: "auth.json"}},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}})
+		require.NoError(t, err)
+
+		updated := &clawv1alpha1.Claw{}
+		require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}, updated))
+
+		var credsOK bool
+		for _, c := range updated.Status.Conditions {
+			if c.Type == clawv1alpha1.ConditionTypeCredentialsResolved && c.Status == metav1.ConditionTrue {
+				credsOK = true
+			}
+		}
+		assert.True(t, credsOK, "CredentialsResolved should be True")
+	})
+
+	t.Run("should fail when codexOAuth auth.json has wrong auth_mode", func(t *testing.T) {
+		t.Cleanup(func() {
+			_ = deleteAndWait(&corev1.Secret{}, client.ObjectKey{Name: "codex-auth-bad", Namespace: namespace})
+			deleteAndWaitAllResources(t, namespace)
+		})
+
+		authJSON := `{"auth_mode":"api_key","tokens":{"refresh_token":"v1.abc","account_id":"acct_123"}}`
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "codex-auth-bad", Namespace: namespace},
+			Data:       map[string][]byte{"auth.json": []byte(authJSON)},
+		}
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{
+						Name:      "codex",
+						Type:      clawv1alpha1.CredentialTypeCodexOAuth,
+						Provider:  "openai-oauth",
+						SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "codex-auth-bad", Key: "auth.json"}},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKey{
+			Name: testInstanceName, Namespace: namespace,
+		}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "auth_mode")
+	})
+
+	t.Run("should generate proxy config with codexOAuth route after reconciliation", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		authJSON := `{"auth_mode":"chatgpt","tokens":{"access_token":"eyJ...","refresh_token":"v1.abc","account_id":"acct_test456"}}`
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "codex-auth-proxy", Namespace: namespace},
+			Data:       map[string][]byte{"auth.json": []byte(authJSON)},
+		}
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{
+						Name:      "codex",
+						Type:      clawv1alpha1.CredentialTypeCodexOAuth,
+						Provider:  "openai-oauth",
+						SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "codex-auth-proxy", Key: "auth.json"}},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		cm := &corev1.ConfigMap{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name: getProxyConfigMapName(testInstanceName), Namespace: namespace,
+			}, cm) == nil
+		}, "proxy config ConfigMap should exist")
+
+		var cfg proxyConfig
+		require.NoError(t, json.Unmarshal([]byte(cm.Data["proxy-config.json"]), &cfg))
+
+		var foundRoute bool
+		for _, r := range cfg.Routes {
+			if r.Domain == "chatgpt.com" {
+				foundRoute = true
+				assert.Equal(t, injectorCodexOAuth, r.Injector)
+				assert.Equal(t, "/etc/proxy/credentials/codex/auth.json", r.CodexAuthFilePath)
+			}
+		}
+		assert.True(t, foundRoute, "proxy config should contain chatgpt.com route with codex_oauth injector")
+	})
+
+	t.Run("should mount codexOAuth auth.json on proxy deployment", func(t *testing.T) {
+		t.Cleanup(func() { deleteAndWaitAllResources(t, namespace) })
+
+		authJSON := `{"auth_mode":"chatgpt","tokens":{"access_token":"eyJ...","refresh_token":"v1.abc","account_id":"acct_mount"}}`
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "codex-auth-mount", Namespace: namespace},
+			Data:       map[string][]byte{"auth.json": []byte(authJSON)},
+		}
+		require.NoError(t, k8sClient.Create(ctx, secret))
+
+		instance := &clawv1alpha1.Claw{
+			ObjectMeta: metav1.ObjectMeta{Name: testInstanceName, Namespace: namespace},
+			Spec: clawv1alpha1.ClawSpec{
+				Credentials: []clawv1alpha1.CredentialSpec{
+					{
+						Name:      "codex",
+						Type:      clawv1alpha1.CredentialTypeCodexOAuth,
+						Provider:  "openai-oauth",
+						SecretRef: []clawv1alpha1.SecretRefEntry{{Name: "codex-auth-mount", Key: "auth.json"}},
+					},
+				},
+			},
+		}
+		require.NoError(t, k8sClient.Create(ctx, instance))
+
+		reconciler := createClawReconciler()
+		reconcileClaw(t, ctx, reconciler, testInstanceName, namespace)
+
+		deploy := &appsv1.Deployment{}
+		waitFor(t, timeout, interval, func() bool {
+			return k8sClient.Get(ctx, client.ObjectKey{
+				Name: getProxyDeploymentName(testInstanceName), Namespace: namespace,
+			}, deploy) == nil
+		}, "proxy deployment should exist")
+
+		var proxyContainer *corev1.Container
+		for i := range deploy.Spec.Template.Spec.Containers {
+			if deploy.Spec.Template.Spec.Containers[i].Name == ClawProxyContainerName {
+				proxyContainer = &deploy.Spec.Template.Spec.Containers[i]
+				break
+			}
+		}
+		require.NotNil(t, proxyContainer, "proxy container should exist")
+
+		var foundMount bool
+		for _, vm := range proxyContainer.VolumeMounts {
+			if vm.Name == "cred-codex" && vm.MountPath == "/etc/proxy/credentials/codex" {
+				foundMount = true
+				assert.True(t, vm.ReadOnly)
+			}
+		}
+		assert.True(t, foundMount, "proxy should have codex auth volume mount")
+
+		var foundVol bool
+		for _, vol := range deploy.Spec.Template.Spec.Volumes {
+			if vol.Name == "cred-codex" {
+				foundVol = true
+				require.NotNil(t, vol.Secret)
+				assert.Equal(t, "codex-auth-mount", vol.Secret.SecretName)
+			}
+		}
+		assert.True(t, foundVol, "proxy should have codex auth volume")
+	})
+}
+
+// --- Synthetic JWT tests ---
+
+func TestBuildSyntheticJWT(t *testing.T) {
+	jwt := buildSyntheticJWT("acct_test123")
+	parts := strings.Split(jwt, ".")
+	require.Len(t, parts, 3, "JWT should have 3 parts (header.payload.signature)")
+	assert.Empty(t, parts[2], "unsigned JWT should have empty signature")
+
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal(payloadBytes, &payload))
+	assert.Equal(t, "placeholder", payload["sub"])
+	assert.Equal(t, "acct_test123", payload["account_id"])
+
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	require.NoError(t, err)
+	var header map[string]string
+	require.NoError(t, json.Unmarshal(headerBytes, &header))
+	assert.Equal(t, "none", header["alg"])
+	assert.Equal(t, "JWT", header["typ"])
+}
+
+func TestBuildSyntheticJWTDeterministic(t *testing.T) {
+	jwt1 := buildSyntheticJWT("acct_abc")
+	jwt2 := buildSyntheticJWT("acct_abc")
+	assert.Equal(t, jwt1, jwt2, "same account_id should produce same JWT")
+
+	jwt3 := buildSyntheticJWT("acct_xyz")
+	assert.NotEqual(t, jwt1, jwt3, "different account_id should produce different JWT")
+}
+
+func TestResolveProviderDefaultsCodexOAuth(t *testing.T) {
+	cred := clawv1alpha1.CredentialSpec{
+		Name:     "codex",
+		Provider: "openai-oauth",
+	}
+	err := resolveProviderDefaults(&cred)
+	require.NoError(t, err)
+	assert.Equal(t, clawv1alpha1.CredentialTypeCodexOAuth, cred.Type)
+	assert.Equal(t, "chatgpt.com", cred.Domain)
+}
+
+func TestCodexOAuthAccountID(t *testing.T) {
+	creds := []resolvedCredential{
+		{
+			CredentialSpec: clawv1alpha1.CredentialSpec{Name: "openai", Type: clawv1alpha1.CredentialTypeBearer},
+		},
+		{
+			CredentialSpec: clawv1alpha1.CredentialSpec{Name: "codex", Type: clawv1alpha1.CredentialTypeCodexOAuth},
+			CodexOAuth:     &codexOAuthData{AccountID: "acct_found"},
+		},
+	}
+
+	t.Run("returns account ID for matching credential", func(t *testing.T) {
+		assert.Equal(t, "acct_found", codexOAuthAccountID(creds, "codex"))
+	})
+
+	t.Run("returns empty for non-matching name", func(t *testing.T) {
+		assert.Empty(t, codexOAuthAccountID(creds, "nonexistent"))
+	})
+
+	t.Run("returns empty for credential without CodexOAuth data", func(t *testing.T) {
+		assert.Empty(t, codexOAuthAccountID(creds, "openai"))
+	})
+
+	t.Run("returns empty for nil slice", func(t *testing.T) {
+		assert.Empty(t, codexOAuthAccountID(nil, "codex"))
 	})
 }
