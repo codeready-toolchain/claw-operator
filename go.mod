@@ -2,6 +2,8 @@ module github.com/codeready-toolchain/claw-operator
 
 go 1.25.9
 
+toolchain go1.27.4
+
 require (
 	// using latest commit from 'github.com/openshift/api branch release-4.21'
 	github.com/openshift/api v0.0.0-20260304172252-b0658d22beea
