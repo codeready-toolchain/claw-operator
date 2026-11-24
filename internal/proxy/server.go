@@ -180,10 +180,8 @@ func NewServer(cfg *Config, caCertPEM, caKeyPEM []byte, logger *slog.Logger) (*S
 			return nil, fmt.Errorf("parse upstream URL %q for route %s: %w", route.Upstream, route.Domain, err)
 		}
 		gw := &httputil.ReverseProxy{
-			Director: func(req *http.Request) {
-				req.URL.Scheme = upstream.Scheme
-				req.URL.Host = upstream.Host
-				req.Host = upstream.Host
+			Rewrite: func(r *httputil.ProxyRequest) {
+				r.SetURL(upstream)
 			},
 			Transport: &http.Transport{
 				TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
@@ -334,9 +332,7 @@ func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, erro
 	if !ok {
 		return nil, nil, fmt.Errorf("CA certificate public key is not ECDSA")
 	}
-	if certPub.Curve != key.Curve ||
-		certPub.X.Cmp(key.X) != 0 ||
-		certPub.Y.Cmp(key.Y) != 0 {
+	if !key.PublicKey.Equal(certPub) {
 		return nil, nil, fmt.Errorf("CA private key does not match certificate public key")
 	}
 
