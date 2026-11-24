@@ -3,6 +3,8 @@ FROM --platform=${BUILDPLATFORM} mirror.gcr.io/library/golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
+ENV GOTOOLCHAIN=auto
+
 WORKDIR /workspace
 COPY go.mod go.mod
 COPY go.sum go.sum

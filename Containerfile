@@ -5,6 +5,8 @@ ARG TARGETARCH
 ARG VERSION=dev
 ARG BUILD_TIME=unknown
 
+ENV GOTOOLCHAIN=auto
+
 WORKDIR /workspace
 # Copy the Go Modules manifests
 COPY go.mod go.mod
